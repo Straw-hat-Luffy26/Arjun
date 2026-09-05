@@ -157,7 +157,7 @@ function request(baseUrl: string, prompt = "What is the seal specification?"): R
     messageId: "msg-1",
     prompt,
     systemPrompt: "Search before answering.",
-    model: { id: "qwen2.5-coder-7b", provider: "llama-cpp", baseUrl, maxTokens: 256 },
+    model: { id: "qwen2.5-coder-7b", provider: "llama-cpp", baseUrl, contextWindow: 8192, maxTokens: 256 },
   };
 }
 

@@ -18,6 +18,23 @@ use sarathi_lib::orchestrator::approvals::ApprovalQueue;
 use sarathi_lib::identity::{Role, Session, User};
 use sarathi_lib::knowledge::KnowledgeIndex;
 
+#[path = "agent_runtime_durable_journey.rs"]
+mod durable_journey;
+
+fn execution(deps: &Arc<RuntimeDeps>, run_id: &str, message_id: &str, prompt: &str) -> serde_json::Value {
+    use sarathi_lib::agent_runtime::{events::{EventDraft,TaskEventType},resume::{CheckpointSeed,policy_hash}};
+    let signed_in=deps.session.read().unwrap().clone().unwrap();
+    let class=sarathi_lib::policy::Classification::Internal;
+    deps.events.record(EventDraft::new(run_id,TaskEventType::RunCreated,&signed_in.user.id).with(serde_json::json!({"promptShown":prompt}))).unwrap();
+    deps.events.record(EventDraft::new(run_id,TaskEventType::RunClassified,&signed_in.user.id).with(serde_json::json!({"classification":class.label()}))).unwrap();
+    deps.plans.lock().unwrap().entry(run_id.into()).or_insert_with(|| sarathi_lib::orchestrator::plan::PlanRun::new(run_id,vec!["do the work".into()],sarathi_lib::orchestrator::plan::Budget::standard(sarathi_lib::orchestrator::tools::ToolName::ALL.to_vec())));
+    let claim=deps.events.claim_run(run_id,"fixture-worker",chrono::Duration::minutes(5),chrono::Utc::now()).unwrap().unwrap();
+    let seed=CheckpointSeed {attempt_id:"attempt-1".into(),lease:claim,objective:prompt.into(),conversation_id:format!("conversation-{run_id}"),message_id:message_id.into(),deadline_ms:(chrono::Utc::now()+chrono::Duration::minutes(5)).timestamp_millis(),plan_hash:"fixture-plan".into(),workspace_hash:"fixture-workspace".into(),model_id:"fixture-model".into(),policy_hash:policy_hash(&signed_in,Some(class),&format!("{:?}",sarathi_lib::sovereignty::global_broker().mode()))};
+    let identity=serde_json::json!({"protocolVersion":1,"attemptId":seed.attempt_id,"fenceToken":seed.lease.fence_token});
+    deps.checkpoints.lock().unwrap().insert(run_id.into(),seed);
+    identity
+}
+
 fn bundle() -> PathBuf {
     let path = default_bundle_path();
     assert!(
@@ -31,6 +48,10 @@ fn bundle() -> PathBuf {
 
 fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir");
+    (deps_in(&dir), dir)
+}
+
+fn deps_in(dir: &tempfile::TempDir) -> Arc<RuntimeDeps> {
     let index = KnowledgeIndex::open(dir.path()).expect("index opens");
     let session = Arc::new(RwLock::new(Some(Session::open(User::new(
         "priya",
@@ -46,8 +67,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         Workspace::create(dir.path(), "run-1").expect("workspace"),
     );
 
-    (
-        Arc::new(RuntimeDeps {
+    Arc::new(RuntimeDeps {
             index: Arc::new(index),
             session,
             workspaces,
@@ -124,11 +144,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             // Durable: this test is about the wire between the two processes,
             // and a degraded installation has its own tests in `audit_health`.
             audit_health: Arc::new(sarathi_lib::agent_runtime::audit_health::AuditHealth::durable()),
-        }),
-        // Returned so the directory outlives the test; dropping it early would
-        // delete the SQLite file out from under the runtime.
-        dir,
-    )
+        })
 }
 
 /// Node has to be on PATH. Reported as a skip rather than a failure because a
@@ -156,6 +172,7 @@ async fn the_runtime_answers_across_the_language_boundary() {
         .expect("the runtime answers health");
 
     assert_eq!(health["ready"], true);
+    assert_eq!(health["contextProtocolVersion"], 1);
     assert!(
         health["node"].as_str().unwrap_or_default().starts_with('v'),
         "expected a node version, got {:?}",
@@ -202,6 +219,7 @@ async fn a_run_against_a_public_endpoint_is_refused_by_the_runtime_itself() {
                 "prompt": "hello",
                 "systemPrompt": "s",
                 "messageId": "msg-fixture",
+                "execution": {"protocolVersion":1,"attemptId":"attempt-1","fenceToken":1},
                 "model": {
                     "id": "gpt-4",
                     "provider": "openai",
@@ -359,7 +377,7 @@ async fn message_stream_events_carry_message_id_and_text_deltas() {
             .map(|mut v| v.push(value))
             .unwrap_or_else(|e| e.into_inner().push(serde_json::Value::Null));
     });
-    let runtime = AgentRuntime::spawn(deps, emit, bundle()).expect("runtime starts");
+    let runtime = AgentRuntime::spawn(deps.clone(), emit, bundle()).expect("runtime starts");
 
     let run_id = "stream-e2e-run-1";
     let message_id = "msg-e2e-1";
@@ -373,11 +391,14 @@ async fn message_stream_events_carry_message_id_and_text_deltas() {
                 "runId": run_id,
                 "messageId": message_id,
                 "prompt": "hi",
+                "execution": execution(&deps, run_id, message_id, "hi"),
                 "systemPrompt": "Answer in one short sentence.",
                 "model": {
                     "id": "gemma-4-E4B-it",
                     "provider": "sovereign-local",
                     "baseUrl": base_url,
+                    "contextWindow": 8192,
+                    "maxTokens": 256,
                 }
             }),
         )
@@ -555,7 +576,7 @@ async fn a_longer_prompt_streams_in_the_wire_contract() {
             .map(|mut v| v.push(value))
             .unwrap_or_else(|e| e.into_inner().push(serde_json::Value::Null));
     });
-    let runtime = AgentRuntime::spawn(deps, emit, bundle()).expect("runtime starts");
+    let runtime = AgentRuntime::spawn(deps.clone(), emit, bundle()).expect("runtime starts");
 
     let run_id = "stream-e2e-run-long";
     let message_id = "msg-e2e-long";
@@ -567,11 +588,14 @@ async fn a_longer_prompt_streams_in_the_wire_contract() {
                 "runId": run_id,
                 "messageId": message_id,
                 "prompt": "Explain in one paragraph why the sky is blue during the day and red at sunset.",
+                "execution": execution(&deps, run_id, message_id, "Explain in one paragraph why the sky is blue during the day and red at sunset."),
                 "systemPrompt": "Be concise.",
                 "model": {
                     "id": "gemma-4-E4B-it",
                     "provider": "sovereign-local",
                     "baseUrl": base_url,
+                    "contextWindow": 8192,
+                    "maxTokens": 256,
                 }
             }),
         )
@@ -652,7 +676,7 @@ async fn two_runs_in_a_row_each_carry_their_own_messageId() {
             .map(|mut v| v.push(value))
             .unwrap_or_else(|e| e.into_inner().push(serde_json::Value::Null));
     });
-    let runtime = AgentRuntime::spawn(deps, emit, bundle()).expect("runtime starts");
+    let runtime = AgentRuntime::spawn(deps.clone(), emit, bundle()).expect("runtime starts");
 
     // Run 1.
     runtime
@@ -663,10 +687,13 @@ async fn two_runs_in_a_row_each_carry_their_own_messageId() {
                 "messageId": "msg-follow-up-1",
                 "prompt": "hi",
                 "systemPrompt": "Be brief.",
+                "execution": execution(&deps, "follow-up-1", "msg-follow-up-1", "hi"),
                 "model": {
                     "id": "gemma-4-E4B-it",
                     "provider": "sovereign-local",
                     "baseUrl": base_url,
+                    "contextWindow": 8192,
+                    "maxTokens": 256,
                 }
             }),
         )
@@ -684,10 +711,13 @@ async fn two_runs_in_a_row_each_carry_their_own_messageId() {
                 "messageId": "msg-follow-up-2",
                 "prompt": "What did I just say?",
                 "systemPrompt": "Be brief.",
+                "execution": execution(&deps, "follow-up-2", "msg-follow-up-2", "What did I just say?"),
                 "model": {
                     "id": "gemma-4-E4B-it",
                     "provider": "sovereign-local",
                     "baseUrl": base_url,
+                    "contextWindow": 8192,
+                    "maxTokens": 256,
                 }
             }),
         )

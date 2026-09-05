@@ -149,6 +149,21 @@ pub struct DurableApproval {
 }
 
 impl DurableApproval {
+    /// Show exact new call arguments, retaining support for older display-line rows.
+    pub fn display_arguments(&self) -> Vec<String> {
+        let Ok(value) = serde_json::from_str::<Value>(&self.arguments) else {
+            return vec![self.arguments.clone()];
+        };
+        if let Some(args) = value.get("args") {
+            return vec![args.to_string()];
+        }
+        if let Some(lines) = value.get("arguments").and_then(Value::as_array) {
+            return lines.iter().map(|item| item.as_str().map(str::to_string)
+                .unwrap_or_else(|| item.to_string())).collect();
+        }
+        vec![value.to_string()]
+    }
+
     /// A fresh, undecided request.
     #[allow(clippy::too_many_arguments)]
     pub fn requested(
@@ -223,7 +238,7 @@ impl DurableApproval {
 /// Writes a request down before anybody is asked.
 pub(super) fn record(conn: &Connection, approval: &DurableApproval) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO run_approvals
+        "INSERT INTO run_approvals
             (approval_id, run_id, tool, target, args_fingerprint, arguments, reason,
              status, allowed_decisions, created_at, expires_at, resolved_at,
              resolved_by, resolution)
@@ -261,10 +276,12 @@ pub(super) fn resolve(
     resolution: Option<&str>,
     at: DateTime<Utc>,
 ) -> rusqlite::Result<bool> {
+    if status == ApprovalStatus::Pending { return Ok(false); }
     let changed = conn.execute(
         "UPDATE run_approvals
             SET status = ?2, resolved_by = ?3, resolution = ?4, resolved_at = ?5
-          WHERE approval_id = ?1 AND status = 'pending'",
+          WHERE approval_id = ?1 AND status = 'pending'
+            AND (expires_at IS NULL OR julianday(expires_at) > julianday(?5))",
         rusqlite::params![
             approval_id,
             status.as_str(),
@@ -302,7 +319,7 @@ pub(super) fn pending(conn: &Connection) -> rusqlite::Result<Vec<DurableApproval
            FROM run_approvals WHERE status = 'pending' ORDER BY created_at, approval_id",
     )?;
     let rows = statement.query_map([], row_to_approval)?;
-    Ok(rows.flatten().collect())
+    rows.collect()
 }
 
 /// Every approval raised for one run, oldest first.
@@ -314,7 +331,7 @@ pub(super) fn for_run(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<D
            FROM run_approvals WHERE run_id = ?1 ORDER BY created_at, approval_id",
     )?;
     let rows = statement.query_map([run_id], row_to_approval)?;
-    Ok(rows.flatten().collect())
+    rows.collect()
 }
 
 fn row_to_approval(row: &rusqlite::Row<'_>) -> rusqlite::Result<DurableApproval> {
@@ -350,6 +367,25 @@ mod tests {
         let conn = Connection::open_in_memory().expect("an in-memory database");
         super::super::migrations::apply(&conn).expect("the schema migrates");
         conn
+    }
+
+    #[test]
+    fn recording_the_same_id_cannot_reset_a_decision() {
+        let conn = database();
+        let now = Utc::now();
+        let request = approval(now, None);
+        record(&conn, &request).unwrap();
+        resolve(&conn, &request.approval_id, ApprovalStatus::Approved, "reviewer", None, now).unwrap();
+        assert!(record(&conn, &request).is_err());
+        assert_eq!(get(&conn, &request.approval_id).unwrap().unwrap().status, ApprovalStatus::Approved);
+    }
+
+    #[test]
+    fn an_expired_request_cannot_be_approved() {
+        let conn = database();
+        let now = Utc::now();
+        record(&conn, &approval(now, Some(Duration::seconds(1)))).unwrap();
+        assert!(!resolve(&conn, "approval-1", ApprovalStatus::Approved, "reviewer", None, now + Duration::seconds(2)).unwrap());
     }
 
     fn approval(at: DateTime<Utc>, expires_in: Option<Duration>) -> DurableApproval {
@@ -527,5 +563,17 @@ mod tests {
 
         assert_eq!(for_run(&conn, "run-1").expect("reads").len(), 1);
         assert_eq!(for_run(&conn, "run-2").expect("reads").len(), 1);
+    }
+
+    #[test]
+    fn restored_approval_displays_exact_arguments_and_legacy_lines() {
+        let mut item = approval(Utc::now(), None);
+        let args = json!({"path":"final.txt","content":"PUMP-A17\nexact text"});
+        item.arguments = json!({"tool":"workspace.write_text","args":args}).to_string();
+        assert_eq!(item.display_arguments(), vec![args.to_string()]);
+        item.arguments = json!({"arguments":["path: legacy.txt", "content: legacy"]}).to_string();
+        assert_eq!(item.display_arguments(), vec!["path: legacy.txt", "content: legacy"]);
+        item.arguments = "unreadable record".into();
+        assert_eq!(item.display_arguments(), vec!["unreadable record"]);
     }
 }

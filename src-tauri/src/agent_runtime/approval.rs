@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::identity::Session;
-use crate::orchestrator::approvals::{ApprovalQueue, ApprovalRequest, Decision};
+use crate::orchestrator::approvals::{ApprovalQueue, ApprovalRequest};
 use crate::orchestrator::tools::ToolName;
 
 /// How often the queue is checked.
@@ -53,6 +53,8 @@ pub enum ApprovalOutcome {
     Rejected { by: String, because: String },
     /// Nobody decided within the limit.
     TimedOut,
+    /// Missing or corrupt authority never becomes permission.
+    Unavailable { detail: String },
 }
 
 impl ApprovalOutcome {
@@ -63,6 +65,7 @@ impl ApprovalOutcome {
     pub fn refusal(&self) -> String {
         match self {
             ApprovalOutcome::Approved { .. } => String::new(),
+            ApprovalOutcome::Unavailable { detail } => format!("Approval could not be verified: {detail}. The action did not happen and requires review."),
             ApprovalOutcome::Rejected { by, because } => format!(
                 "{by} did not approve this action, because: {because}. It did not happen. Do not \
                  propose the same action again — address the objection first, or explain to the \
@@ -86,41 +89,35 @@ pub async fn await_decision(
     tool: ToolName,
     summary: String,
     target: String,
-    arguments: Vec<String>,
+    tool_call_id: &str,
+    raw_arguments: &serde_json::Value,
 ) -> ApprovalOutcome {
-    let id = uuid::Uuid::new_v4().to_string();
+    use crate::agent_runtime::events::{ApprovalStatus, DurableApproval};
+    let id = approval_id(run_id, tool_call_id);
     let asked_at = chrono::Utc::now();
-
-    // Written down before the queue is touched, so a process that dies while
-    // somebody is deciding leaves the question behind. The queue is memory and
-    // goes with the process; this does not.
-    //
-    // The arguments are stored as the approver reads them, and fingerprinted,
-    // so a resumption can tell whether the call it is about to make is the one
-    // that was actually approved.
-    let durable = crate::agent_runtime::events::DurableApproval::requested(
-        id.clone(),
-        run_id,
-        tool.as_str(),
-        target.clone(),
-        &serde_json::json!({ "tool": tool.as_str(), "arguments": arguments }),
-        summary.clone(),
-        asked_at,
-        None,
-    );
-    if let Err(error) = events.record_approval(&durable) {
-        // Not fatal. An approval that is not durable is worse than one that is,
-        // and far better than refusing to ask at all — the person is still
-        // asked, and the run still stops until they answer.
-        log::warn!("[tasks] run {run_id}: approval {id} was not recorded durably: {error}");
-    }
-
-    queue.request(ApprovalRequest {
+    let binding = serde_json::json!({ "tool": tool.as_str(), "args": raw_arguments });
+    let proposed = DurableApproval::requested(id.clone(), run_id, tool.as_str(), target.clone(),
+        &binding, summary.clone(), asked_at, Some(asked_at + chrono::Duration::seconds(WAIT_LIMIT.as_secs() as i64)));
+    let durable = match events.approval(&id) {
+        Ok(Some(existing)) if existing.run_id == run_id && existing.tool == tool.as_str()
+            && existing.args_fingerprint == proposed.args_fingerprint => existing,
+        Ok(Some(_)) => return ApprovalOutcome::Unavailable { detail: "The saved request describes different arguments".into() },
+        Ok(None) => {
+            if let Err(error) = events.record_approval(&proposed) {
+                return ApprovalOutcome::Unavailable { detail: error };
+            }
+            proposed
+        }
+        Err(error) => return ApprovalOutcome::Unavailable { detail: error },
+    };
+    // A retry attaches to the original request and deadline. It does not reset
+    // consent, generate a new question, or extend the approval window.
+    queue.restore(vec![ApprovalRequest {
         id: id.clone(),
         task_id: run_id.to_string(),
         tool: tool.as_str().to_string(),
         target,
-        arguments,
+        arguments: vec![raw_arguments.to_string()],
         // Populated in a later phase, when a run carries the passages it relied
         // on. Empty is honest; inventing evidence to fill the field would make
         // the approval screen less trustworthy, not more.
@@ -128,25 +125,32 @@ pub async fn await_decision(
         expected_output: summary,
         consequences: tool.describe().to_string(),
         requested_by: session.user.id.clone(),
-        requested_at: asked_at,
-    });
+        requested_at: chrono::DateTime::parse_from_rfc3339(&durable.created_at).map(|at| at.with_timezone(&chrono::Utc)).unwrap_or(asked_at),
+    }]);
 
-    let deadline = tokio::time::Instant::now() + WAIT_LIMIT;
     loop {
-        if let Some(item) = queue.find(&id) {
-            match item.decision {
-                Some(Decision::Approved { by, .. }) => return ApprovalOutcome::Approved { by },
-                Some(Decision::Rejected { by, because, .. }) => {
-                    return ApprovalOutcome::Rejected { by, because }
-                }
-                None => {}
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
+        let item = match events.approval(&id) {
+            Ok(Some(item)) => item,
+            _ => return ApprovalOutcome::Unavailable { detail: "The durable decision cannot be read".into() },
+        };
+        let now = chrono::Utc::now();
+        if item.expires_at.as_ref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).is_none_or(|at| now >= at) {
             return ApprovalOutcome::TimedOut;
+        }
+        match item.status {
+            ApprovalStatus::Approved => match item.authorises(&binding, now) {
+                Ok(()) => return ApprovalOutcome::Approved { by: item.resolved_by.unwrap_or_default() },
+                Err(error) => return ApprovalOutcome::Unavailable { detail: error.explain() },
+            },
+            ApprovalStatus::Rejected => return ApprovalOutcome::Rejected { by: item.resolved_by.unwrap_or_default(), because: item.resolution.unwrap_or_default() },
+            ApprovalStatus::Pending => {}
         }
         tokio::time::sleep(POLL).await;
     }
+}
+
+pub(super) fn approval_id(run_id: &str, tool_call_id: &str) -> String {
+    crate::agent_runtime::events::derive_key(run_id, "approval.v1", &serde_json::json!({ "toolCallId": tool_call_id }))
 }
 
 #[cfg(test)]
@@ -177,18 +181,20 @@ mod tests {
     #[tokio::test]
     async fn an_approved_action_names_who_approved_it() {
         let queue = Arc::new(ApprovalQueue::new());
+        let events = log();
         let waiting = {
             let queue = queue.clone();
+            let events = events.clone();
             tokio::spawn(async move {
                 await_decision(
                     &queue,
-                    &log(),
+                    &events,
                     &author(),
                     "run-1",
                     ToolName::WriteScopedFile,
                     "Write 5 bytes to note.txt".into(),
                     "note.txt".into(),
-                    vec!["path=note.txt".into()],
+                    "call-1", &serde_json::json!({ "path": "note.txt", "content": "hello" }),
                 )
                 .await
             })
@@ -202,6 +208,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         };
         queue.decide(&approver(), &id, true, None).expect("approved");
+        events.resolve_approval(&id, crate::agent_runtime::events::ApprovalStatus::Approved, "ravi", None, chrono::Utc::now()).unwrap();
 
         assert_eq!(
             waiting.await.expect("task finished"),
@@ -212,18 +219,20 @@ mod tests {
     #[tokio::test]
     async fn a_rejection_carries_the_reason_back_to_the_model() {
         let queue = Arc::new(ApprovalQueue::new());
+        let events = log();
         let waiting = {
             let queue = queue.clone();
+            let events = events.clone();
             tokio::spawn(async move {
                 await_decision(
                     &queue,
-                    &log(),
+                    &events,
                     &author(),
                     "run-1",
                     ToolName::WriteScopedFile,
                     "Write 5 bytes to note.txt".into(),
                     "note.txt".into(),
-                    vec![],
+                    "call-1", &serde_json::json!({ "path": "note.txt", "content": "hello" }),
                 )
                 .await
             })
@@ -238,6 +247,7 @@ mod tests {
         queue
             .decide(&approver(), &id, false, Some("the seal figure is unsourced"))
             .expect("rejected");
+        events.resolve_approval(&id, crate::agent_runtime::events::ApprovalStatus::Rejected, "ravi", Some("the seal figure is unsourced"), chrono::Utc::now()).unwrap();
 
         let outcome = waiting.await.expect("task finished");
         let refusal = outcome.refusal();
@@ -267,7 +277,7 @@ mod tests {
                     ToolName::CreateDocx,
                     "Produce an approval note at note.docx".into(),
                     "note.docx".into(),
-                    vec!["template=approval-note".into()],
+                    "call-42", &serde_json::json!({ "template": "approval-note" }),
                 )
                 .await
             })

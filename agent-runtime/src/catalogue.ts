@@ -262,6 +262,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       'Reads what this deployment remembers for one scope: "run" (this task\'s own state), ' +
       '"workspace" (terminology, templates and stable facts agreed for this project), or "user" ' +
       "(the signed-in person's preferences). " +
+      "For an exact saved message or tool result, use scope=run with transcriptSeq and optional offsetChars/limitChars. " +
       "Use it before settling on wording a project has already agreed, so the same term does not " +
       "get re-derived differently on every task. " +
       "Do not use what it returns as a citable source: these are the deployment's own notes, " +
@@ -276,6 +277,9 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         [Type.Literal("run"), Type.Literal("workspace"), Type.Literal("user")],
         { description: "Which scope to read." },
       ),
+      transcriptSeq: Type.Optional(Type.Integer({ minimum: 1, description: "Exact transcript entry referenced by a compacted tool preview; run scope only." })),
+      offsetChars: Type.Optional(Type.Integer({ minimum: 0, maximum: 33554432 })),
+      limitChars: Type.Optional(Type.Integer({ minimum: 64, maximum: 4096, default: 1536 })),
     }),
   },
 

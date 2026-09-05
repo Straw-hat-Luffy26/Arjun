@@ -110,20 +110,15 @@ impl RuntimeDeps {
         let last_seq = self
             .events
             .events_since(run_id, 0)
-            .map(|page| page.last_seq())
-            .unwrap_or(0);
+            .map(|page| page.last_seq())?;
 
         // Effects nobody has settled. Read fresh every time, because an effect
         // becoming unknown is the single fact that must stop a resumption, and a
         // stale copy of this list is a copy that says a run is safe.
-        let unknown: Vec<String> = self
-            .events
-            .unknown_effects()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|effect| effect.run_id == run_id)
-            .map(|effect| effect.idempotency_key.clone())
-            .collect();
+        let unknown = self.events.effect_obligations(run_id)?.0;
+        let notes = if notes == crate::agent_runtime::memory::RunMemory::default() {
+            self.events.checkpoint(run_id).map_err(|error| error.explain())?.map(|saved| saved.notes).unwrap_or(notes)
+        } else { notes };
 
         let checkpoint = seed.checkpoint(run_id, state, last_seq, notes, None, unknown);
         crate::agent_runtime::resume::checkpoint_now(&self.events, &checkpoint)
@@ -142,6 +137,7 @@ impl RuntimeDeps {
         notes: crate::agent_runtime::memory::RunMemory,
     ) {
         if let Err(error) = self.checkpoint(run_id, state, notes) {
+            self.audit_health.writes_failed(&error);
             log::error!("[tasks] run {run_id}: the checkpoint could not be written: {error}");
             self.remember(
                 run_id,

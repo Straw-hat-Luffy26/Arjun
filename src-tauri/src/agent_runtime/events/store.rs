@@ -44,6 +44,11 @@ use super::model::{
     SYSTEM_ACTOR,
 };
 use super::projection::{fold, TaskSnapshot};
+use super::MAX_RECOVERY_ATTEMPTS;
+
+#[cfg(test)]
+#[path = "durability_tests.rs"]
+mod durability_tests;
 
 /// Why an append did not happen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,7 +113,7 @@ impl EventPage {
 
 /// The durable record of what runs are doing and have done.
 pub struct TaskEventLog {
-    conn: Arc<Mutex<Connection>>,
+    pub(super) conn: Arc<Mutex<Connection>>,
 }
 
 /// How long a writer waits for another connection to let go of the database.
@@ -238,7 +243,7 @@ impl TaskEventLog {
     /// The sequence number is assigned here, inside the transaction, and is the
     /// only thing about the event the caller does not choose.
     pub fn append(&self, draft: EventDraft) -> Result<TaskEvent, AppendError> {
-        self.append_inner(draft, false)
+        self.append_inner(draft, false, None)
     }
 
     /// Appends an event that is allowed to follow an ending.
@@ -253,13 +258,14 @@ impl TaskEventLog {
     /// The ending itself is never rewritten; the reconciliation is a later
     /// event that a reader sees *after* it.
     pub fn append_past_ending(&self, draft: EventDraft) -> Result<TaskEvent, AppendError> {
-        self.append_inner(draft, true)
+        self.append_inner(draft, true, None)
     }
 
     fn append_inner(
         &self,
         draft: EventDraft,
         past_ending: bool,
+        expected_lease: Option<&Lease>,
     ) -> Result<TaskEvent, AppendError> {
         let payload = serde_json::to_string(&draft.payload)
             .map_err(|error| AppendError::Storage(error.to_string()))?;
@@ -270,6 +276,15 @@ impl TaskEventLog {
         conn.execute_batch("BEGIN IMMEDIATE")?;
 
         let result = (|| -> Result<TaskEvent, AppendError> {
+            if let Some(expected) = expected_lease {
+                let current = lease::holder(&conn, &draft.run_id, chrono::Utc::now())?;
+                if expected.run_id != draft.run_id || !current.is_some_and(|held| {
+                    held.owner == expected.owner && held.fence_token == expected.fence_token
+                        && held.live_at(chrono::Utc::now())
+                }) {
+                    return Err(AppendError::Storage("the execution lease is no longer current".into()));
+                }
+            }
             // Presented again after an ambiguous failure. The event is there,
             // so say where rather than writing a second copy of it.
             if let Some(seq) = existing_seq(&conn, &draft.event_id)? {
@@ -346,6 +361,16 @@ impl TaskEventLog {
         if let Err(error) = self.advance_snapshot(&run_id, &event) {
             // The snapshot is rebuildable from the events, which are written.
             // Losing it costs a slower read, not a lost run.
+            log::warn!("[tasks] the snapshot for run {run_id} could not be updated: {error}");
+        }
+        Ok(event)
+    }
+
+    /// Check the live writer and append under the same SQLite write transaction.
+    pub fn record_fenced(&self, draft: EventDraft, lease: &Lease) -> Result<TaskEvent, AppendError> {
+        let run_id = draft.run_id.clone();
+        let event = self.append_inner(draft, false, Some(lease))?;
+        if let Err(error) = self.advance_snapshot(&run_id, &event) {
             log::warn!("[tasks] the snapshot for run {run_id} could not be updated: {error}");
         }
         Ok(event)
@@ -504,6 +529,11 @@ impl TaskEventLog {
         let mut recovered = Vec::new();
 
         for run_id in unfinished {
+            let claim = match self.claim_run(&run_id, &format!("recovery:{}",uuid::Uuid::new_v4()), chrono::Duration::seconds(60), chrono::Utc::now())? {
+                Ok(claim) => claim,
+                Err(_) => continue,
+            };
+            let _guard = RecoveryClaim { log: self, claim };
             // Whether this run could be picked up again, from the durable facts
             // this side owns. Deliberately not the whole answer: the authority
             // on resumability is `checkpoint::resumable_against`, which
@@ -516,15 +546,12 @@ impl TaskEventLog {
             // `DegradedNeedsHuman` is terminal, so `resumable_against` refused
             // it as `AlreadyEnded`. Startup was therefore closing off precisely
             // the runs resumption exists for.
-            let snapshot = self.snapshot(&run_id).ok().flatten();
+            let snapshot = self.snapshot(&run_id)?;
             let attempts = snapshot
                 .as_ref()
                 .map(|snapshot| snapshot.recovery_attempts)
                 .unwrap_or(0);
-            let unsettled = snapshot
-                .as_ref()
-                .map(|snapshot| !snapshot.unknown_effects.is_empty())
-                .unwrap_or(false);
+            let unsettled = !self.effect_obligations(&run_id)?.0.is_empty();
             let has_checkpoint = matches!(self.checkpoint(&run_id), Ok(Some(_)));
 
             // An effect nobody settled stops this outright. Continuing would
@@ -537,7 +564,7 @@ impl TaskEventLog {
                     &run_id,
                     TaskEventType::RecoveryStarted,
                     actor,
-                    "recovery",
+                    &format!("recovery-{}",attempts + 1),
                 )
                 .with(json!({
                     "attempt": attempts + 1,
@@ -665,27 +692,33 @@ impl TaskEventLog {
         target: &str,
     ) -> EffectLookup {
         let Ok(conn) = self.conn.lock() else {
-            // The table is unreachable, so nothing can be claimed about what
-            // has already happened. Treated as fresh rather than refused: the
-            // tool's own checks remain, and refusing every side effect because
-            // a lock is poisoned would stop the product working entirely.
-            return EffectLookup::Fresh;
+            return EffectLookup::Unavailable {
+                reason: "The task effect ledger could not be locked. No action was started.".into(),
+            };
         };
         match idempotency::begin(&conn, run_id, key, tool, args_fingerprint, target) {
             Ok(lookup) => lookup,
             Err(error) => {
                 log::warn!("[tasks] run {run_id}: the intent to {tool} was not recorded: {error}");
-                EffectLookup::Fresh
+                EffectLookup::Unavailable {
+                    reason: "The tool intent could not be recorded durably. No action was started.".into(),
+                }
             }
         }
     }
 
     /// Settles an effect that was begun.
-    pub fn settle_effect(&self, run_id: &str, key: &str, outcome: &Result<String, String>) {
-        let Ok(conn) = self.conn.lock() else { return };
-        if let Err(error) = idempotency::settle(&conn, run_id, key, outcome) {
-            log::warn!("[tasks] run {run_id}: a side effect could not be settled: {error}");
-        }
+    pub fn settle_effect(
+        &self,
+        run_id: &str,
+        key: &str,
+        outcome: &Result<String, String>,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "The task effect ledger could not be locked.")?;
+        idempotency::settle(&conn, run_id, key, outcome).map_err(|error| {
+            log::error!("[tasks] run {run_id}: a side effect could not be settled: {error}");
+            "The action may have happened, but its result could not be recorded. Reconciliation is required before continuing.".into()
+        })
     }
 
     /// Records what a person found out about an unknown side effect.
@@ -1009,6 +1042,69 @@ impl TaskEventLog {
         idempotency::all_with_status(&conn, EffectStatus::Unknown)
             .map_err(|error| error.to_string())
     }
+
+    pub fn begin_effect_fenced(&self, claim: &Lease, key: &str, tool: &str, fingerprint: &str, target: &str) -> EffectLookup {
+        let result = (|| -> Result<EffectLookup,String> {
+            let conn=self.conn.lock().map_err(|_| "Effect store unavailable.")?;
+            let tx=rusqlite::Transaction::new_unchecked(&conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "Effect transaction unavailable.")?;
+            let held=lease::holder(&tx,&claim.run_id,chrono::Utc::now()).map_err(|_| "Effect lease unavailable.")?;
+            if !held.is_some_and(|held| held.owner==claim.owner && held.fence_token==claim.fence_token) { return Err("The effect belongs to an expired attempt.".into()); }
+            if ending_of(&tx,&claim.run_id).map_err(|_| "Run ending unavailable.")?.is_some() { return Err("The run has ended.".into()); }
+            let result=idempotency::begin(&tx,&claim.run_id,key,tool,fingerprint,target).map_err(|_| "The effect intent could not be committed.")?;
+            tx.commit().map_err(|_| "The effect intent could not be committed.")?;
+            Ok(result)
+        })();
+        result.unwrap_or_else(|reason| EffectLookup::Unavailable { reason })
+    }
+
+    pub fn settle_effect_fenced(&self, claim: &Lease, key: &str, outcome: &Result<String,String>) -> Result<(),String> {
+        let conn=self.conn.lock().map_err(|_| "Effect store unavailable.")?;
+        let tx=rusqlite::Transaction::new_unchecked(&conn,rusqlite::TransactionBehavior::Immediate).map_err(|_| "Effect transaction unavailable.")?;
+        let held=lease::holder(&tx,&claim.run_id,chrono::Utc::now()).map_err(|_| "Effect lease unavailable.")?;
+        if !held.is_some_and(|held| held.owner==claim.owner && held.fence_token==claim.fence_token) { return Err("The effect result belongs to an expired attempt.".into()); }
+        idempotency::settle(&tx,&claim.run_id,key,outcome).map_err(|_| "The effect result could not be committed.")?;
+        tx.commit().map_err(|_| "The effect result could not be committed.".into())
+    }
+
+    /// Read unsettled effects and approvals in one SQLite statement, not from a
+    /// possibly stale UI snapshot. Pending effects also block completion.
+    pub fn completion_obligations(&self, run_id: &str) -> Result<(Vec<String>, usize), String> {
+        self.read_obligations(run_id,true)
+    }
+
+    pub fn effect_obligations(&self, run_id: &str) -> Result<(Vec<String>, usize), String> {
+        self.read_obligations(run_id,false)
+    }
+
+    fn read_obligations(&self, run_id: &str, include_operations: bool) -> Result<(Vec<String>, usize), String> {
+        let conn = self.conn.lock().map_err(|_| "durable obligations are unavailable".to_string())?;
+        let read = || -> rusqlite::Result<(Vec<String>, usize)> {
+            let mut statement = conn.prepare(
+                "SELECT 'effect', idempotency_key FROM task_tool_effects
+                   WHERE run_id = ?1 AND status IN ('pending', 'unknown')
+                 UNION ALL
+                 SELECT 'approval', approval_id FROM run_approvals
+                   WHERE run_id = ?1 AND status = 'pending'
+                 UNION ALL
+                 SELECT 'effect', operation_id FROM run_tool_operations
+                   WHERE run_id = ?1 AND ?2 AND status IN ('proposed','running','unknown')",
+            )?;
+            let rows = statement.query_map(params![run_id,include_operations], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            let mut effects = Vec::new();
+            let mut approvals = 0;
+            for row in rows {
+                let (kind, id) = row?;
+                if kind == "effect" { effects.push(id); } else { approvals += 1; }
+            }
+            Ok((effects, approvals))
+        };
+        read().map_err(|_| "durable obligations could not be read; reconciliation is required".into())
+    }
+}
+
+struct RecoveryClaim<'a> { log: &'a TaskEventLog, claim: Lease }
+impl Drop for RecoveryClaim<'_> {
+    fn drop(&mut self) { let _=self.log.release_claim(&self.claim.run_id,&self.claim.owner,self.claim.fence_token); }
 }
 
 /// The endings a run can have. Kept next to the query that uses them so a new
@@ -1040,7 +1136,7 @@ fn existing_seq(conn: &Connection, event_id: &str) -> Result<Option<i64>, rusqli
     })
 }
 
-fn ending_of(conn: &Connection, run_id: &str) -> Result<Option<TaskEventType>, rusqlite::Error> {
+pub(super) fn ending_of(conn: &Connection, run_id: &str) -> Result<Option<TaskEventType>, rusqlite::Error> {
     let terminals: Vec<&str> = TERMINAL_TYPES.iter().map(|kind| kind.as_str()).collect();
     let placeholders = vec!["?"; terminals.len()].join(", ");
     let sql = format!(

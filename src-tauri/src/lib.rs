@@ -468,36 +468,18 @@ pub fn run() {
                     let requests = waiting
                         .into_iter()
                         .map(|approval| orchestrator::approvals::ApprovalRequest {
+                            requested_by: task_events.snapshot(&approval.run_id).ok().flatten()
+                                .map(|snapshot| snapshot.actor).unwrap_or_default(),
+                            arguments: approval.display_arguments(),
                             id: approval.approval_id,
                             task_id: approval.run_id,
                             tool: approval.tool,
                             target: approval.target,
-                            // Rendered back from what was stored. The durable
-                            // row keeps the arguments as one value; the screen
-                            // wants them as lines.
-                            arguments: serde_json::from_str::<serde_json::Value>(
-                                &approval.arguments,
-                            )
-                            .ok()
-                            .and_then(|value| {
-                                value.get("arguments").and_then(|args| {
-                                    args.as_array().map(|list| {
-                                        list.iter()
-                                            .map(|item| match item.as_str() {
-                                                Some(text) => text.to_string(),
-                                                None => item.to_string(),
-                                            })
-                                            .collect::<Vec<_>>()
-                                    })
-                                })
-                            })
-                            .unwrap_or_default(),
                             // Not stored: evidence is gathered by the run that
                             // asked, and that run is gone. Empty is honest.
                             evidence: Vec::new(),
                             expected_output: approval.reason,
                             consequences: String::new(),
-                            requested_by: String::new(),
                             requested_at: chrono::DateTime::parse_from_rfc3339(
                                 &approval.created_at,
                             )

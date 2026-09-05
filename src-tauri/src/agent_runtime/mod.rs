@@ -33,6 +33,7 @@ pub mod approval;
 pub mod artifacts;
 pub mod audit_health;
 pub mod completion;
+pub mod context_api;
 pub mod conversations;
 pub mod events;
 pub mod grants;
@@ -401,7 +402,14 @@ impl AgentRuntime {
         let reader_outbound = outbound.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            // Approval waits must not monopolize the reader: it still has to
+            // observe EOF, cancellations and replies while an RPC is suspended.
+            let mut handlers = tokio::task::JoinSet::new();
+            loop {
+                let line = tokio::select! {
+                    line = lines.next_line() => match line { Ok(Some(line)) => line, _ => break },
+                    _ = handlers.join_next(), if !handlers.is_empty() => continue,
+                };
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -414,8 +422,28 @@ impl AgentRuntime {
                         break;
                     }
                 };
-                dispatch(frame, &reader_deps, &reader_outbound, &pending, &emit).await;
+                if let Frame::Request { id, method, params } = frame {
+                    if handlers.len() >= 64 {
+                        let _ = reader_outbound.send(Outgoing::Error { id,
+                            error: WireError::new(code::REFUSED, "Too many in-flight core requests") }.encode());
+                        continue;
+                    }
+                    let deps = reader_deps.clone();
+                    let outbound = reader_outbound.clone();
+                    let pending = pending.clone();
+                    let emit = emit.clone();
+                    handlers.spawn(async move {
+                        dispatch(Frame::Request { id, method, params }, &deps, &outbound, &pending, &emit).await;
+                    });
+                } else {
+                    dispatch(frame, &reader_deps, &reader_outbound, &pending, &emit).await;
+                }
             }
+            // Drop suspended authorizations with the dead worker. If a dispatched
+            // effect is interrupted, its durable intent remains unsettled for
+            // reconciliation; cancellation never manufactures a successful receipt.
+            handlers.abort_all();
+            while handlers.join_next().await.is_some() {}
             // Stream ended. Fail every caller still waiting rather than leaving
             // them to hang on a process that is gone.
             let waiting: Vec<_> = pending.lock().map(|mut p| p.drain().collect()).unwrap_or_default();
@@ -552,7 +580,12 @@ async fn handle(
     params: Value,
     deps: &Arc<RuntimeDeps>,
 ) -> Result<Value, WireError> {
+    if matches!(method, "tool.authorize" | "tool.execute" | "tool.catalogue" | "capability.search" | "skill.load" | "memory.recall_authorized" | "memory.promote_approved") {
+        context_api::validate_attempt(&params, deps, false)?;
+    }
     match method {
+        "context.commit" => context_api::commit(params, deps),
+        "context.load" => context_api::load(params, deps),
         "tool.authorize" => authorize(params, deps).await,
         "tool.execute" => execute(params, deps).await,
         "tool.catalogue" => tool_catalogue(params, deps),
@@ -957,6 +990,28 @@ fn ledger() -> &'static Mutex<GrantLedger> {
 /// idea of waiting.
 async fn authorize(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
     let call = read_call(&params)?;
+    let operation = context_api::operation(&params, deps)?;
+    if operation.as_ref().is_some_and(|(_, operation)| operation.receipt.is_some()) {
+        let grant = ledger().lock().map_err(|_| WireError::new(code::INTERNAL,"Grant ledger unavailable."))?
+            .issue(&call.run_id,&call.tool_call_id,&call.tool,&call.args);
+        return Ok(json!({ "outcome": "allow", "tool": call.tool, "grant": grant, "replayed": true }));
+    }
+    let result = authorize_impl(params,deps,operation.as_ref().map(|(_, operation)| operation.id.as_str())).await;
+    let refusal = match &result {
+        Ok(value) if value["outcome"] != "allow" => Some(WireError::new(code::REFUSED,value["reason"].as_str().unwrap_or("The requested action was refused."))),
+        Err(error) => Some(error.clone()),
+        _ => None,
+    };
+    if let (Some((seed, operation)),Some(refusal))=(operation,refusal) {
+        let core=serde_json::to_value(context_api::capture(deps,&seed)?).map_err(|_| WireError::new(code::INTERNAL,"The refused action could not be checkpointed."))?;
+        deps.events.decline_operation(&seed.lease,&deps.session()?.user.id,&operation.id,refusal,&core)
+            .map_err(|error| { deps.audit_health.writes_failed(&error); WireError::new(code::INTERNAL,error) })?;
+    }
+    result
+}
+
+async fn authorize_impl(params: Value, deps: &Arc<RuntimeDeps>, operation_id: Option<&str>) -> Result<Value, WireError> {
+    let call=read_call(&params)?;
 
     // Is this run over? Asked first, and asked of the durable record rather
     // than of anything in memory.
@@ -1077,7 +1132,8 @@ async fn authorize(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wire
                 tool,
                 summary,
                 target,
-                render_arguments(&call.args),
+                operation_id.unwrap_or(&call.tool_call_id),
+                &call.args,
             )
             .await;
 
@@ -1094,11 +1150,17 @@ async fn authorize(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wire
 
             match outcome {
                 approval::ApprovalOutcome::Approved { .. } => (tool, resolved_path),
+                approval::ApprovalOutcome::Unavailable { detail } => {
+                    release_reservation(deps, &call.run_id, &call.tool_call_id);
+                    deps.audit_health.writes_failed(&detail);
+                    return Err(WireError::new(code::INTERNAL, detail));
+                }
                 other => return Ok(refused(deps, &call, other.refusal())),
             }
         }
     };
 
+    context_api::validate_attempt(&params, deps, false)?;
     let grant = match ledger().lock() {
         Ok(mut ledger) => ledger.issue(&call.run_id, &call.tool_call_id, &call.tool, &call.args),
         Err(_) => {
@@ -1406,7 +1468,49 @@ fn anchor_path(call: ToolCall, roots: &[PathBuf]) -> ToolCall {
 
 /// Redeems the grant, re-derives the verdict, then runs the tool.
 async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
+    let Some((seed, operation)) = context_api::operation(&params, deps)? else {
+        return execute_untracked(params, deps).await;
+    };
+    // Consume the transport grant even for a receipt replay. A replay restores
+    // prior work, and must not consume another logical plan step.
+    let grant = params.get("grant").and_then(Value::as_str).ok_or_else(|| WireError::new(code::REFUSED, "No authorization grant was presented."))?;
     let call = read_call(&params)?;
+    if operation.receipt.is_some() {
+        ledger().lock().map_err(|_| WireError::new(code::INTERNAL, "Grant ledger unavailable."))?
+            .redeem(grant,&call.run_id,&call.tool_call_id,&call.tool,&call.args)
+            .map_err(|error| WireError::new(code::REFUSED,error.to_string()))?;
+        release_reservation(deps,&call.run_id,&call.tool_call_id);
+        return operation.receipt.unwrap().into_result();
+    }
+    let approval_id = approval::approval_id(&call.run_id,&operation.id);
+    if let Some(approval) = deps.events.approval(&approval_id).map_err(|error| WireError::new(code::REFUSED,error))? {
+        approval.authorises(&json!({ "tool": operation.tool, "args": call.args }),chrono::Utc::now())
+            .map_err(|error| WireError::new(code::REFUSED,error.explain()))?;
+    }
+    if let Some(receipt) = deps.events.start_operation(&seed.lease,&operation.id).map_err(|error| WireError::new(code::REFUSED,error))? {
+        release_reservation(deps,&call.run_id,&call.tool_call_id);
+        return receipt.into_result();
+    }
+    let mut scoped = params;
+    scoped["idempotencyKey"] = json!(operation.id);
+    let result = execute_untracked(scoped,deps).await;
+    let stored = (|| {
+        let core = serde_json::to_value(context_api::capture(deps,&seed)?).map_err(|_| WireError::new(code::INTERNAL,"Run resources could not be serialized."))?;
+        deps.events.finish_operation(&seed.lease,&deps.session()?.user.id,&operation.id,
+            &events::operations::ToolReceipt::from_result(&result),&core)
+            .map_err(|error| WireError::new(code::INTERNAL,error))
+    })();
+    if let Err(error) = stored {
+        deps.audit_health.writes_failed(&error.message);
+        let _ = deps.events.release_claim(&call.run_id,&seed.lease.owner,seed.lease.fence_token);
+        return Err(error);
+    }
+    result
+}
+
+async fn execute_untracked(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
+    let call = read_call(&params)?;
+    let execution_seed = context_api::validate_attempt(&params,deps,false)?;
     let grant = params
         .get("grant")
         .and_then(Value::as_str)
@@ -1514,10 +1618,11 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             .unwrap_or_else(|| tool.as_str())
             .to_string();
 
-        match deps
-            .events
-            .begin_effect(&call.run_id, key, tool.as_str(), fingerprint, &target)
-        {
+        let lookup = match &execution_seed {
+            Some(seed) => deps.events.begin_effect_fenced(&seed.lease,key,tool.as_str(),fingerprint,&target),
+            None => deps.events.begin_effect(&call.run_id,key,tool.as_str(),fingerprint,&target),
+        };
+        match lookup {
             // Nothing has happened under this key. The intent is now on disk,
             // so a process that dies during the next few lines leaves evidence
             // it was trying rather than leaving nothing at all.
@@ -1601,6 +1706,12 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
                 release_reservation(deps, &call.run_id, &call.tool_call_id);
                 return Err(WireError::new(code::REFUSED, reason));
             }
+            events::EffectLookup::Unavailable { reason } => {
+                deps.audit_health.writes_failed(&reason);
+                release_reservation(deps, &call.run_id, &call.tool_call_id);
+                remember_refusal(deps, &call, &reason);
+                return Err(WireError::new(code::REFUSED, reason));
+            }
         }
     }
 
@@ -1648,7 +1759,13 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         // identical policy. Two paths with two implementations would be two
         // places for the entitlement check to drift.
         ToolName::MemoryRecallAuthorized => memory_api::recall_authorized(
-            json!({ "runId": call.run_id, "scope": tool_call.text("scope").unwrap_or_default() }),
+            {
+                let mut memory_params=call.args.clone();
+                memory_params["runId"]=json!(call.run_id);
+                memory_params["attemptId"]=params["attemptId"].clone();
+                memory_params["fenceToken"]=params["fenceToken"].clone();
+                memory_params
+            },
             deps,
         )
         .map(|value| render_memory(&value))
@@ -1722,7 +1839,17 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // when nobody can say what happened, and the wrong one when somebody could
     // have.
     if let Some((key, _)) = &effect {
-        deps.events.settle_effect(&call.run_id, key, &outcome);
+        let settled = match &execution_seed {
+            Some(seed) => deps.events.settle_effect_fenced(&seed.lease,key,&outcome),
+            None => deps.events.settle_effect(&call.run_id,key,&outcome),
+        };
+        if let Err(reason) = settled {
+            deps.audit_health.writes_failed(&reason);
+            // The intent stays pending (unknown on recovery). Do not report a
+            // successful result or authorize more effects without a record.
+            record_step(deps, &call.run_id, &call.tool_call_id, tool);
+            return Err(WireError::new(code::INTERNAL, reason));
+        }
     }
 
     if outcome.is_ok() {

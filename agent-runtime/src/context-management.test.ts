@@ -354,7 +354,7 @@ describe("a second compaction refines the summary rather than duplicating it", (
       model: model(8_192),
       runtime: summariser(),
       apiKey: "local",
-      onCompacted: (event) => events.push(event),
+      onCompacted: (event) => { events.push(event); },
     });
 
     await compactor.transform(documentRun(30, 600));

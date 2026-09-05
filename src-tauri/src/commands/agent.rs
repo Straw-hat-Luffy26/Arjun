@@ -116,22 +116,50 @@ fn worker_id() -> &'static str {
 /// that covers all those paths without each of them having to remember.
 struct RunClaim {
     events: TaskEvents,
-    run_id: String,
-    owner: &'static str,
-    fence_token: i64,
+    lease: crate::agent_runtime::events::Lease,
+    lost: Arc<std::sync::atomic::AtomicBool>,
+    heartbeat: tokio::task::JoinHandle<()>,
+}
+
+impl RunClaim {
+    fn new(events: TaskEvents, lease: crate::agent_runtime::events::Lease, runtime: Arc<AgentRuntime>) -> Self {
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let renew_events = Arc::clone(&events);
+        let held = lease.clone();
+        let lost_flag = Arc::clone(&lost);
+        let heartbeat = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(std::time::Duration::from_secs(
+                crate::agent_runtime::events::HEARTBEAT_SECONDS as u64,
+            ));
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticks.tick().await;
+                if !matches!(renew_events.renew_claim(&held.run_id, &held.owner, held.fence_token,
+                    chrono::Duration::seconds(crate::agent_runtime::events::DEFAULT_LEASE_SECONDS), chrono::Utc::now()), Ok(true)) {
+                    lost_flag.store(true, std::sync::atomic::Ordering::Release);
+                    log::error!("[tasks] run {}: execution lease lost; stopping this attempt", held.run_id);
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(2),
+                        runtime.request("run.abort", json!({ "runId": held.run_id, "reason": "execution lease lost" }))).await;
+                    break;
+                }
+            }
+        });
+        Self { events, lease, lost, heartbeat }
+    }
 }
 
 impl Drop for RunClaim {
     fn drop(&mut self) {
+        self.heartbeat.abort();
         // Token-checked inside `release_claim`, so a claim that lapsed and was
         // taken by somebody else is not released out from under them here.
         if let Err(error) = self
             .events
-            .release_claim(&self.run_id, self.owner, self.fence_token)
+            .release_claim(&self.lease.run_id, &self.lease.owner, self.lease.fence_token)
         {
             log::warn!(
                 "[tasks] run {}: the lease could not be given back ({error}); it will lapse on its own",
-                self.run_id
+                self.lease.run_id
             );
         }
     }
@@ -940,7 +968,7 @@ pub async fn agent_start_run(
 /// policy, plan and workspace hashes) happens before this is ever called.
 #[allow(clippy::too_many_arguments)]
 async fn drive_run(
-    existing_run_id: Option<String>,
+    existing_attempt: Option<crate::agent_runtime::resume::Attempt>,
     app: AppHandle,
     request: StartRunRequest,
     handle: State<'_, AgentRuntimeHandle>,
@@ -970,6 +998,21 @@ async fn drive_run(
     // person a clear reason before anything starts; there it stops a call whose
     // session ended mid-run.
     let signed_in = require_permission(&session, Permission::UseModel)?;
+
+    let saved_context = match &existing_attempt {
+        Some(attempt) => {
+            let snapshot = events.snapshot(&attempt.run_id)?.ok_or("The run has no recorded identity.")?;
+            if snapshot.actor != signed_in.user.id { return Err("This run belongs to another operator.".into()); }
+            let saved = events.load_context(&attempt.run_id)?.ok_or("This legacy run has no durable context projection and needs review before it can continue.")?;
+            let current_policy = crate::agent_runtime::resume::policy_hash(&signed_in,
+                Some(request.classification.unwrap_or(Classification::Internal)),
+                &format!("{:?}", crate::sovereignty::global_broker().mode()));
+            if saved.checkpoint.policy_hash != current_policy { return Err("The run's policy changed; the previous context cannot be resumed under new authority.".into()); }
+            Some(saved)
+        }
+        None => None,
+    };
+    let saved_core = saved_context.as_ref().map(crate::agent_runtime::context_api::CoreCheckpoint::from_stored).transpose()?;
 
     // Nothing runs that cannot be recorded.
     //
@@ -1136,6 +1179,9 @@ async fn drive_run(
             routing.model_id
         )
     })?;
+    if saved_context.as_ref().is_some_and(|saved| saved.checkpoint.model_id != routing.model_id) {
+        return Err("Resumption selected a different model; this run needs a reviewed model transition.".into());
+    }
 
     // Now that the model is known, so is its window — and the prompt can be
     // rebuilt to fit it.
@@ -1294,7 +1340,11 @@ async fn drive_run(
     // A resumption continues under the id the earlier attempt used, so its
     // events, checkpoint and effect ledger are one history rather than two. A
     // fresh run mints its own, and no caller can ask for a particular one.
-    let run_id = existing_run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let run_id = existing_attempt.as_ref().map(|attempt| attempt.run_id.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let health = runtime.request("health", json!({})).await.map_err(|_| "The agent runtime could not confirm its durable context protocol.")?;
+    if health.get("contextProtocolVersion").and_then(Value::as_u64) != Some(1) {
+        return Err("The bundled agent runtime is older than the durable context protocol. Rebuild the runtime before starting tasks.".into());
+    }
     // From here the run has an id of its own and every later stage is
     // addressed by it. The correlation id stays on the event as well, so a
     // reducer that has not yet seen `plan_ready` still recognises its own run.
@@ -1320,15 +1370,21 @@ async fn drive_run(
                 format!("This run was not started: its lease could not be taken ({error}).")
             })?;
         match claimed {
-            Ok(lease) => RunClaim {
-                events: Arc::clone(&events),
-                run_id: run_id.clone(),
-                owner: worker_id(),
-                fence_token: lease.fence_token,
-            },
+            Ok(lease) => RunClaim::new(Arc::clone(&events), lease, Arc::clone(&runtime)),
             Err(held) => return Err(held.explain()),
         }
     };
+
+    if let Some(attempt) = &existing_attempt {
+        let fresh = events.load_context(&run_id)?.ok_or("The resume checkpoint disappeared.")?;
+        if Some(fresh.view.revision) != saved_context.as_ref().map(|saved| saved.view.revision) {
+            return Err("The task advanced while resumption was being prepared. Read its latest state and retry.".into());
+        }
+        record_and_publish_watched(&app, &events,
+            EventDraft::new(&run_id, TaskEventType::RunResumed, &signed_in.user.id)
+                .with(json!({ "attemptId": attempt.attempt_id, "fromSeq": attempt.from_seq, "operatorIntent": attempt.operator_intent })),
+            Some(&audit_health.0)).map_err(|error| error.to_string())?;
+    }
 
     // ─────────────────────────────────────────────────────────────────────
     // The turn's identity, settled before anything streams.
@@ -1427,14 +1483,9 @@ async fn drive_run(
             }),
         ),
     ];
-    for (event_type, payload) in opening {
+    for (event_type, payload) in opening.into_iter().filter(|_| existing_attempt.is_none()) {
         let draft = EventDraft::new(&run_id, event_type, &signed_in.user.id).with(payload);
-        if let Err(error) = record_and_publish(&app, &events, draft) {
-            log::error!(
-                "[tasks] run {run_id}: {} was not recorded: {error}",
-                event_type.as_str()
-            );
-        }
+        record_and_publish_watched(&app, &events, draft, Some(&audit_health.0)).map_err(|error| error.to_string())?;
     }
 
     reporter.stage(Stage::Planning);
@@ -1456,7 +1507,15 @@ async fn drive_run(
     // run starts rather than alongside it: a tool call arriving against a run
     // with no plan yet would be a call with no budget, and the window for that
     // is exactly the window in which the first call happens.
-    let task_plan = planning::plan_for(&run_id, &request.prompt);
+    let mut task_plan = planning::plan_for(&run_id, &request.prompt);
+    if let Some(core) = &saved_core {
+        if core.objective != request.prompt { return Err("The resumed objective differs from the durable task.".into()); }
+        task_plan.restore_progress(&core.plan)?;
+        passages.lock().map_err(|_| "The evidence table is unavailable.")?.insert(run_id.clone(), core.passages.clone());
+        calculations.lock().map_err(|_| "The calculation table is unavailable.")?.insert(run_id.clone(), core.calculations.clone());
+        produced.lock().map_err(|_| "The artifact table is unavailable.")?.insert(run_id.clone(), core.produced.clone());
+        calls.lock().map_err(|_| "The tool history is unavailable.")?.insert(run_id.clone(), core.calls.clone());
+    }
     let plan_note = describe_plan(&task_plan);
     // What this task's answer will have to rest on, decided from the plan
     // rather than guessed from the wording.
@@ -1485,11 +1544,17 @@ async fn drive_run(
     // checkpoint after each tool result without re-deriving any of it.
     {
         let seed = crate::agent_runtime::resume::CheckpointSeed {
-            attempt_id: uuid::Uuid::new_v4().to_string(),
+            attempt_id: existing_attempt.as_ref().map(|attempt| attempt.attempt_id.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            lease: _claim.lease.clone(),
+            objective: request.prompt.clone(),
+            conversation_id: conversation_id.clone(),
+            message_id: message_id.clone(),
+            deadline_ms: saved_core.as_ref().map(|core| core.deadline_ms)
+                .unwrap_or_else(|| (started_at + chrono::Duration::seconds(planned.max_duration_seconds.max(1) as i64)).timestamp_millis()),
             plan_hash: crate::agent_runtime::resume::plan_hash_of(&request.prompt),
             policy_hash: crate::agent_runtime::resume::policy_hash(
                 &signed_in,
-                request.classification,
+                Some(request.classification.unwrap_or(Classification::Internal)),
                 &format!("{:?}", crate::sovereignty::global_broker().mode()),
             ),
             // The workspace was created a moment ago, so this resolves. An
@@ -1502,19 +1567,20 @@ async fn drive_run(
                 .unwrap_or_default(),
             model_id: routing.model_id.clone(),
         };
-        if let Ok(mut seeds) = checkpoints.lock() {
-            seeds.insert(run_id.clone(), seed);
-        }
+        checkpoints.lock().map_err(|_| "The checkpoint identity table is unavailable.")?.insert(run_id.clone(), seed);
     }
 
     // The instant this run must stop by. A property of the plan, so it is only
     // knowable once the plan is fixed — and fixed it is: nothing after this
     // point may extend it.
-    let deadline = started_at
+    let initial_deadline = started_at
         + chrono::Duration::from_std(std::time::Duration::from_secs(
             planned.max_duration_seconds.max(1),
         ))
         .unwrap_or_else(|_| chrono::Duration::minutes(10));
+    let deadline = saved_core.as_ref().and_then(|core| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(core.deadline_ms))
+        .unwrap_or(initial_deadline);
+    if deadline <= chrono::Utc::now() { return Err("The original task deadline has expired; resuming cannot silently grant more time.".into()); }
     plans
         .lock()
         .map_err(|_| "the plan table is poisoned".to_string())?
@@ -1576,6 +1642,12 @@ async fn drive_run(
 
     let params = json!({
         "runId": run_id,
+        "execution": {
+            "protocolVersion": 1,
+            "attemptId": checkpoints.lock().map_err(|_| "The checkpoint identity is unavailable.")?
+                .get(&run_id).ok_or("The run has no checkpoint identity.")?.attempt_id,
+            "fenceToken": _claim.lease.fence_token,
+        },
         // The assistant `Message` id the front-end reserved via
         // `agent_append_turn`. The runtime attaches it to every
         // `message_start` / `message_update` / `message_end` event so the chat
@@ -1598,7 +1670,7 @@ async fn drive_run(
             "provider": provider_label(endpoint.runtime),
             "baseUrl": endpoint.base_url,
             "contextWindow": entry.context_length,
-            "maxTokens": DEFAULT_MAX_TOKENS,
+            "maxTokens": DEFAULT_MAX_TOKENS.min((entry.context_length / 4).max(128)),
             // Read from this model's own chat template, not from a list of
             // families. `false` means the model has no reasoning switch — it
             // either never produces a separable reasoning block or always
@@ -1631,7 +1703,7 @@ async fn drive_run(
         // unchanged. Refreshed by `run.note` as the run proceeds; sent here so
         // a run that compacts before its first refresh still carries its plan.
         "preserved": {
-            "activePlan": planned.stopped_because.clone(),
+            "activePlan": plan_note.clone(),
             "policyDecisions": Vec::<String>::new(),
         },
     });
@@ -1684,7 +1756,7 @@ async fn drive_run(
     // never answer makes no further calls, so nothing ever asks the plan
     // whether it may continue. Without a deadline on this side, that run waits
     // for as long as the application is open.
-    let allowed = std::time::Duration::from_secs(planned.max_duration_seconds.max(1));
+    let allowed = (deadline - chrono::Utc::now()).to_std().map_err(|_| "The original task deadline has expired.")?;
 
     // The last stage this side can report. From here the loop owns the
     // narrative: `message_start`, the token stream and the tool events are all
@@ -1706,7 +1778,7 @@ async fn drive_run(
     // side classifying a refusal it recognises. A timeout is this side's own
     // decision and overrides whatever the loop was about to say, because the
     // run stopped for a reason the loop never learned.
-    let (outcome, run_outcome): (Result<Value, String>, RunOutcome) =
+    let (outcome, mut run_outcome): (Result<Value, String>, RunOutcome) =
         match tokio::time::timeout(allowed, runtime.request("run.start", params)).await {
             Ok(Ok(value)) => {
                 // Never `RunCompleted` by default. A runtime that answered
@@ -1746,7 +1818,6 @@ async fn drive_run(
                 )
             }
         };
-    let ending = run_outcome.event_type();
 
     // From here the run is over, one way or the other, and everything below is
     // about leaving a record of it. A run that failed gets the same treatment
@@ -1770,7 +1841,11 @@ async fn drive_run(
     // back as `Ok` and both have something to say for themselves. Reading the
     // caveat off `Result` meant the only runs that ever carried one were the
     // ones whose transport failed.
-    let failure = run_outcome.detail().map(str::to_string);
+    let mut failure = run_outcome.detail().map(str::to_string);
+    if _claim.lost.load(std::sync::atomic::Ordering::Acquire) {
+        run_outcome = RunOutcome::NeedsReview { detail: "The execution lease was lost; this attempt cannot declare completion.".into() };
+        failure = run_outcome.detail().map(str::to_string);
+    }
 
     // The run's own notes and its final context ledger, as the loop reported
     // them. Read from the outcome rather than reconstructed: a run that failed
@@ -1915,28 +1990,19 @@ async fn drive_run(
     // re-opened from disk, the grounding report. Nothing here reads the
     // answer's claims about itself.
     let completion = {
-        let unknown_effects = events
-            .snapshot(&run_id)
-            .ok()
-            .flatten()
-            .map(|snapshot| {
-                snapshot
-                    .unknown_effects
-                    .iter()
-                    .map(|effect| effect.idempotency_key.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let (unknown_effects, pending_approvals, evidence_error) =
+            match events.completion_obligations(&run_id) {
+                Ok((effects, approvals)) => (effects, approvals, None),
+                Err(error) => (Vec::new(), 0, Some(error)),
+            };
 
         crate::agent_runtime::completion::verify(
             &crate::agent_runtime::completion::CompletionInputs {
+                evidence_error,
                 failure: failure.clone(),
                 unfinished_steps: final_plan.unfinished().len(),
                 unknown_effects,
-                pending_approvals: asked
-                    .iter()
-                    .filter(|approval| approval.state == "pending")
-                    .count(),
+                pending_approvals,
                 artifacts: produced_files
                     .iter()
                     .map(|artifact| (artifact.name.clone(), artifact.sound))
@@ -1953,7 +2019,7 @@ async fn drive_run(
     // Recorded as its own event, distinct from `verification_started`. Before
     // this, the history said a check had begun and never what it concluded, so
     // "it was checked" and "it passed" were indistinguishable after the fact.
-    let _ = record_and_publish(
+    let completion_commit = record_and_publish_watched(
         &app,
         &events,
         EventDraft::new(
@@ -1977,6 +2043,7 @@ async fn drive_run(
                 }))
                 .collect::<Vec<_>>(),
         })),
+        Some(&audit_health.0),
     );
 
     if !completion.passed() {
@@ -1985,6 +2052,18 @@ async fn drive_run(
             completion.explain()
         );
     }
+
+    run_outcome = completion.enforce_outcome(run_outcome);
+    let mut record_failed = completion_commit.err().map(|_| {
+        "The completion-verification record could not be saved.".to_string()
+    });
+    if let Some(detail) = &record_failed {
+        if run_outcome.is_success() {
+            run_outcome = RunOutcome::NeedsReview { detail: detail.clone() };
+        }
+    }
+    failure = run_outcome.detail().map(str::to_string);
+    final_plan.ended(failure.as_deref());
 
     let record = TaskRecord {
         run_id: run_id.clone(),
@@ -1999,6 +2078,7 @@ async fn drive_run(
         answer: answer.clone(),
         turns,
         verification: verification.clone(),
+        completion_verification: Some(completion.clone()),
         artifacts: produced_files.clone(),
         evidence: TaskRecord::evidence_from(&retrieved),
         calculations: worked,
@@ -2019,23 +2099,6 @@ async fn drive_run(
         working_notes,
         context_ledger,
     };
-
-    // Saved before anything is released, so a failure to write is a failure the
-    // person hears about rather than one that quietly loses the task.
-    //
-    // "Hears about" was aspirational until this carried it: the failure was
-    // logged and dropped, so a run whose record never reached the disk looked
-    // in every way like one whose record did — right up to the moment somebody
-    // opened it and found nothing there.
-    let mut record_failed: Option<String> = None;
-    match app_data_dir(&app).and_then(|dir| tasks::save(&dir, &record)) {
-        Ok(_) => {}
-        Err(error) => {
-            log::error!("[agent] the record for run {run_id} could not be saved: {error}");
-            audit_health.0.writes_failed(error.clone());
-            record_failed = Some(format!("Its record could not be saved: {error}"));
-        }
-    }
 
     // The ending, written last. Refused if the run already has one — a person
     // who pressed stop a moment before the loop finished has already given this
@@ -2077,15 +2140,31 @@ async fn drive_run(
     // with no ending in the log is a run recovery will later find still
     // "running" and close off as interrupted — so an unwritten ending does not
     // merely lose a row, it rewrites what the history says happened.
-    if let Err(error) = record_and_publish_watched(
-        &app,
-        &events,
-        EventDraft::idempotent(&run_id, ending, &signed_in.user.id, "ending").with(ending_payload),
-        Some(&audit_health.0),
-    ) {
-        log::error!("[tasks] run {run_id}: the ending was not recorded: {error}");
-        record_failed = Some(format!("Its ending could not be recorded: {error}"));
+    let publication = app_data_dir(&app).and_then(|dir| tasks::save_with_ending(&dir, &record, || {
+        let draft = EventDraft::idempotent(&run_id, run_outcome.event_type(), &signed_in.user.id, "ending")
+            .with(ending_payload);
+        match events.record_fenced(draft, &_claim.lease) {
+            Ok(event) => { let _ = app.emit(AGENT_DURABLE_EVENT, event.envelope()); }
+            Err(crate::agent_runtime::events::AppendError::Duplicate { .. })
+            | Err(crate::agent_runtime::events::AppendError::AlreadyEnded { .. }) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        events.snapshot(&run_id)?
+            .as_ref().and_then(RunOutcome::from_snapshot)
+            .ok_or_else(|| "The authoritative terminal state could not be confirmed.".into())
+    }));
+    match publication {
+        Ok(ending) => run_outcome = ending,
+        Err(error) => {
+            log::error!("[tasks] run {run_id}: final publication failed: {error}");
+            audit_health.0.writes_failed(error.clone());
+            record_failed = Some(format!("Its final state could not be published: {error}"));
+            run_outcome = RunOutcome::NeedsReview {
+                detail: "The final task state could not be published reliably.".into(),
+            };
+        }
     }
+    failure = run_outcome.detail().map(str::to_string);
 
     // ─────────────────────────────────────────────────────────────────────
     // Finalisation.
@@ -3267,36 +3346,7 @@ pub async fn agent_resume_run(
 
     let attempt = crate::agent_runtime::resume::Attempt::new(&run_id, &operator_intent, from_seq);
 
-    // Recorded before the loop is asked to do anything, and treated as
-    // recovery-critical: a resumption that is not in the history is one a later
-    // reader would count as part of the original attempt, and the whole point of
-    // an attempt id is that those are told apart.
-    events
-        .record(
-            EventDraft::new(
-                &run_id,
-                TaskEventType::RunResumed,
-                &signed_in.user.id,
-            )
-            .with(json!({
-                "attemptId": attempt.attempt_id,
-                "fromSeq": attempt.from_seq,
-                // The operator note, already bounded by `Attempt::new`.
-                "operatorIntent": attempt.operator_intent,
-            })),
-        )
-        .map_err(|error| {
-            format!(
-                "This run was not resumed: the resumption could not be recorded ({error}), and continuing without a record of it would leave the work unattributable."
-            )
-        })?;
-
-    let _ = audit.record(
-        &signed_in.user.id,
-        AuditKind::ModelRegistry,
-        format!("resumed task {run_id} as attempt {}", attempt.attempt_id),
-        None,
-    );
+    // The driver records this exact attempt only after it wins the lease.
 
     // What the run was asked to do, read back off its own durable record rather
     // than taken from the caller. A resumption that let the caller supply the
@@ -3310,8 +3360,10 @@ pub async fn agent_resume_run(
             "This run has no recorded state, so there is nothing to continue from.".to_string()
         })?;
 
+    let saved = events.load_context(&run_id)?.ok_or("This run has no durable context projection and needs review.")?;
+    let core = crate::agent_runtime::context_api::CoreCheckpoint::from_stored(&saved)?;
     let request = StartRunRequest {
-        prompt: snapshot.prompt.clone(),
+        prompt: core.objective,
         classification: snapshot.classification.as_deref().and_then(|label| {
             Classification::ALL
                 .iter()
@@ -3324,8 +3376,8 @@ pub async fn agent_resume_run(
         // already in the transcript with the answer the interrupted attempt
         // never produced, and appending a second assistant cell for the same
         // question would make the thread read as though it were asked twice.
-        conversation_id: None,
-        message_id: None,
+        conversation_id: Some(core.conversation_id),
+        message_id: Some(core.message_id),
         // Attachments belong to the request that carried them and are
         // deliberately not remembered between runs; see `StartRunRequest`. What
         // the earlier attempt read from them is in its notes.
@@ -3334,7 +3386,7 @@ pub async fn agent_resume_run(
     };
 
     drive_run(
-        Some(run_id),
+        Some(attempt),
         app,
         request,
         handle,

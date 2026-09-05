@@ -1,0 +1,9 @@
+[
+  { "kind": "completed" },
+  { "kind": "failed", "detail": "A required check failed." },
+  { "kind": "needsReview", "detail": "A durable effect is unresolved." },
+  { "kind": "aborted", "detail": "The operator cancelled." },
+  { "kind": "lengthLimited", "detail": "The output limit was reached." },
+  { "kind": "budgetStopped", "detail": "The run budget was exhausted." },
+  { "kind": "policyStopped", "detail": "Policy refused the action." }
+]

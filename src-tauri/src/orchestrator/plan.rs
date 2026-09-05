@@ -241,6 +241,21 @@ pub struct PlanRun {
     leases: HashMap<String, Lease>,
 }
 
+/// Application-owned execution counters. Grants/Instant values never survive a
+/// restart. Unsettled reservations are charged conservatively on restoration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanProgress {
+    pub task_id: String,
+    pub budget: Budget,
+    pub steps: Vec<PlanStep>,
+    pub elapsed_millis: u64,
+    pub steps_taken: u32,
+    pub seen: HashMap<String, u32>,
+    pub stopped: Option<StopReason>,
+    pub reserved_calls: u32,
+}
+
 /// A slot in the budget, held between authorisation and settlement.
 #[derive(Debug, Clone)]
 struct Lease {
@@ -275,6 +290,33 @@ pub enum Continuation {
 }
 
 impl PlanRun {
+    pub fn checkpoint_progress(&self) -> PlanProgress {
+        PlanProgress {
+            task_id: self.task_id.clone(), budget: self.budget.clone(), steps: self.steps.clone(),
+            elapsed_millis: self.started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            steps_taken: self.steps_taken, seen: self.seen.clone(), stopped: self.stopped.clone(),
+            reserved_calls: self.leases.len().min(u32::MAX as usize) as u32,
+        }
+    }
+
+    pub fn restore_progress(&mut self, saved: &PlanProgress) -> Result<(), String> {
+        if saved.task_id != self.task_id || serde_json::to_value(&saved.budget).ok() != serde_json::to_value(&self.budget).ok()
+            || saved.steps.len() != self.steps.len()
+            || saved.steps.iter().zip(&self.steps).any(|(old, new)| old.ordinal != new.ordinal || old.intent != new.intent)
+            || saved.steps_taken.saturating_add(saved.reserved_calls) > self.budget.max_steps
+            || saved.elapsed_millis > self.budget.max_duration.as_millis().min(u64::MAX as u128) as u64 {
+            return Err("The saved plan no longer matches its authority or has exhausted its budget.".into());
+        }
+        self.started_at = Instant::now().checked_sub(Duration::from_millis(saved.elapsed_millis))
+            .ok_or_else(|| "The saved execution clock cannot be restored.".to_string())?;
+        self.steps = saved.steps.clone();
+        self.steps_taken = saved.steps_taken.saturating_add(saved.reserved_calls);
+        self.seen = saved.seen.clone();
+        self.stopped = saved.stopped.clone();
+        self.leases.clear();
+        Ok(())
+    }
+
     pub fn new(task_id: impl Into<String>, steps: Vec<String>, budget: Budget) -> Self {
         Self {
             task_id: task_id.into(),

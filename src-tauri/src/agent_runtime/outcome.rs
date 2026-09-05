@@ -50,8 +50,10 @@ use super::events::TaskEventType;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RunOutcome {
-    /// The loop finished and the model stopped of its own accord.
+    /// The loop finished. The controller must pass its independent completion gate.
     Completed,
+    /// A required check or durable effect cannot be settled safely.
+    NeedsReview { detail: String },
     /// The provider or the loop errored.
     Failed { detail: String },
     /// A person, or the core shutting down, stopped it.
@@ -69,10 +71,27 @@ pub enum RunOutcome {
 }
 
 impl RunOutcome {
+    /// The stored terminal state wins a race with a worker's completion claim.
+    pub fn from_snapshot(snapshot: &super::events::TaskSnapshot) -> Option<Self> {
+        use super::events::RunState;
+        let detail = snapshot.failure.clone().unwrap_or_else(|| snapshot.state.describe().into());
+        Some(match snapshot.state {
+            RunState::Completed => Self::Completed,
+            RunState::Cancelled => Self::Aborted { detail },
+            RunState::Failed => Self::Failed { detail },
+            RunState::StoppedByBudget => Self::BudgetStopped { detail },
+            RunState::StoppedByLength => Self::LengthLimited { detail },
+            RunState::StoppedByPolicy => Self::PolicyStopped { detail },
+            RunState::DegradedNeedsHuman => Self::NeedsReview { detail },
+            _ => return None,
+        })
+    }
+
     /// The wire spelling, matching the TypeScript `RunOutcomeKind` union.
     pub const fn kind(&self) -> &'static str {
         match self {
             RunOutcome::Completed => "completed",
+            RunOutcome::NeedsReview { .. } => "needsReview",
             RunOutcome::Failed { .. } => "failed",
             RunOutcome::Aborted { .. } => "aborted",
             RunOutcome::LengthLimited { .. } => "lengthLimited",
@@ -90,6 +109,7 @@ impl RunOutcome {
     pub const fn event_type(&self) -> TaskEventType {
         match self {
             RunOutcome::Completed => TaskEventType::RunCompleted,
+            RunOutcome::NeedsReview { .. } => TaskEventType::RunDegraded,
             RunOutcome::Failed { .. } => TaskEventType::RunFailed,
             RunOutcome::Aborted { .. } => TaskEventType::RunCancelled,
             RunOutcome::LengthLimited { .. } => TaskEventType::RunStoppedByLength,
@@ -103,6 +123,7 @@ impl RunOutcome {
         match self {
             RunOutcome::Completed => None,
             RunOutcome::Failed { detail }
+            | RunOutcome::NeedsReview { detail }
             | RunOutcome::Aborted { detail }
             | RunOutcome::LengthLimited { detail }
             | RunOutcome::BudgetStopped { detail }
@@ -143,6 +164,9 @@ impl RunOutcome {
             .to_string();
         Some(match kind {
             "completed" => RunOutcome::Completed,
+            "needsReview" => RunOutcome::NeedsReview {
+                detail: fallback(detail, "A required check could not be completed safely."),
+            },
             "failed" => RunOutcome::Failed {
                 detail: fallback(detail, "The run did not finish."),
             },
@@ -295,6 +319,12 @@ mod tests {
 
     #[test]
     fn the_wire_spelling_matches_the_typescript_union() {
+        let fixtures: Vec<Value> = serde_json::from_str(include_str!("../../../contracts/run-outcomes.json")).unwrap();
+        for fixture in fixtures {
+            let outcome: RunOutcome = serde_json::from_value(fixture.clone()).expect("shared wire contract");
+            assert_eq!(serde_json::to_value(&outcome).unwrap(), fixture);
+            assert_eq!(outcome.is_success(), outcome.kind() == "completed");
+        }
         // The frontend narrows on these exact strings. A rename on this side
         // that is not made on that one is a silently unhandled state.
         let cases = [

@@ -49,6 +49,8 @@ pub const MAX_RECOVERY_ATTEMPTS: u32 = 2;
 
 pub mod approvals;
 pub mod checkpoint;
+pub mod context;
+pub mod operations;
 pub mod idempotency;
 pub mod lease;
 pub mod machine;
@@ -78,3 +80,5 @@ pub use store::{AppendError, EventPage, TaskEventLog};
 mod checkpoint_store_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod context_tests;

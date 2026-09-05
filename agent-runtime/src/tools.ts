@@ -30,6 +30,7 @@ import type { AgentTool, BeforeToolCallContext, BeforeToolCallResult } from "@op
 import { ErrorCode, type ErrorCodeValue } from "./protocol.js";
 import { definitionFor, TOOL_DEFINITIONS, type ToolDefinition } from "./catalogue.js";
 import { RpcError, type RpcPeer } from "./peer.js";
+type RequestPeer = Pick<RpcPeer, "request">;
 
 /** What the Rust gateway replies to `tool.authorize`. Mirrors `GatewayVerdict`. */
 export type Verdict =
@@ -140,7 +141,7 @@ export class GrantLedger {
  * the behaviour we want -- a refusal is information, not a crash.
  */
 export async function authorizeToolCall(
-  peer: RpcPeer,
+  peer: RequestPeer,
   ledger: GrantLedger,
   runId: string,
   context: BeforeToolCallContext,
@@ -185,7 +186,7 @@ function hostTool(options: {
   label: string;
   description: string;
   parameters: ToolDefinition["parameters"];
-  peer: RpcPeer;
+  peer: RequestPeer;
   ledger: GrantLedger;
   runId: string;
   modelId: string;
@@ -351,7 +352,7 @@ export interface Catalogue {
  * move things in. A run with no tools can still answer from what it was told,
  * and says plainly that it could not use any.
  */
-export async function fetchCatalogue(peer: RpcPeer, runId: string): Promise<Catalogue> {
+export async function fetchCatalogue(peer: RequestPeer, runId: string): Promise<Catalogue> {
   try {
     const answer = (await peer.request("tool.catalogue", { runId })) as Catalogue;
     return {
@@ -389,7 +390,7 @@ export async function fetchCatalogue(peer: RpcPeer, runId: string): Promise<Cata
  * enforces the consequence.
  */
 export function buildTools(
-  peer: RpcPeer,
+  peer: RequestPeer,
   ledger: GrantLedger,
   runId: string,
   modelId: string,

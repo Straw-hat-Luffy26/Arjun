@@ -185,6 +185,19 @@ impl ApprovalQueue {
         approve: bool,
         because: Option<&str>,
     ) -> Result<Decision, ApprovalError> {
+        self.decide_durable(session, id, approve, because, |_| Ok(()))
+    }
+
+    /// Validate under the queue lock, commit durably, then wake live readers.
+    /// If the commit fails no in-memory decision is exposed to the waiter.
+    pub fn decide_durable(
+        &self,
+        session: &Session,
+        id: &str,
+        approve: bool,
+        because: Option<&str>,
+        commit: impl FnOnce(&Decision) -> Result<(), String>,
+    ) -> Result<Decision, ApprovalError> {
         // The actor must hold ApproveOutput. In the 2-role model that is
         // both Administrator and Employee; the policy gateway separately
         // refuses an actor from approving a task they themselves own.
@@ -210,6 +223,10 @@ impl ApprovalQueue {
             return Err(ApprovalError::new(format!("There is no approval request {id:?}.")));
         };
 
+        if item.request.requested_by == session.user.id {
+            return Err(ApprovalError::new("You cannot approve or reject your own action."));
+        }
+
         // A decision is final. Reversing one silently would make every approval
         // record unprovable.
         if let Some(existing) = &item.decision {
@@ -231,6 +248,7 @@ impl ApprovalQueue {
             }
         };
 
+        commit(&decision).map_err(ApprovalError::new)?;
         item.decision = Some(decision.clone());
         Ok(decision)
     }
@@ -240,6 +258,15 @@ impl ApprovalQueue {
 mod tests {
     use super::*;
     use crate::identity::UserDirectory;
+
+    #[test]
+    fn a_failed_durable_commit_never_releases_a_waiter() {
+        let queue = ApprovalQueue::new();
+        let actor = crate::identity::Session::open(crate::identity::User::new("reviewer", "Reviewer", vec![crate::identity::Role::Employee]));
+        queue.request(request("a"));
+        assert!(queue.decide_durable(&actor, "a", true, None, |_| Err("disk full".into())).is_err());
+        assert!(queue.find("a").unwrap().is_pending());
+    }
 
     fn session(user_id: &str) -> Session {
         let directory = UserDirectory::seeded();
@@ -296,18 +323,25 @@ mod tests {
     }
 
     /// An Employee holds ApproveOutput in the 2-role model, so an Employee
-    /// can also approve a task — provided they are not the task owner. The
-    /// policy gateway's separation-of-duties check is what blocks an actor
-    /// from approving their own work; the queue itself only checks the
-    /// permission.
+    /// can also approve a task — provided they are not the task owner.
     #[test]
     fn an_employee_may_approve_someone_elses_task() {
         let queue = ApprovalQueue::new();
-        queue.request(request("a1"));
+        let mut action = request("a1");
+        action.requested_by = "another-employee".into();
+        queue.request(action);
 
         let decision = queue.decide(&session("engineer"), "a1", true, None).unwrap();
         assert!(decision.approved());
         assert_eq!(queue.pending_count(), 0);
+    }
+
+    #[test]
+    fn the_requester_cannot_approve_their_own_action() {
+        let queue = ApprovalQueue::new();
+        queue.request(request("a1"));
+        assert!(queue.decide(&session("engineer"), "a1", true, None).is_err());
+        assert!(queue.find("a1").unwrap().is_pending());
     }
 
     /// A legacy role (kept on the enum for test compat) grants nothing in

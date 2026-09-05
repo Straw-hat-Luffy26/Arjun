@@ -371,6 +371,10 @@ pub struct TaskRecord {
     pub turns: u32,
     /// Absent when the run produced no answer to check.
     pub verification: Option<VerificationReport>,
+    /// The independent run-level gate; old records remain readable but are not
+    /// promoted to verified success when this evidence is absent.
+    #[serde(default)]
+    pub completion_verification: Option<super::completion::CompletionVerification>,
     pub artifacts: Vec<ArtifactReport>,
     pub evidence: Vec<EvidenceRecord>,
     pub calculations: Vec<CalculationRecord>,
@@ -427,6 +431,8 @@ impl TaskRecord {
     /// Whether this task can be handed on as it stands.
     pub fn is_ready(&self) -> bool {
         self.failure.is_none()
+            && self.outcome.as_ref().is_some_and(super::outcome::RunOutcome::is_success)
+            && self.completion_verification.as_ref().is_some_and(super::completion::CompletionVerification::passed)
             && self
                 .verification
                 .as_ref()
@@ -579,6 +585,31 @@ pub fn directory(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("tasks")
 }
 
+/// Publish success only after the controller has committed and read the ending.
+/// A crash or failed terminal write leaves an inspectable, non-successful record.
+/// The callback returns the authoritative ending, including a winning cancellation.
+pub fn save_with_ending(
+    app_data_dir: &Path,
+    record: &TaskRecord,
+    finish: impl FnOnce() -> Result<super::outcome::RunOutcome, String>,
+) -> Result<super::outcome::RunOutcome, String> {
+    let mut saved = record.clone();
+    if saved.outcome.as_ref().is_some_and(super::outcome::RunOutcome::is_success) {
+        let pending = super::outcome::RunOutcome::NeedsReview {
+            detail: "Final publication has not been confirmed.".into(),
+        };
+        saved.failure = pending.detail().map(str::to_string);
+        saved.outcome = Some(pending);
+    }
+    save(app_data_dir, &saved)?;
+    let outcome = finish()?;
+    saved.failure = outcome.detail().map(str::to_string);
+    saved.plan.ended(saved.failure.as_deref());
+    saved.outcome = Some(outcome.clone());
+    save(app_data_dir, &saved)?;
+    Ok(outcome)
+}
+
 /// Writes one record.
 ///
 /// Written to a temporary name and renamed into place, so a crash midway
@@ -713,6 +744,7 @@ pub(crate) mod tests {
             working_notes: None,
             context_ledger: None,
             verification: None,
+            completion_verification: None,
             artifacts: Vec::new(),
             evidence: Vec::new(),
             calculations: Vec::new(),
@@ -733,6 +765,38 @@ pub(crate) mod tests {
         assert_eq!(read.prompt, written.prompt);
         assert_eq!(read.routing.model_name, "Qwen2.5 7B");
         assert_eq!(read.plan.permitted_tools, vec!["knowledge.search_authorized"]);
+    }
+
+    #[test]
+    fn a_failed_terminal_commit_cannot_leave_a_successful_task_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let candidate = record("r", "2026-08-27T10:00:42+00:00");
+        let result = save_with_ending(dir.path(), &candidate, || {
+            let provisional = load(dir.path(), "r", None).unwrap();
+            assert!(!provisional.outcome.unwrap().is_success());
+            Err("injected terminal-write failure".into())
+        });
+        assert!(result.is_err());
+        assert!(!load(dir.path(), "r", None).unwrap().outcome.unwrap().is_success());
+    }
+
+    #[test]
+    fn a_cancellation_winning_the_terminal_race_is_saved_instead_of_model_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let candidate = record("r", "2026-08-27T10:00:42+00:00");
+        let ending = super::super::outcome::RunOutcome::Aborted { detail: "Stopped by operator".into() };
+        assert_eq!(save_with_ending(dir.path(), &candidate, || Ok(ending.clone())).unwrap(), ending);
+        let saved = load(dir.path(), "r", None).unwrap();
+        assert_eq!(saved.outcome, Some(ending));
+        assert_eq!(saved.failure.as_deref(), Some("Stopped by operator"));
+    }
+
+    #[test]
+    fn an_unwritable_provisional_record_does_not_commit_a_successful_ending() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(directory(dir.path()), "not a directory").unwrap();
+        let candidate = record("r", "2026-08-27T10:00:42+00:00");
+        assert!(save_with_ending(dir.path(), &candidate, || panic!("must not declare success")).is_err());
     }
 
     #[test]

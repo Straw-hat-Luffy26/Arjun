@@ -42,8 +42,6 @@ import {
   DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
   findCutPoint,
-  generateSummary,
-  shouldCompact,
   type AgentMessage,
   type CompactionSettings,
 } from "@openclaw/agent-core";
@@ -55,6 +53,8 @@ import type { Model } from "@openclaw/ai";
 import type { AgentCoreCompletionRuntimeDeps } from "@openclaw/agent-core";
 import { ContextLedger, type ContextLedgerSnapshot } from "./context-ledger.js";
 import { WorkingNotes } from "./working-notes.js";
+import { admitProjection, ContextBudgetExceeded, inputBudget, projectedTokens } from "./context-budget.js";
+import { generateBoundedSummary } from "./bounded-summary.js";
 
 /**
  * State that must survive compaction verbatim rather than through a summary.
@@ -115,7 +115,9 @@ export interface CompactorOptions {
   /** Placeholder credential; a loopback server wants none but the client demands one. */
   apiKey: string;
   /** Called when a compaction happens, so an operator can be told. */
-  onCompacted?: (event: CompactionEvent) => void;
+  onCompacted?: (event: CompactionEvent, projection: AgentMessage[]) => void | Promise<void>;
+  /** Must commit progress before calling a summarizer. A rejection stops the loop. */
+  onCompactionStarted?: () => Promise<void>;
   settings?: Partial<CompactionSettings>;
   /**
    * The run's bounded notes.
@@ -391,14 +393,15 @@ function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp:
 
   return {
     role: "user",
+    arjunContextState: true,
     content: [
       {
         type: "text",
-        text: `The earlier history was replaced by the summary above. These facts were carried across unchanged and are current:\n${lines.join("\n")}`,
+        text: `Current task state, carried from structured records:\n${lines.join("\n")}`,
       },
     ],
     timestamp,
-  } as AgentMessage;
+  } as unknown as AgentMessage;
 }
 
 /**
@@ -408,6 +411,21 @@ function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp:
  * of the transcript that summary already covers, so each compaction extends the
  * previous one rather than starting again.
  */
+export function trimLargeSavedToolResults(messages: AgentMessage[], maxChars: number): { messages: AgentMessage[]; cleared: number } {
+  let cleared=0;
+  const projected=messages.map((message): AgentMessage => {
+    const seq=(message as AgentMessage & { arjunRawSeq?: number }).arjunRawSeq;
+    if (message.role !== "toolResult" || !Number.isSafeInteger(seq) || (seq ?? 0)<1) return message;
+    const text=textOf(message);
+    if (text.length<=maxChars) return message;
+    cleared++;
+    const preview=text.slice(0,maxChars);
+    const reference=`\n[Preview only. Exact saved result: memory.recall_authorized({scope:"run",transcriptSeq:${seq},offsetChars:0,limitChars:1536}). Read the required pages before relying on omitted details.]`;
+    return { ...message,content:[{type:"text",text:preview+reference}] };
+  });
+  return { messages:projected,cleared };
+}
+
 export class RunCompactor {
   readonly #options: CompactorOptions;
   readonly #settings: CompactionSettings;
@@ -456,15 +474,14 @@ export class RunCompactor {
 
   /** What the model is shown, given the transcript and any summary so far. */
   #project(messages: AgentMessage[]): AgentMessage[] {
-    const notes = this.#notes.render();
 
     if (!this.#summary || this.#covered === 0) {
       // Before any compaction the notes still go in, ahead of the transcript.
       // A model asked to maintain notes it has never been shown maintains
       // nothing, and the first thing it would have recorded is the goal — which
       // is exactly what the first compaction is most likely to lose.
-      if (!notes) return messages;
-      return [this.#notesMessage(notes, asEpoch(messages[0]?.timestamp)), ...messages];
+      const carried=preservedMessage(this.#options.preserved?.() ?? {},this.#notes,asEpoch(messages[0]?.timestamp) ?? Date.now());
+      return carried ? [carried,...messages] : messages;
     }
 
     const summary = createCompactionSummaryMessage(
@@ -486,16 +503,8 @@ export class RunCompactor {
     return carried ? [summary, carried, ...tail] : [summary, ...tail];
   }
 
-  #notesMessage(rendered: string, timestamp?: number): AgentMessage {
-    return {
-      role: "user",
-      content: [{ type: "text", text: rendered }],
-      timestamp: timestamp ?? Date.now(),
-    } as AgentMessage;
-  }
-
   #tokensAt(messages: AgentMessage[]): number {
-    return estimateContextTokens(messages).tokens;
+    return projectedTokens(messages);
   }
 
   /**
@@ -507,6 +516,12 @@ export class RunCompactor {
    */
   async transform(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
     const window = this.#options.model.contextTokens ?? this.#options.model.contextWindow ?? 0;
+    const budget = inputBudget(window, this.#options.model.maxTokens ?? this.#settings.reserveTokens);
+    const sections = this.#ledger.snapshot().sections;
+    const fixedTokens = sections.system + sections.toolSchema + sections.skill;
+    if (fixedTokens >= budget) {
+      throw new ContextBudgetExceeded("system instructions and tool definitions leave no capacity for the task.");
+    }
 
     // Cheapest saving first, and it happens whether or not this turn compacts:
     // a passage whose marker is already durable is a second copy of something
@@ -514,15 +529,16 @@ export class RunCompactor {
     // all. Doing it only at compaction time would mean the run summarises
     // history it did not have to lose.
     const pruned = pruneStaleToolResults(messages, this.#notes.state.evidenceIds);
-    const working = pruned.messages;
-    this.#cleared = pruned.cleared;
+    const trimmed = trimLargeSavedToolResults(pruned.messages,Math.max(256,Math.min(1536,Math.floor((budget-fixedTokens)*0.35))));
+    const working = trimmed.messages;
+    this.#cleared = pruned.cleared + trimmed.cleared;
 
     let projected = this.#project(working);
     const tokensBefore = this.#tokensAt(projected);
     this.#measure(projected);
 
-    if (!shouldCompact(tokensBefore, window, this.#settings)) {
-      return projected;
+    if (tokensBefore + fixedTokens <= budget) {
+      return admitProjection(projected, fixedTokens, budget);
     }
 
     const entries = asEntries(working);
@@ -530,14 +546,14 @@ export class RunCompactor {
       entries,
       this.#covered,
       entries.length,
-      this.#settings.keepRecentTokens,
+      Math.min(this.#settings.keepRecentTokens, Math.floor((budget - fixedTokens) * 0.5)),
     );
 
     // Nothing new to fold in. Returning the projection unchanged is the honest
     // answer: the request may still be too large, and the provider's own
     // refusal names the real problem better than a summary of nothing would.
     if (firstKeptEntryIndex <= this.#covered) {
-      return projected;
+      return admitProjection(projected, fixedTokens, budget);
     }
 
     const toSummarise = working.slice(this.#covered, firstKeptEntryIndex);
@@ -545,6 +561,7 @@ export class RunCompactor {
     // extend the existing summary or replace it?" is decided by whether one was
     // held going in, and `#summary` is overwritten below.
     const refinedExistingSummary = this.#summary !== undefined;
+    await this.#options.onCompactionStarted?.();
 
     // Two failure shapes, both of which must leave the run alive: a returned
     // error result, and a throw. `generateSummary` propagates whatever the
@@ -554,29 +571,15 @@ export class RunCompactor {
     // an operator experiences as ARJUN crashing, not as summarisation failing.
     let summary: string | undefined;
     try {
-      const result = await generateSummary(
-        toSummarise,
-        this.#options.model,
-        this.#settings.reserveTokens,
-        this.#options.apiKey,
-        undefined,
-        signal,
-        undefined,
-        this.#summary,
-        undefined,
-        undefined,
-        this.#options.runtime,
-      );
-      summary = result.ok ? result.value : undefined;
+      summary = await generateBoundedSummary({ messages: toSummarise, model: this.#options.model,
+        runtime: this.#options.runtime, apiKey: this.#options.apiKey, signal, previousSummary: this.#summary });
     } catch {
       summary = undefined;
     }
 
     if (summary === undefined) {
-      // The context is returned as it was. If it really is too large the
-      // provider says so, which is a clearer error than one about summarisation
-      // the operator never asked for.
-      return projected;
+      // Compression failure does not grant permission to exceed the window.
+      return admitProjection(projected, fixedTokens, budget);
     }
 
     this.#summary = capCompactionSummary(summary);
@@ -589,7 +592,7 @@ export class RunCompactor {
     projected = this.#project(working);
     this.#measure(projected);
 
-    this.#options.onCompacted?.({
+    await this.#options.onCompacted?.({
       tokensBefore,
       tokensAfter: this.#tokensAt(projected),
       messagesSummarised: this.#covered,
@@ -597,8 +600,8 @@ export class RunCompactor {
       refinedExistingSummary,
       toolResultsCleared: this.#cleared,
       ledger: this.#ledger.snapshot(),
-    });
-    return projected;
+    }, projected);
+    return admitProjection(projected, fixedTokens, budget);
   }
 
   /**

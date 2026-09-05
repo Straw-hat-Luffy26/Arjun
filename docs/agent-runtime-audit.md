@@ -1,5 +1,389 @@
 # Agent runtime audit — durable long-running tasks on a small context window
 
+## Current audit: 2026-09-04, commit `fa1cbbd`
+
+This section supersedes conflicting claims in the historical audit below. It
+was checked against the current source, not inferred from earlier test counts.
+Scope: the attachment's audit-first response; application implementation is
+not part of this pass. Only this document is changed.
+
+**Verdict: high risk; the requested reliability contract is not yet met.**
+The repository is suitable for incremental implementation, but its Rust runtime
+currently fails to compile. Most necessary components exist; several are only
+partly connected, and some live failure paths permit execution without durable
+records. Automatic resumption must not be enabled until those paths are fixed.
+
+Audit method: trace entry points through authority checks, storage writes,
+model context, tool execution, recovery and final status. Findings below name
+the failing layer and the source evidence. Static findings describe reachable
+code paths; they are not claims that a real crash simulation passed.
+
+### Severity-ranked findings
+
+1. **Critical — an intent-storage failure permits the side effect.**
+   `events/store.rs:659` returns `EffectLookup::Fresh` on a poisoned lock or a
+   database insertion error. `agent_runtime/mod.rs:1517` treats `Fresh` as
+   permission to proceed. `store.rs:684` also suppresses settlement failures.
+   Thus the intended intent-before-effect boundary is not enforced when storage
+   fails. Return a typed error and stop before execution; an unrecordable result
+   after execution must block further progress as ambiguous. Layer: persistence
+   and tool execution. Confidence: 1.00, source-confirmed.
+
+2. **Critical — the completion verifier does not gate completion.**
+   `commands/agent.rs:1749` selects the terminal event from the model-loop
+   outcome before verification. The verifier runs at `:1917`, but a failed
+   report is only logged at `:1982`; the preselected ending is written at
+   `:2083`. `agent_runtime/tasks.rs:428` independently computes readiness without
+   checking the new verification record. A normally stopped model can therefore
+   produce a `RunCompleted` event despite an unknown effect or failed criterion.
+   Make the durable verifier verdict control terminal state and all UI readiness
+   projections in the same committed transition. Layer: completion and answer
+   presentation. Confidence: 1.00, source-confirmed.
+
+3. **Critical — leases do not fence execution or state writes.**
+   `commands/agent.rs:105` assigns one owner per process, and `:1313` acquires a
+   claim. `events/lease.rs:148` allows the same owner to reclaim a live run, so
+   two requests in one process are not excluded by the lease. The token is used
+   on release, not on event/checkpoint/effect writes. `renew_claim` has no live
+   caller; a lease expires after 300 seconds. Release deletes the row, allowing
+   token numbering to restart on a later acquisition. Use unique attempt owners,
+   monotonic retained fences, a heartbeat, and transactional fence checks at
+   every advance and effect boundary. Layer: concurrency/persistence.
+   Confidence: 1.00, source-confirmed.
+
+4. **High — Rust baseline does not compile.** `events/store.rs:533`, `:544`,
+   `:569`, `:579` and `:589` reference `MAX_RECOVERY_ATTEMPTS` without importing
+   it from the parent module. The constant exists at `events/mod.rs:48`.
+   The focused Rust test command fails with five E0425 errors before any test
+   runs. Fix this first and establish a fresh baseline. Layer: build/runtime
+   integration. Confidence: 1.00, compiler-confirmed.
+
+5. **High — live checkpoints contain empty progress notes.** The only live
+   tool-result checkpoint caller, `recording.rs:227`, supplies
+   `RunMemory::default()`. `:128` supplies no context ledger. TypeScript updates
+   its own notes after receiving the tool result (`tools.ts:257`), but those
+   updates are not acknowledged into the checkpoint; final notes arrive only
+   when `run.start` returns. Checkpoint reads also turn ledger-query failures
+   into empty state (`recording.rs:110`). Persist the structured result,
+   derived progress and checkpoint before releasing the next model step.
+   Layer: checkpointing and distillation. Confidence: 1.00, source-confirmed.
+
+6. **High — manual resumption is a fresh execution path under an old id.**
+   `agent_resume_run` now really calls `drive_run`, so the historical claim that
+   it never executes is obsolete. However, it drops attachments, scenario
+   instructions and conversation/message identity (`commands/agent.rs:3313`).
+   The shared driver reroutes the model, emits opening events (`:1401`), derives
+   a new plan (`:1459`), resets the duration allowance (`:1513`) and generates an
+   attempt id different from the `RunResumed` attempt (`:1487`, `:3268`). It does
+   not restore completed step/budget state. There is also a concrete default
+   classification mismatch: the opening records `Internal` when classification
+   was absent (`:1412`), but the checkpoint hashes the original `None`
+   (`:1490`), and resume hashes the recorded `Internal` (`:3420`). Such runs
+   refuse with `PolicyChanged`. Build a distinct restore path with durable input
+   references and one attempt identity; do not replay creation or reset budgets.
+   Layer: task/session reconstruction. Confidence: 0.99, source-confirmed.
+
+7. **High — approval persistence is not durable suspension/resumption.**
+   Requests are now saved and pending requests restored at startup
+   (`approval.rs:99`, `lib.rs:466`), correcting the old audit. But request-write
+   errors only warn (`approval.rs:111`); decision writes follow the in-memory
+   decision and also only warn (`commands/approvals.rs:45`, `:84`). Each call
+   creates a new UUID, stores display arguments rather than the complete
+   normalized call, and has no stored expiry despite a live wait timeout.
+   `DurableApproval::authorises` is used only in tests. Restored approvals have
+   no waiter; resolving one does not restart its run. Persist exact call-bound
+   approvals and decisions first, suspend at a checkpoint, and consume an
+   unexpired decision once through the Rust authorization boundary. Preserve
+   requester identity and authorization scope on restore. Layer: human control
+   and persistence. Confidence: 1.00, source-confirmed.
+
+8. **High — recovery does not resume work, and its attempt limit cannot count
+   repeated recoveries correctly.** Startup now marks suitable runs
+   `RecoveryStarted`, rather than degrading every interrupted run
+   (`events/store.rs:535`), but `lib.rs:519` only invokes the assessment and logs
+   it. There is no dispatcher and no frontend caller for `agent_resume_run`
+   (`src-tauri/ipc-manifest.json:80`). Every recovery-start event uses the same
+   idempotency component `"recovery"`; duplicate events are ignored, preventing
+   the counter from representing subsequent attempts. Startup also strands all
+   pending effects without checking live leases. Add per-attempt event identity,
+   lease-aware discovery and authenticated bounded dispatch. Layer: lifecycle
+   and observability. Confidence: 1.00, source-confirmed.
+
+9. **High — resumability checks stale unknown-effect state.**
+   `commands/agent.rs:3380` loads a checkpoint; `checkpoint.rs:293` consults its
+   stored unknown-effect list, not a fresh effect-ledger query. A later unknown
+   effect can therefore be missed by that assessment. Conversely, startup makes
+   an ambiguous run terminal, and reconciliation does not reopen it; the terminal
+   check then prevents resumption even after a reviewer settles the effect.
+   Reconcile and validate current pending/unknown intents inside the acquired
+   lease transaction, then follow explicit reviewed-resume transitions without
+   rewriting historical endings. Layer: recovery and idempotency.
+   Confidence: 0.99, source-confirmed.
+
+10. **High — there is no complete durable model/tool transcript.**
+    `run.ts:590` retains the agent message history in process memory.
+    `recording.rs:203` hashes/redacts tool-result content in the event log, while
+    `events/idempotency.rs:220` caps replay text at 400 characters. Conversation
+    JSON persists the visible chat, not the provider-valid raw tool exchanges.
+    Compaction events persist counts, not the summary. A digest is useful audit
+    evidence but cannot reconstruct lost content. Add an access-controlled
+    transcript/body store with references and digests in the event log; do not
+    widen access by copying confidential bodies into broadly readable events.
+    Layer: canonical history and context reconstruction.
+    Confidence: 0.99, source-confirmed.
+
+11. **High — context measurement is not a hard request budget.**
+    `compaction.ts:150` reserves about 20% and triggers at roughly 80%, rather
+    than the requested configurable 65–75% safety threshold. The trigger at
+    `:524` counts projected messages, while system instructions and tool schemas
+    are accounted for separately. If nothing can be cut (`:539`) or summarizing
+    fails (`:575`), the oversized projection is returned unchanged. No final
+    whole-request admission check prevents an overflow. Keep pair-aware cuts,
+    but budget all sections plus output/recovery reserves and fail or retry
+    boundedly before making an over-budget provider call. Layer: context and
+    hidden summarization failure. Confidence: 1.00, source-confirmed.
+
+12. **High — retry and reconciliation policy exists only as metadata.**
+    `tool_policy.rs` declares classes, backoff, retryability and reconciliation,
+    but the live executor does not consume those policies. Unknown effects are
+    settled manually, not by the declared artifact inspector. The deterministic
+    key is based on run, tool and raw arguments (`idempotency.rs:82`), not a
+    stable logical operation: distinct steps with identical arguments collapse,
+    while alternate argument representations can differ. Failed calls replay
+    their cached failure indefinitely. Add logical operation ids, normalized
+    argument digests, durable retry counters and per-tool reconciliation adapters;
+    retain fail-closed review for opaque executions. Layer: tool lifecycle.
+    Confidence: 0.99, source-confirmed.
+
+13. **Medium — task memory is volatile and conflicting values replace history.**
+    `MemoryScope::Run` is explicitly non-durable (`memory.rs:78`); user/workspace
+    scopes are persisted. Same-key values are replaced (`:632`) without a
+    supersession/conflict history. Existing items already have `updated_at`,
+    provenance, ACL, classification and optional approval, so these must be
+    extended rather than reinvented. Add durable task facts, source-event links,
+    confidence and explicit supersession/conflict records; retain the existing
+    approved-promotion boundary for shared memory. Layer: long-term memory.
+    Confidence: 1.00, source-confirmed.
+
+14. **Medium — lifecycle vocabulary exceeds live behavior.** Compacting,
+    recovering, paused and external-wait states now exist. However,
+    `ModelRequested`, `CompactionStarted`, `WaitStarted` and `RunPaused` have no
+    live producers in the Rust runtime. There is no durable pause/wait command or
+    validated control-action union for update-plan/wait/complete. No test found
+    drives the requested compaction → process restart → approval → final
+    verification journey through the real controller. Wire events at actual
+    boundaries, add typed actions and implement the deterministic crash harness.
+    Layer: control protocol, tests and observability.
+    Confidence: 0.99, source-confirmed.
+
+Source paths above are relative to `src-tauri/src/agent_runtime/` unless prefixed
+with `commands/` or `lib.rs` (relative to `src-tauri/src/`), or named TypeScript
+files (relative to `agent-runtime/src/`). Source line numbers refer to `fa1cbbd`.
+
+### Current execution and storage map
+
+```text
+React chat / Tasks
+  -> Tauri commands::agent::{agent_start_run, drive_run}
+     -> identity / permission / sovereignty checks
+     -> attachments, deterministic planning, Rust model routing and serving
+     -> Node child over stdio JSON-RPC: run.start
+        -> vendored OpenClaw Agent + local model adapter
+        -> tool.authorize -> Rust policy / approvals / single-use grant
+        -> tool.execute   -> Rust tool executor / effect ledger
+     -> durable event notifications + UI progress
+     -> grounding and artifact checks / completion report / terminal record
+
+Rust persistence
+  +-- SQLite task_events: append-only triggers, per-run ordered events
+  +-- SQLite task_snapshots: rebuildable UI projection
+  +-- SQLite run_checkpoints: latest hash-checked checkpoint per run
+  +-- SQLite task_tool_effects: pending / succeeded / failed / unknown
+  +-- SQLite run_approvals and run_leases
+  +-- Conversation JSON: owner-scoped visible messages
+  +-- Task JSON: final answer, evidence, artifacts and notes at run end
+  +-- Memory files: durable user/workspace scope; task scope remains volatile
+```
+
+The app is Tauri 2 / Rust, React 19 / TypeScript / Vite, a bundled Node runtime,
+local llama-compatible serving, and Python document/memory sidecars. The
+existing npm lockfiles, `rusqlite`, `serde`, `chrono`, `sha2`, `tokio` and vendored
+agent packages provide the necessary building blocks. No new framework,
+database server or dependency is justified by this audit.
+
+Entrypoints are `src/main.tsx`, `src-tauri/src/{main,lib}.rs` and
+`agent-runtime/src/main.ts`. User task commands are Tauri IPC, not REST job
+routes. A separate optional loopback Axum gateway exposes `/v1/models`,
+`/v1/chat/completions` and `/v1/messages` with SSE; it is not a durable task
+worker. Its local-host/origin checks are separate from Tauri session permissions.
+The existing inference scheduler is also not a crash-recovery dispatcher.
+
+Failures currently have typed loop outcomes, run deadlines, cancellation,
+provider transport helpers and tool-call repair. These do not provide a durable
+per-step recovery policy. Existing compaction preserves call/result pairs and
+keeps bounded notes, but context is still a projection of in-process history.
+Tauri's build configuration bundles the Node runtime; offline deployment scripts
+are already present. Recovery should run inside the Rust authority boundary,
+not as a new daemon with wider privileges.
+
+### State and migration approach
+
+Keep `run_id` as the logical task id and `attempt_id` as the execution attempt;
+introducing another task identifier is unnecessary unless the product needs
+multiple independent runs under one task. Preserve conversation/message and
+operator identity across attempts.
+
+There is already a transactional `PRAGMA user_version` migration runner with
+version 1 creating `run_approvals`. Leases and effect/checkpoint tables also have
+existing preparation code. Append new migrations; do not edit a shipped
+migration or delete old records. Proposed additions, not applied in this pass:
+
+- Durable execution record: objective, criteria, phase, stable step ids,
+  completed/remaining work, next action, attempt identity, state version,
+  original deadline, consumed budget, per-step retry and recovery counters,
+  current checkpoint/event reference and active fence.
+- ACL-scoped request/transcript bodies: original input references, model
+  messages, tool call/result pairs, summaries and content digests. Keep raw
+  sensitive content out of the general event stream.
+- Logical-operation ledger: normalized arguments or protected argument
+  references, retry state, request/business identifier, response digest and
+  reconciliation evidence. Pending and unknown are separate blocking states.
+- Approval requester/scope/operation binding, expiry, consumed-decision marker;
+  task-memory provenance/conflict records; completion evidence records.
+
+Snapshots remain caches. A transactional event/state/checkpoint boundary with
+fence and expected-version checks becomes the authority to advance. Run- and
+event-level schema versions are not substitutes for optimistic state versions.
+
+### Ordered implementation plan and proposed files
+
+1. **Restore the build and fail closed at durable boundaries.** Fix the import;
+   make intent creation, result settlement, approval decisions, checkpointing
+   and completion persistence return actionable failures. Wire verifier outcome
+   to terminal state and UI readiness. Files:
+   `src-tauri/src/agent_runtime/{completion,recording,tasks}.rs`,
+   `src-tauri/src/agent_runtime/events/{store,idempotency}.rs`,
+   `src-tauri/src/commands/{agent,approvals}.rs` and runtime tests.
+
+2. **Make one attempt the exclusive writer.** Add retained monotonic fencing,
+   unique owners, heartbeat and compare-and-swap state. Acquire before restoring
+   or appending resume events. Refuse stale writes and side effects. Files:
+   `src-tauri/src/agent_runtime/events/{lease,store,migrations,checkpoint}.rs`,
+   `src-tauri/src/agent_runtime/mod.rs`, `src-tauri/src/commands/agent.rs`.
+
+3. **Persist enough state to restore a task.** Add execution and protected
+   transcript stores; restore original identity, effective classification,
+   policy, model constraints, attachments, plan progress and budget. Commit
+   tool results and structured notes before the next model call. Files:
+   `src-tauri/src/agent_runtime/{resume,recording,protocol,memory}.rs`,
+   `src-tauri/src/agent_runtime/events/{checkpoint,model,projection,store,migrations}.rs`,
+   `src-tauri/src/commands/agent.rs`, `agent-runtime/src/{run,main,protocol,tools}.ts`.
+   New focused modules: `agent_runtime/execution.rs` and
+   `agent_runtime/transcript.rs` under `src-tauri/src/`.
+
+4. **Project a bounded context and commit compaction separately.** Introduce
+   a whole-request budget (default safety fraction 0.70), deterministic trimming
+   with pair preservation, typed next actions, durable summary versions and
+   task-memory flushes. Failed compaction must not dispatch an oversized call.
+   Files: `agent-runtime/src/{run,compaction,context-ledger,working-notes}.ts`,
+   new `agent-runtime/src/context-builder.ts`, the transcript/memory modules,
+   and context tests. Shared memory promotion remains explicitly approved.
+
+5. **Drive bounded recovery and durable approvals.** Discover candidates only
+   after lease checks; reconcile effects; authenticate the original operator;
+   resume the same safe boundary. Persist waits and decisions; consume approval
+   only for the unchanged call. Wire per-tool retry/reconciliation policy.
+   Files: `src-tauri/src/agent_runtime/{resume,approval,tool_policy,mod}.rs`,
+   `src-tauri/src/agent_runtime/events/{approvals,store,machine,model}.rs`,
+   `src-tauri/src/orchestrator/approvals.rs`, `src-tauri/src/commands/{agent,approvals}.rs`,
+   `src-tauri/src/{lib.rs,config/defaults.rs}`, `src-tauri/ipc-manifest.json`,
+   `src/services/{agent.service,approvals.service}.ts`, and `src/pages/Tasks.tsx`.
+   Add pause/resume/inspect controls without conflating pause with cancellation.
+
+6. **Prove recovery and document deployment.** Add
+   `src-tauri/tests/recovery_e2e.rs` using temporary stores, a deterministic
+   provider, controlled clock and crash injection. Exercise actual controller
+   paths, not just data structures. Add
+   `docs/agent-runtime-architecture.md` and `docs/agent-runtime-recovery.md`
+   with the implemented component diagram, supported failure boundaries,
+   migration/backup procedure and verified task-control examples.
+
+Proposed configuration (none added yet): context safety fraction and reserves,
+`max_recovery_attempts`, `lease_duration`, `heartbeat_interval`,
+`max_step_retries`, `max_total_iterations`, `max_run_duration`, approval expiry,
+and protected-transcript retention. Validate relationships (heartbeat shorter
+than lease; usable prompt budget after reserves), persist the effective run
+policy, and do not reset lifetime limits on resumption.
+
+### Recovery acceptance gates
+
+- Database reopen tests for execution state, append-only events, checkpoint
+  lookup, protected transcript and approvals; transactional migration rollback.
+- Two workers, same-process duplicate resume, expiry, heartbeat loss and stale
+  fences: exactly one can advance or authorize an effect.
+- Crash before intent, after intent but before dispatch, after dispatch but
+  before settlement, after settlement but before checkpoint, and after
+  checkpoint: no lost acknowledged progress or blindly duplicated operation.
+- Provider timeout, network timeout, context overflow, failed summarization and
+  repeated recovery: bounded retries, durable reasons and review when ambiguous.
+- Approval restart/rejection/expiry/changed arguments: no restored grant for a
+  different call; resolving the original request resumes the proper task once.
+- Oversized output and repeated compactions: hard whole-request budget, valid
+  tool pairs, exact identifiers and retrievable unabridged history.
+- False completion, missing/invalid required artifacts, required tests failing,
+  unknown or pending intents, pending approvals/waits, incomplete work and
+  evidence-read failures: none may yield success.
+- Deterministic full journey: multistep task → large tool output → compaction →
+  process restart → checkpoint restore → approval suspension → approval →
+  artifact checks and independent completion verification.
+
+### Checks executed in this audit
+
+| Check | Current result |
+|---|---|
+| `npm --prefix agent-runtime test -- src/compaction.test.ts src/context-management.test.ts src/context-reconciliation.test.ts src/note-taking.test.ts src/run.test.ts` | 96 passed, 5 files |
+| `npm run runtime:typecheck` | Passed |
+| `npm run test:ui` | 294 passed, 20 files, including the command's TypeScript check |
+| `npm run check:ipc` | Passed: 125 commands |
+| `cargo test --offline --manifest-path src-tauri/Cargo.toml --lib agent_runtime::` | Compilation failed: five E0425 errors; no Rust tests executed |
+| `git diff --check` | Passed for the audit-only change |
+
+The Rust warnings are separate from the five blocking errors. The full
+repository verification, sidecar suite, real-model run and crash/recovery E2E
+simulation were not run. Historical test totals below are not current evidence.
+No dependencies, configuration, database or generated bundles were changed.
+
+### Assumptions, authority and handoff
+
+- Preserve the Rust/Node authority split, local/offline deployment and existing
+  permission checks. The model may propose an action; it may not authorize it.
+- Startup may discover recoverable work before sign-in, but must not execute it
+  as a privileged system user. Authenticated continuation is the safe default;
+  unattended operation would need a separately authorized service identity.
+- Arbitrary code and unsupported external effects cannot be promised exactly
+  once. Unknown results require real reconciliation evidence or human review.
+- Full history requires protected durable bodies, not disclosure in audit logs.
+  Retention and deletion must remain compatible with the user's access rights.
+- Existing task IPC includes `agent_start_run`, `agent_abort_run`,
+  `agent_run_resumability`, `agent_resume_run`, `agent_task_snapshot`,
+  `agent_task_events`, `agent_unknown_effects` and `agent_reconcile_effect`.
+  These are not shell CLI commands. A durable pause API and frontend recovery
+  flow are still proposed, so there are no verified pause/resume CLI examples
+  to publish yet.
+
+No manual migration is needed for this audit-only change. Before deploying a
+future migration, back up the existing SQLite database consistently together
+with associated protected state, verify an upgrade from a real v1 fixture, and
+rebuild the Tauri/Node bundle. Do not claim the requested durability statement
+until the acceptance gates above pass.
+
+---
+
+## Historical baseline and implementation notes
+
+Retained for provenance. Statements and test results below describe earlier
+stages and must not override the current audit above.
+
 Phase 1 deliverable. This document records what ARJUN's agent runtime does
 today, measured against the requirement that a long agentic task survive
 context compaction, process restart, interruption, network failure and model

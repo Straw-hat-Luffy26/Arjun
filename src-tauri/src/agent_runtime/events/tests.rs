@@ -206,7 +206,7 @@ fn a_side_effecting_call_repeated_after_a_restart_is_not_run_again() {
             before.begin_effect("run-1", &key, "create_docx", &fingerprint, "note.docx"),
             EffectLookup::Fresh
         );
-        before.settle_effect("run-1", &key, &Ok("Wrote note.docx".to_string()));
+        before.settle_effect("run-1", &key, &Ok("Wrote note.docx".to_string())).expect("settled");
     }
 
     let after = on_disk(dir.path());
@@ -244,7 +244,7 @@ fn a_key_reused_with_different_arguments_is_refused_rather_than_replayed() {
     let first = json!({ "path": "note.docx" });
     let second = json!({ "path": "payroll.docx" });
     log.begin_effect("run-1", "shared", "create_docx", &args_fingerprint(&first), "note.docx");
-    log.settle_effect("run-1", "shared", &Ok("Wrote note.docx".to_string()));
+    log.settle_effect("run-1", "shared", &Ok("Wrote note.docx".to_string())).expect("settled");
 
     assert_eq!(
         log.begin_effect(
@@ -757,7 +757,7 @@ fn a_settled_effect_cannot_be_rewritten_by_reconciliation() {
     // make the record editable, which is the property it exists to not have.
     let log = log();
     log.begin_effect("run-1", "k", "create_docx", "fp", "note.docx");
-    log.settle_effect("run-1", "k", &Ok("Wrote note.docx".to_string()));
+    log.settle_effect("run-1", "k", &Ok("Wrote note.docx".to_string())).expect("settled");
 
     assert!(!log
         .reconcile_effect("run-1", "k", false, "ravi")

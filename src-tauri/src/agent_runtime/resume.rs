@@ -202,6 +202,12 @@ impl Attempt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointSeed {
     pub attempt_id: String,
+    /// The exact lease acquired by this attempt, never refreshed from a newer worker.
+    pub lease: super::events::Lease,
+    pub objective: String,
+    pub conversation_id: String,
+    pub message_id: String,
+    pub deadline_ms: i64,
     pub plan_hash: String,
     pub policy_hash: String,
     pub workspace_hash: String,

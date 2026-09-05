@@ -22,6 +22,9 @@ fn signed_in_user() -> Arc<std::sync::RwLock<Option<Session>>> {
     )))))
 }
 
+#[path = "context_live_tests.rs"]
+mod context_live_tests;
+
 /// Deps plus the directory they live in.
 ///
 /// The directory is returned rather than dropped because it holds both the
@@ -311,7 +314,10 @@ async fn a_side_effecting_call_made_twice_is_performed_once() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             };
             queue
-                .decide(&reviewer, &item.request.id, true, None)
+                .decide_durable(&reviewer, &item.request.id, true, None, |_| {
+                    if deps.events.resolve_approval(&item.request.id, events::ApprovalStatus::Approved, &reviewer.user.id, None, chrono::Utc::now())? { Ok(()) }
+                    else { Err("Approval did not commit".into()) }
+                })
                 .expect("the reviewer approves");
             waiting.await.expect("the task finished").expect("authorised")
         }

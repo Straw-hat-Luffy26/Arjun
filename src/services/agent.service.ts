@@ -395,6 +395,7 @@ export type ArtifactPreview =
 export type RunOutcomeKind =
   | 'completed'
   | 'failed'
+  | 'needsReview'
   | 'aborted'
   | 'lengthLimited'
   | 'budgetStopped'
@@ -491,6 +492,8 @@ export function messageStatus(input: MessageStatusInput): MessageStatusKind {
   // How the run ended comes first: a stopped run's partial answer should not
   // be labelled by how well its fragment verifies.
   switch (input.outcome) {
+    case 'needsReview':
+      return 'needsReview';
     case 'failed':
       return 'failed';
     case 'aborted':

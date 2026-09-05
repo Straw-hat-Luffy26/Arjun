@@ -209,6 +209,10 @@ pub fn recall_authorized(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value
     })?;
 
     let scope = deps.scope_for(requested, &run_id, &session);
+    if params.get("transcriptSeq").is_some() {
+        if requested != RequestedScope::Run { return Err(WireError::new(code::REFUSED,"Transcript retrieval is confined to the current run.")); }
+        return super::context_api::read_transcript(&params,deps);
+    }
     let project = deps.project_of(&session);
 
     // Expiry is swept before the read rather than only filtered during it, so a

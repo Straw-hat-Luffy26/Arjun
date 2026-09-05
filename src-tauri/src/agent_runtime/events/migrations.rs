@@ -79,6 +79,12 @@ const MIGRATIONS: &[Migration] = &[Migration {
         CREATE INDEX IF NOT EXISTS run_approvals_status_idx
             ON run_approvals(status);
     ",
+}, Migration {
+    name: "durable_context_v1",
+    sql: include_str!("migrations/002_durable_context.sql"),
+}, Migration {
+    name: "tool_operations_v1",
+    sql: include_str!("migrations/003_tool_operations.sql"),
 }];
 
 /// Applies every migration the database has not had, and returns the version

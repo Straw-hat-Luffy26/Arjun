@@ -1,7 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { convertToLlm, type AgentMessage } from "@openclaw/agent-core";
 import type { Model } from "@openclaw/ai";
-import { RunCompactor, settingsForWindow } from "./compaction.js";
+import { RunCompactor, settingsForWindow, trimLargeSavedToolResults } from "./compaction.js";
+import { ContextLedger } from "./context-ledger.js";
+
+it("shortens only durably saved tool bodies and retains an exact retrieval reference", () => {
+  const body="Source A-17: " + "large output ".repeat(2000);
+  const saved = { role: "toolResult", toolCallId: "call-1", toolName: "workspace.read_text",
+    content: [{ type: "text", text: body }], isError: false, timestamp: 1, arjunRawSeq: 3,
+  } satisfies AgentMessage & { arjunRawSeq: number };
+  const { arjunRawSeq: _sequence, ...unsaved } = saved;
+  const trimmed=trimLargeSavedToolResults([saved,unsaved],500);
+  expect(trimmed.cleared).toBe(1);
+  expect(JSON.stringify(trimmed.messages[0])).toContain("transcriptSeq:3");
+  expect(JSON.stringify(trimmed.messages[0]).length).toBeLessThan(1100);
+  expect(JSON.stringify(saved)).toContain(body);
+  expect(trimmed.messages[1]).toBe(unsaved);
+});
 
 /** A local model with a small window, which is the case that matters. */
 function model(contextWindow: number): Model {
@@ -149,7 +164,7 @@ describe("a run that outgrows its window", () => {
       model: model(8_192),
       runtime: summariser(),
       apiKey: "local",
-      onCompacted: (event) => seen.push(event),
+      onCompacted: (event) => { seen.push(event); },
     });
 
     await compactor.transform(longTranscript(40, 800));
@@ -197,9 +212,7 @@ describe("a run that outgrows its window", () => {
     expect(JSON.stringify(prompts[1])).toContain("previous-summary");
   });
 
-  it("keeps the run going when summarisation fails", async () => {
-    // A failed summary must not fail the task. The provider's own refusal about
-    // size is a clearer error than one about summarisation nobody asked for.
+  it("refuses an oversized model call when summarisation fails", async () => {
     const failing = {
       completeSimple: vi.fn(async () => {
         throw new Error("the summariser is unavailable");
@@ -212,10 +225,23 @@ describe("a run that outgrows its window", () => {
     });
     const messages = longTranscript(40, 800);
 
-    const projected = await compactor.transform(messages);
-
-    expect(projected).toEqual(messages);
+    await expect(compactor.transform(messages)).rejects.toThrow(/context budget/i);
     expect(compactor.compactions).toBe(0);
+  });
+
+  it("includes fixed system and tool schemas in admission", async () => {
+    const ledger = new ContextLedger(8192);
+    ledger.set("system", 5000);
+    ledger.set("toolSchema", 2500);
+    const runtime = summariser() as unknown as { completeSimple: ReturnType<typeof vi.fn> };
+    const compactor = new RunCompactor({ model: model(8192), runtime: runtime as never, apiKey: "local", ledger });
+    await expect(compactor.transform([user("hello")])).rejects.toThrow(/context budget/i);
+    expect(runtime.completeSimple).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown context limit rather than sending an unbounded request", async () => {
+    const compactor = new RunCompactor({ model: model(0), runtime: summariser(), apiKey: "local" });
+    await expect(compactor.transform([user("hello")])).rejects.toThrow(/context budget/i);
   });
 
   it("never cuts between a tool call and its result", async () => {

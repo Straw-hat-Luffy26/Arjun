@@ -39,6 +39,7 @@ import {
 /** Every ending the backend can report, with a plausible sentence for each. */
 const ENDINGS: RunOutcome[] = [
   { kind: 'completed' },
+  { kind: 'needsReview', detail: 'An external effect must be reconciled.' },
   { kind: 'failed', detail: 'The model server refused: 503.' },
   { kind: 'aborted', detail: 'Stopped: operator stopped it.' },
   {
@@ -125,11 +126,21 @@ describe('endingFromFinishReason: a message_end says only what it knows', () => 
 });
 
 describe('the outcome union covers every state the backend can report', () => {
-  it('names all six endings, and no ending is missing a case here', () => {
+  it('consumes the shared Rust wire fixtures without turning review into success', () => {
+    const fixtures = JSON.parse(readFileSync('contracts/run-outcomes.json', 'utf8')) as RunOutcome[];
+    for (const outcome of fixtures) {
+      expect(runSucceeded(outcome)).toBe(outcome.kind === 'completed');
+    }
+    expect(messageStatus({ isStreaming: false, contentLength: 80, runningTools: 0,
+      outcome: fixtures.find((outcome) => outcome.kind === 'needsReview')!.kind,
+      verification: 'ready' })).toBe('needsReview');
+  });
+  it('names all seven endings, and no ending is missing a case here', () => {
     const kinds: RunOutcomeKind[] = ENDINGS.map((outcome) => outcome.kind);
     expect(new Set(kinds)).toEqual(
       new Set([
         'completed',
+        'needsReview',
         'failed',
         'aborted',
         'lengthLimited',

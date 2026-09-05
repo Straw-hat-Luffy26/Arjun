@@ -1,0 +1,36 @@
+{
+  "protocolVersion": 1,
+  "runId": "run-context-test",
+  "attemptId": "attempt-1",
+  "fenceToken": 1,
+  "expectedRevision": 0,
+  "commitId": "commit-1",
+  "phase": "modelReady",
+  "entries": [
+    { "entryId": "message-1", "message": { "role": "user", "content": [{ "type": "text", "text": "Create report.txt; preserve source https://example.invalid/spec#A-17" }], "timestamp": 1 } }
+  ],
+  "projection": [{ "role": "user", "content": [{ "type": "text", "text": "Create report.txt; preserve source https://example.invalid/spec#A-17" }], "timestamp": 1 }],
+  "notes": {
+    "goal": "Create report.txt",
+    "stage": { "ordinal": 1, "intent": "Read source A-17" },
+    "decisions": [],
+    "evidenceIds": [],
+    "calculationIds": [],
+    "artifactIds": [],
+    "openQuestions": [],
+    "nextAction": "Read source A-17",
+    "completed": [],
+    "dropped": {}
+  },
+  "ledger": {
+    "sections": { "system": 32, "skill": 0, "toolSchema": 48, "evidence": 0, "notes": 32, "transcript": 32, "compaction": 0, "reserve": 2048 },
+    "occupied": 144,
+    "committed": 2192,
+    "window": 8192,
+    "headroom": 6000,
+    "compactions": 0,
+    "entities": [],
+    "reconciliations": [],
+    "itemisationErrors": []
+  }
+}

@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 /// Stored on every record. Two runs that both say "passed" under different
 /// versions were not held to the same thing, and nothing else in the record
 /// would say so.
-pub const VERIFIER_VERSION: u32 = 1;
+pub const VERIFIER_VERSION: u32 = 2;
 
 /// How one criterion came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +111,20 @@ pub struct CompletionVerification {
 }
 
 impl CompletionVerification {
+    /// The model can propose completion, but cannot override this gate. Preserve
+    /// cancellations and explicit controller stops instead of reclassifying them.
+    pub fn enforce_outcome(&self, reported: super::outcome::RunOutcome) -> super::outcome::RunOutcome {
+        use super::outcome::RunOutcome;
+        if !reported.is_success() {
+            return reported;
+        }
+        match self.outcome {
+            Outcome::Succeeded => RunOutcome::Completed,
+            Outcome::Failed => RunOutcome::Failed { detail: self.explain() },
+            Outcome::NeedsReview => RunOutcome::NeedsReview { detail: self.explain() },
+        }
+    }
+
     pub fn passed(&self) -> bool {
         self.outcome == Outcome::Succeeded
     }
@@ -153,11 +167,13 @@ impl CompletionVerification {
 /// would refuse, and the refusals are the point.
 #[derive(Debug, Clone, Default)]
 pub struct CompletionInputs {
+    /// A failed read must not turn missing durable obligations into an empty list.
+    pub evidence_error: Option<String>,
     /// A failure the run itself reported.
     pub failure: Option<String>,
     /// Plan steps the run never reached.
     pub unfinished_steps: usize,
-    /// Side effects nobody could settle. Each is an idempotency key.
+    /// Pending OR unknown side effects. Each is an idempotency key.
     pub unknown_effects: Vec<String>,
     /// Approvals raised and never decided.
     pub pending_approvals: usize,
@@ -180,6 +196,12 @@ pub fn verify(
     at: chrono::DateTime<chrono::Utc>,
 ) -> CompletionVerification {
     let mut criteria = Vec::new();
+
+    criteria.push(Criterion {
+        criterion_id: "evidence.available".into(),
+        status: if inputs.evidence_error.is_none() { CriterionStatus::Passed } else { CriterionStatus::Unknown },
+        evidence: inputs.evidence_error.clone().unwrap_or_else(|| "durable obligations were read successfully".into()),
+    });
 
     // The run's own report of itself. Not the model's word about the task —
     // this is set when the loop or the provider reported an error.
@@ -293,19 +315,18 @@ pub fn verify(
         },
     });
 
-    // Failure outranks uncertainty: a run with both a failed check and an
-    // unsettled one has been shown to be wrong, and "somebody should look"
-    // would understate that.
+    // Uncertainty needs reconciliation even when another criterion failed.
+    // Calling an ambiguous external effect merely failed can invite a retry.
     let outcome = if criteria
-        .iter()
-        .any(|criterion| criterion.status == CriterionStatus::Failed)
-    {
-        Outcome::Failed
-    } else if criteria
         .iter()
         .any(|criterion| criterion.status == CriterionStatus::Unknown)
     {
         Outcome::NeedsReview
+    } else if criteria
+        .iter()
+        .any(|criterion| criterion.status == CriterionStatus::Failed)
+    {
+        Outcome::Failed
     } else {
         Outcome::Succeeded
     };
@@ -324,6 +345,7 @@ mod tests {
 
     fn clean() -> CompletionInputs {
         CompletionInputs {
+            evidence_error: None,
             failure: None,
             unfinished_steps: 0,
             unknown_effects: Vec::new(),
@@ -398,15 +420,15 @@ mod tests {
         assert!(report.explain().contains("503"));
     }
 
-    /// Being shown to be wrong outranks not being able to tell.
+    /// A failed check does not remove the need to reconcile an uncertain effect.
     #[test]
-    fn a_failure_outranks_an_uncertainty() {
+    fn an_uncertainty_requires_review_even_when_a_check_failed() {
         let report = verdict(CompletionInputs {
             unfinished_steps: 1,
             unknown_effects: vec!["effect-1".into()],
             ..clean()
         });
-        assert_eq!(report.outcome, Outcome::Failed);
+        assert_eq!(report.outcome, Outcome::NeedsReview);
         assert_eq!(report.blocking().len(), 2, "both are still reported");
     }
 
@@ -443,7 +465,7 @@ mod tests {
     /// checked rather than only what failed.
     #[test]
     fn every_criterion_is_always_reported() {
-        assert_eq!(verdict(clean()).criteria.len(), 6);
+        assert_eq!(verdict(clean()).criteria.len(), 7);
         assert_eq!(
             verdict(CompletionInputs {
                 failure: Some("stopped".into()),
@@ -451,7 +473,31 @@ mod tests {
             })
             .criteria
             .len(),
-            6
+            7
         );
+    }
+
+    #[test]
+    fn false_model_completion_is_rejected_by_the_terminal_gate() {
+        use super::super::outcome::RunOutcome;
+        let report = verdict(CompletionInputs { unfinished_steps: 1, ..clean() });
+        assert!(matches!(report.enforce_outcome(RunOutcome::Completed), RunOutcome::Failed { .. }));
+        let uncertain = verdict(CompletionInputs { unknown_effects: vec!["intent-1".into()], ..clean() });
+        assert_eq!(uncertain.enforce_outcome(RunOutcome::Completed).kind(), "needsReview");
+        assert_eq!(verdict(clean()).enforce_outcome(RunOutcome::Completed), RunOutcome::Completed);
+    }
+
+    #[test]
+    fn completion_checks_do_not_erase_an_operator_cancellation() {
+        use super::super::outcome::RunOutcome;
+        let cancelled = RunOutcome::Aborted { detail: "operator stopped".into() };
+        assert_eq!(verdict(clean()).enforce_outcome(cancelled.clone()), cancelled);
+    }
+
+    #[test]
+    fn unavailable_obligations_are_not_an_empty_successful_ledger() {
+        let report = verdict(CompletionInputs { evidence_error: Some("ledger unavailable".into()), ..clean() });
+        assert_eq!(report.outcome, Outcome::NeedsReview);
+        assert_eq!(report.blocking()[0].criterion_id, "evidence.available");
     }
 }

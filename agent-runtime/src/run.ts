@@ -13,7 +13,7 @@
  * a tool does -- lives on the other side of the wire.
  */
 
-import { Agent, convertToLlm, type AgentEvent } from "@openclaw/agent-core";
+import { Agent, convertToLlm, type AgentEvent, type AgentMessage } from "@openclaw/agent-core";
 import { createLlmRuntime, type Model } from "@openclaw/ai";
 import { registerBuiltInApiProviders } from "@openclaw/ai/providers";
 import type { RpcPeer } from "./peer.js";
@@ -25,10 +25,16 @@ import { withToolCallRepair } from "./repair.js";
 import { withCallTiming } from "./timing.js";
 import { GrantLedger, authorizeToolCall, buildTools, fetchCatalogue } from "./tools.js";
 import { observeToolResult } from "./note-taking.js";
+import { DurableContext, DurableContextError, scopedPeer, type ContextPhase, type ExecutionIdentity } from "./durable-context.js";
+import { ContextBudgetExceeded } from "./context-budget.js";
+import { pendingToolCalls } from "./tool-recovery.js";
+import { validateToolArguments } from "@openclaw/ai/validation";
 
 /** What Rust sends with `run.start`. */
 export interface RunRequest {
   runId: string;
+  /** Required by the production stdio entry point; optional for isolated adapters. */
+  execution?: ExecutionIdentity;
   /**
    * The id of the assistant `Message` row the chat surface reserved for this
    * turn via `agent_append_turn`. Attached to every `message_start`,
@@ -116,6 +122,7 @@ export interface RunRequest {
  */
 export type RunOutcomeKind =
   | "completed"
+  | "needsReview"
   | "failed"
   | "aborted"
   | "lengthLimited"
@@ -255,7 +262,17 @@ export async function startRun(
   // Seeded from what Rust sent. On a first attempt that is nothing; on a
   // resumption it is the record of what already happened, including the side
   // effects that must not happen twice.
-  const notes = WorkingNotes.from(request.notes);
+  const basePeer = request.execution ? scopedPeer(peer, runId, request.execution) : peer;
+  const durable = request.execution ? new DurableContext(basePeer, runId, request.execution) : undefined;
+  const callPeer = durable ? durable.toolPeer(basePeer) : basePeer;
+  let restored: Awaited<ReturnType<DurableContext["load"]>>;
+  try { restored = durable ? await durable.load() : { view: null, messages: [] }; }
+  catch {
+    return { runId, text: "", turns: 0, outcome: { kind: "needsReview", detail: "The saved context could not be restored safely. Review the run's pending operations and checkpoint." },
+      notes: WorkingNotes.from(request.notes).state, ledger: new ContextLedger(request.model.contextWindow ?? 0).snapshot() };
+  }
+  const notes = WorkingNotes.from(restored.view?.notes ?? request.notes);
+  notes.setGoal(request.prompt);
   let preserved: PreservedState = { ...(request.preserved ?? {}) };
 
   // The notes are kept from what the tools returned rather than from what the
@@ -269,9 +286,9 @@ export async function startRun(
   //
   // A catalogue that could not be fetched comes back empty, which is the
   // failing-closed reading: silence from the gateway is not a list of tools.
-  const catalogue = await fetchCatalogue(peer, runId);
+  const catalogue = await fetchCatalogue(callPeer, runId);
   const tools = buildTools(
-    peer,
+    callPeer,
     ledger,
     runId,
     request.model.id,
@@ -280,6 +297,9 @@ export async function startRun(
   );
 
   const contextLedger = new ContextLedger(request.model.contextWindow ?? 0);
+  // The core commits a complete resource snapshot after each operation. Keep
+  // durable tool execution ordered so that snapshot includes every prior result.
+  if (durable) for (const tool of tools) tool.executionMode = "sequential";
   // Measured once. Neither the system prompt nor the tool catalogue changes
   // during a run, and re-counting them every turn would spend real time
   // counting characters that are identical to last turn's.
@@ -288,6 +308,20 @@ export async function startRun(
     "toolSchema",
     tools.map((tool) => `${tool.name}${tool.description ?? ""}${JSON.stringify(tool.parameters ?? {})}`).join(""),
   );
+
+  let durabilityFailure: string | undefined;
+  const commitBoundary = async (phase: ContextPhase, options: { message?: AgentMessage; projection?: AgentMessage[] } = {}) => {
+    if (!durable) return undefined;
+    if (durabilityFailure) throw new DurableContextError(durabilityFailure);
+    try {
+      return await durable.commit(phase, notes.state, contextLedger.snapshot(), options);
+    } catch {
+      durabilityFailure = "The next step was stopped because its durable context checkpoint could not be saved.";
+      causedBy({ kind: "needsReview", detail: durabilityFailure });
+      agent.abort(durabilityFailure);
+      throw new DurableContextError(durabilityFailure);
+    }
+  };
 
   const compactor = new RunCompactor({
     model,
@@ -304,7 +338,9 @@ export async function startRun(
       unresolvedIssues: preserved.unresolvedIssues ?? notes.state.openQuestions,
       recentFiles: preserved.recentFiles ?? notes.state.artifactIds,
     }),
-    onCompacted: (event) => {
+    onCompactionStarted: async () => { await commitBoundary("compactionStarted"); },
+    onCompacted: async (event, projection) => {
+      await commitBoundary("compactionCompleted", { projection });
       peer.notify("run.event", {
         runId,
         event: { type: "context_compacted", ...event },
@@ -316,7 +352,7 @@ export async function startRun(
     },
   });
 
-  const agent = new Agent({
+  const agent: Agent = new Agent({
     // Timed on the outside of the repair wrapper, so a call the repair layer
     // re-issues is counted as the second call it is. Counting them together
     // would report one very slow model instead of two ordinary ones, which is
@@ -344,7 +380,21 @@ export async function startRun(
      *   and may repeat a write that already happened.
      */
     convertToLlm,
-    transformContext: (messages, signal) => compactor.transform(messages, signal),
+    transformContext: async (messages, signal): Promise<AgentMessage[]> => {
+      try {
+        const projection = await compactor.transform(messages, signal);
+        const saved = await commitBoundary("modelReady", { projection });
+        // The acknowledged durable projection is the model input, not an
+        // uncommitted local successor that happens to look the same.
+        return saved?.messages ?? projection;
+      } catch (error) {
+        if (error instanceof ContextBudgetExceeded) {
+          causedBy({ kind: "needsReview", detail: error.message });
+          agent.abort(error.message);
+        }
+        throw error;
+      }
+    },
     /**
      * Read-only tools run together.
      *
@@ -362,6 +412,7 @@ export async function startRun(
      */
     steeringMode: "one-at-a-time",
     initialState: {
+      messages: restored.messages,
       systemPrompt: request.systemPrompt,
       model,
       tools,
@@ -395,7 +446,7 @@ export async function startRun(
        */
       thinkingLevel: request.model.supportsReasoning ? "medium" : "off",
     },
-    beforeToolCall: (context) => authorizeToolCall(peer, ledger, runId, context),
+    beforeToolCall: (context) => authorizeToolCall(callPeer, ledger, runId, context),
     /**
      * A local inference server needs no credential, but the OpenAI client
      * refuses to construct without one. So a placeholder is supplied rather
@@ -492,7 +543,7 @@ export async function startRun(
     });
   };
 
-  agent.subscribe((event: AgentEvent) => {
+  agent.subscribe(async (event: AgentEvent) => {
     if (event.type === "turn_end") turns += 1;
 
     // Reconciliation, on every model call rather than periodically.
@@ -503,6 +554,11 @@ export async function startRun(
     // measurement for the whole life of the run instead of only at the end.
     if (event.type === "message_end") {
       const message = event.message;
+      // agent-core awaits listeners before executing the tools in this model
+      // response. Raw assistant/tool messages must land before that boundary.
+      if (!durabilityFailure) {
+        await commitBoundary(message.role === "toolResult" ? "afterTool" : "observed", { message });
+      }
       const usage = message.role === "assistant" ? message.usage : undefined;
       // `estimatedIn` is read before the correction is applied, or the drift
       // would be computed against a figure that had already been corrected and
@@ -569,7 +625,40 @@ export async function startRun(
   });
 
   try {
-    await agent.prompt(request.prompt);
+    for (const pending of pendingToolCalls(agent.state.messages)) {
+      const tool = tools.find((tool) => tool.name === pending.toolCall.name);
+      if (!tool) throw new DurableContextError("A saved tool is no longer available under this run's policy.");
+      const args = validateToolArguments(tool, pending.toolCall);
+      const verdict = await authorizeToolCall(callPeer, ledger, runId, { ...pending, args,
+        context: { systemPrompt: request.systemPrompt, messages: agent.state.messages, tools } });
+      let content: Extract<AgentMessage, { role: "toolResult" }>["content"];
+      let isError = false;
+      if (verdict?.block) { content = [{ type: "text", text: verdict.reason ?? "The saved action was refused." }]; isError = true; }
+      else {
+        try { content = (await tool.execute(pending.toolCall.id, args)).content; }
+        catch (error) {
+          if (!(error && typeof error === "object" && "code" in error && error.code === "tool_failed")) {
+            throw new DurableContextError("The saved action has no verified result and needs reconciliation.");
+          }
+          content = [{ type: "text", text: error instanceof Error ? error.message : "The saved tool failed." }]; isError = true;
+        }
+      }
+      const message: AgentMessage = { role: "toolResult", toolCallId: pending.toolCall.id,
+        toolName: pending.toolCall.name, content, isError, timestamp: Date.now() };
+      await commitBoundary("afterTool", { message });
+      agent.state.messages = [...agent.state.messages, message];
+    }
+    const lastRestored = agent.state.messages.at(-1);
+    const stoppedAfterResponse = lastRestored?.role === "assistant"
+      && !lastRestored.content.some((block) => block.type === "toolCall");
+    if (restored.view?.phase !== "finished" && !stoppedAfterResponse) {
+      if (restored.messages.length > 0) await agent.continue();
+      else await agent.prompt(request.prompt);
+    }
+    if (!durabilityFailure) await commitBoundary("finished");
+  } catch (error) {
+    if (!(error instanceof DurableContextError)) throw error;
+    causedBy({ kind: "needsReview", detail: error.message });
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);
     // Exactly one terminal event per run, on every path out.
@@ -628,6 +717,7 @@ export function terminationOf(state: {
   errorMessage?: string;
   abortCause?: RunTermination | null;
 }): RunTermination {
+  if (state.abortCause?.kind === "needsReview") return state.abortCause;
   const stopReason = state.finalAssistant?.stopReason;
 
   if (stopReason === "aborted") {

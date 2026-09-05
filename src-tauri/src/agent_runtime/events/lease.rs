@@ -127,7 +127,10 @@ pub(super) fn acquire(
     term: Duration,
     now: DateTime<Utc>,
 ) -> rusqlite::Result<Result<Lease, Held>> {
-    let tx = conn.unchecked_transaction()?;
+    if term <= Duration::zero() {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
 
     let existing: Option<(String, i64, String)> = tx
         .query_row(
@@ -142,10 +145,9 @@ pub(super) fn acquire(
             let live = DateTime::parse_from_rfc3339(expires_at)
                 .map(|deadline| now < deadline.with_timezone(&Utc))
                 .unwrap_or(false);
-            // The same owner reclaiming its own run is a renewal, not a
-            // conflict: a process that restarts and picks up its own work
-            // should not be locked out by the claim it made before.
-            if live && holder != owner {
+            // Reacquisition is never renewal, even for the same process. Two
+            // command handlers in one process are still competing workers.
+            if live {
                 tx.commit()?;
                 return Ok(Err(Held {
                     owner: holder.clone(),
@@ -160,7 +162,7 @@ pub(super) fn acquire(
     // Incremented on every acquisition, including a reclaim by the same owner.
     // A straggler holding the old token is fenced out even when the new holder
     // has the same name.
-    let fence_token = previous_token + 1;
+    let fence_token = previous_token.checked_add(1).ok_or(rusqlite::Error::InvalidQuery)?;
     let lease = Lease {
         run_id: run_id.to_string(),
         owner: owner.to_string(),
@@ -198,10 +200,12 @@ pub(super) fn renew(
     term: Duration,
     now: DateTime<Utc>,
 ) -> rusqlite::Result<bool> {
+    if term <= Duration::zero() { return Err(rusqlite::Error::InvalidQuery); }
     let changed = conn.execute(
         "UPDATE run_leases SET expires_at = ?4
-          WHERE run_id = ?1 AND owner = ?2 AND fence_token = ?3",
-        rusqlite::params![run_id, owner, fence_token, (now + term).to_rfc3339()],
+          WHERE run_id = ?1 AND owner = ?2 AND fence_token = ?3
+            AND julianday(expires_at) > julianday(?5)",
+        rusqlite::params![run_id, owner, fence_token, (now + term).to_rfc3339(), now.to_rfc3339()],
     )?;
     Ok(changed > 0)
 }
@@ -218,7 +222,11 @@ pub(super) fn release(
     fence_token: i64,
 ) -> rusqlite::Result<bool> {
     let changed = conn.execute(
-        "DELETE FROM run_leases WHERE run_id = ?1 AND owner = ?2 AND fence_token = ?3",
+        // Keep the token tombstone. Deleting the row would reuse token 1 on
+        // the next acquisition and let an old holder impersonate the new one.
+        "UPDATE run_leases SET expires_at = acquired_at
+          WHERE run_id = ?1 AND owner = ?2 AND fence_token = ?3
+            AND expires_at != acquired_at",
         rusqlite::params![run_id, owner, fence_token],
     )?;
     Ok(changed > 0)
@@ -363,23 +371,35 @@ mod tests {
         assert!(holder(&conn, "run-1", now).expect("answered").is_none());
     }
 
-    /// A process restarting and picking up its own work must not be locked out
-    /// by the claim it made before it died.
+    /// Two windows in the same process must not both drive a run.
     #[test]
-    fn an_owner_can_reclaim_its_own_run() {
+    fn an_owner_cannot_reacquire_a_live_run_instead_of_renewing() {
         let conn = database();
         let now = Utc::now();
-        let first = acquire(&conn, "run-1", "worker-a", term(), now)
+        acquire(&conn, "run-1", "worker-a", term(), now)
             .expect("answered")
             .expect("claimed");
 
-        let again = acquire(&conn, "run-1", "worker-a", term(), now)
-            .expect("answered")
-            .expect("the same owner reclaims");
-        assert!(
-            again.fence_token > first.fence_token,
-            "even a reclaim must fence the previous holder out"
-        );
+        assert!(acquire(&conn, "run-1", "worker-a", term(), now).unwrap().is_err());
+    }
+
+    #[test]
+    fn release_never_reuses_a_fencing_token() {
+        let conn = database();
+        let now = Utc::now();
+        let first = acquire(&conn, "r", "w", term(), now).unwrap().unwrap();
+        assert!(release(&conn, "r", "w", first.fence_token).unwrap());
+        let second = acquire(&conn, "r", "w", term(), now).unwrap().unwrap();
+        assert!(second.fence_token > first.fence_token);
+        assert!(!release(&conn, "r", "w", first.fence_token).unwrap());
+    }
+
+    #[test]
+    fn an_expired_worker_cannot_renew_even_before_takeover() {
+        let conn = database();
+        let now = Utc::now();
+        let first = acquire(&conn, "r", "w", Duration::seconds(1), now).unwrap().unwrap();
+        assert!(!renew(&conn, "r", "w", first.fence_token, term(), now + Duration::seconds(1)).unwrap());
     }
 
     #[test]

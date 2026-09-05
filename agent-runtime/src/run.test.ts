@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RpcPeer, type PeerTransport } from "./peer.js";
 import { startRun, terminationOf, type RunRequest } from "./run.js";
 import { TOOL_DEFINITIONS } from "./catalogue.js";
+import type { ContextCommit } from "./durable-context.js";
 
 /** One SSE chunk in the shape an OpenAI-compatible server emits. */
 function chunk(delta: unknown, finishReason: string | null = null): string {
@@ -139,7 +140,7 @@ function coreStub(handlers: Record<string, (params: unknown) => unknown>) {
      * and says nothing about whether authorisation preceded execution.
      */
     get toolMethods() {
-      return calls.map((call) => call.method).filter((method) => method !== "tool.catalogue");
+      return calls.map((call) => call.method).filter((method) => method.startsWith("tool.") && method !== "tool.catalogue");
     },
   };
 }
@@ -157,7 +158,7 @@ function request(baseUrl: string, prompt = "What is the seal specification?"): R
     messageId: "msg-1",
     prompt,
     systemPrompt: "Search before answering.",
-    model: { id: "test-model", provider: "sovereign-local", baseUrl, maxTokens: 256 },
+    model: { id: "test-model", provider: "sovereign-local", baseUrl, contextWindow: 8192, maxTokens: 256 },
   };
 }
 
@@ -182,6 +183,109 @@ describe("a run that uses a tool", () => {
       // Turn two: answer from what the tool returned.
       [chunk({ role: "assistant", content: "" }), chunk({ content: "The seal is 9.0 mm." }), chunk({}, "stop")],
     ]);
+  });
+
+  it("commits the real model message before authorizing its tool and checkpoints its result", async () => {
+    let revision = 0;
+    let rawSeq = 0;
+    const messages: unknown[] = [];
+    let assistantDurable = false;
+    const core = coreStub({
+      "context.load": () => ({ protocolVersion: 1, view: null, tail: [] }),
+      "context.commit": (value) => {
+        const boundary = value as ContextCommit;
+        expect(boundary.expectedRevision).toBe(revision);
+        expect(boundary.attemptId).toBe("attempt-1");
+        for (const entry of boundary.entries) {
+          messages.push(entry.message);
+          if (entry.message.role === "assistant") assistantDurable = true;
+        }
+        rawSeq += boundary.entries.length;
+        return { protocolVersion: 1, runId: "run-1", revision: ++revision, checkpointId: boundary.commitId,
+          rawSeq, projectionSeq: rawSeq, phase: boundary.phase, messages: boundary.projection ?? [],
+          notes: boundary.notes, ledger: boundary.ledger, pendingApprovals: [], unsettledEffects: [] };
+      },
+      "tool.authorize": () => {
+        expect(assistantDurable).toBe(true);
+        return { outcome: "allow", grant: "durable-grant" };
+      },
+      "tool.execute": () => ({ text: "Maintenance SOP p.4: the seal is 9.0 mm." }),
+    });
+    const input = request(server!.baseUrl);
+    input.execution = { protocolVersion: 1, attemptId: "attempt-1", fenceToken: 1 };
+    const outcome = await startRun(core.peer, input, () => {});
+    expect(outcome.outcome.kind).toBe("completed");
+    expect(messages.map((message) => (message as { role: string }).role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(core.calls.filter((call) => call.method === "context.commit").at(-1)?.params).toMatchObject({ phase: "finished" });
+  });
+
+  it("does not execute a tool when its model message cannot be durably recorded", async () => {
+    let revision = 0;
+    let rawSeq = 0;
+    const core = coreStub({
+      "context.load": () => ({ protocolVersion: 1, view: null, tail: [] }),
+      "context.commit": (value) => {
+        const boundary = value as ContextCommit;
+        if (boundary.entries.some((entry) => entry.message.role === "assistant")) throw new Error("injected disk failure");
+        rawSeq += boundary.entries.length;
+        return { protocolVersion: 1, runId: "run-1", revision: ++revision, checkpointId: boundary.commitId,
+          rawSeq, projectionSeq: rawSeq, phase: boundary.phase, messages: boundary.projection ?? [],
+          notes: boundary.notes, ledger: boundary.ledger, pendingApprovals: [], unsettledEffects: [] };
+      },
+    });
+    const input = request(server!.baseUrl);
+    input.execution = { protocolVersion: 1, attemptId: "attempt-1", fenceToken: 1 };
+    const outcome = await startRun(core.peer, input, () => {});
+    expect(outcome.outcome.kind).toBe("needsReview");
+    expect(core.toolMethods).toEqual([]);
+    expect(server!.requests).toHaveLength(1);
+  });
+
+  it("recovers a tool receipt after losing the worker's result checkpoint, then continues the same conversation", async () => {
+    let revision = 0;
+    let rawSeq = 0;
+    let projectionSeq = 0;
+    let projection: ContextCommit["projection"] = [];
+    let view: unknown = null;
+    const history: { seq: number; entryId: string; message: ContextCommit["entries"][number]["message"] }[] = [];
+    let loseResultCheckpoint = true;
+    let effects = 0;
+    let toolReceipt: unknown;
+    const core = coreStub({
+      "context.load": () => ({ protocolVersion: 1, view, tail: history.filter((entry) => entry.seq > projectionSeq) }),
+      "context.commit": (value) => {
+        const boundary = value as ContextCommit;
+        expect(boundary.expectedRevision).toBe(revision);
+        if (loseResultCheckpoint && boundary.phase === "afterTool") {
+          loseResultCheckpoint = false;
+          throw new Error("worker disappeared before receiving its checkpoint acknowledgment");
+        }
+        for (const entry of boundary.entries) history.push({ ...entry, seq: ++rawSeq });
+        if (boundary.projection) { projection = boundary.projection; projectionSeq = rawSeq; }
+        view = { protocolVersion: 1, runId: "run-1", revision: ++revision, checkpointId: boundary.commitId,
+          rawSeq, projectionSeq, phase: boundary.phase, messages: projection,
+          notes: boundary.notes, ledger: boundary.ledger, pendingApprovals: [], unsettledEffects: [] };
+        return view;
+      },
+      "tool.authorize": (value) => {
+        expect(value).toMatchObject({ operationSeq: 2, toolCallId: "call_1" });
+        return { outcome: "allow", grant: "g" };
+      },
+      "tool.execute": () => {
+        if (!toolReceipt) { effects++; toolReceipt = { text: "Source A-17: the seal is 9.0 mm." }; }
+        return toolReceipt;
+      },
+    });
+    const input = { ...request(server!.baseUrl), execution: { protocolVersion: 1 as const, attemptId: "first", fenceToken: 1 } };
+    expect((await startRun(core.peer, input, () => {})).outcome.kind).toBe("needsReview");
+    expect(history.map((entry) => entry.message.role)).toEqual(["user", "assistant"]);
+    const resumed = await startRun(core.peer, { ...input, execution: { ...input.execution, attemptId: "second", fenceToken: 2 } }, () => {});
+    expect(resumed.outcome.kind).toBe("completed");
+    expect(resumed.text).toBe("The seal is 9.0 mm.");
+    expect(effects).toBe(1);
+    expect(history.map((entry) => entry.message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+    expect(server!.requests).toHaveLength(2);
+    expect(JSON.stringify(server!.requests[1])).toContain("Source A-17");
   });
 
   it("authorises before executing, and executes only with the grant it was given", async () => {

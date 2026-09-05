@@ -213,6 +213,8 @@ pub enum EffectLookup {
     Unknown(RecordedOutcome),
     /// The key describes a different call.
     Conflict(KeyConflict),
+    /// The ledger could not establish a durable intent. Execution is forbidden.
+    Unavailable { reason: String },
 }
 
 /// Longest tool result kept against a key. Matches the task record's limit, so
@@ -296,11 +298,8 @@ pub(super) fn begin(
     }
 
     let Some(existing) = recall(conn, run_id, key)? else {
-        // Inserted zero rows and cannot read the row that blocked it. Nothing
-        // sensible to conclude, so treat it as fresh: the tool's own checks
-        // remain, and refusing every call over an unreadable row would stop the
-        // product working.
-        return Ok(EffectLookup::Fresh);
+        // An ignored insertion is not proof that an intent exists.
+        return Err(rusqlite::Error::QueryReturnedNoRows);
     };
 
     if let Err(conflict) = matches(&existing, tool, args_fingerprint) {
@@ -326,7 +325,7 @@ pub(super) fn settle(
         Err(reason) => (EffectStatus::Failed, reason),
     };
     let trimmed: String = text.chars().take(RESULT_CHARS).collect();
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE task_tool_effects
             SET status = ?1, outcome = ?1, result = ?2, at = ?3
           WHERE run_id = ?4 AND idempotency_key = ?5 AND status = 'pending'",
@@ -338,6 +337,9 @@ pub(super) fn settle(
             key,
         ],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
     Ok(())
 }
 
@@ -349,14 +351,18 @@ pub(super) fn settle(
 pub(super) fn promote_pending_to_unknown(
     conn: &Connection,
 ) -> rusqlite::Result<Vec<RecordedOutcome>> {
-    let stranded = all_with_status(conn, EffectStatus::Pending)?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let mut stranded = Vec::new();
+    for effect in all_with_status(&tx, EffectStatus::Pending)? {
+        if super::lease::holder(&tx,&effect.run_id,chrono::Utc::now())?.is_none() { stranded.push(effect); }
+    }
     if stranded.is_empty() {
         return Ok(stranded);
     }
-    conn.execute(
-        "UPDATE task_tool_effects SET status = 'unknown' WHERE status = 'pending'",
-        [],
-    )?;
+    for effect in &stranded {
+        tx.execute("UPDATE task_tool_effects SET status = 'unknown' WHERE run_id=?1 AND idempotency_key=?2 AND status='pending'",params![effect.run_id,effect.idempotency_key])?;
+    }
+    tx.commit()?;
     Ok(stranded
         .into_iter()
         .map(|effect| RecordedOutcome {

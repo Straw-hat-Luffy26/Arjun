@@ -79,6 +79,7 @@ function main(): void {
    * nothing while removing an assumption that would be awkward to unpick.
    */
   const active = new Map<string, ActiveRun>();
+  const starting = new Set<string>();
 
   peer.onFatal((error) => {
     process.stderr.write(
@@ -97,16 +98,23 @@ function main(): void {
       typeof request.messageId !== "string" ||
       request.messageId.length === 0 ||
       typeof request.prompt !== "string" ||
-      !request.model?.baseUrl
+      !request.model?.baseUrl || request.execution?.protocolVersion !== 1
+      || typeof request.execution.attemptId !== "string" || request.execution.attemptId.length === 0
+      || !Number.isSafeInteger(request.execution.fenceToken) || request.execution.fenceToken < 1
     ) {
       throw Object.assign(
         new Error("run.start needs runId, messageId, prompt and model.baseUrl"),
         { code: ErrorCode.BadParams },
       );
     }
+    if (starting.has(request.runId) || active.has(request.runId)) {
+      throw Object.assign(new Error("This run already has an active worker."), { code: ErrorCode.Refused });
+    }
+    starting.add(request.runId);
     try {
       return await startRun(peer, request, (run) => active.set(request.runId, run));
     } finally {
+      starting.delete(request.runId);
       active.delete(request.runId);
     }
   });
@@ -163,7 +171,7 @@ function main(): void {
     return { noted: Boolean(run), notes: run?.notes.state };
   });
 
-  peer.handle("health", () => ({ ready: true, pid: process.pid, node: process.version }));
+  peer.handle("health", () => ({ ready: true, pid: process.pid, node: process.version, contextProtocolVersion: 1 }));
 
   process.stdin.on("end", () => {
     // The core went away. Nothing left to serve, and lingering would leave an

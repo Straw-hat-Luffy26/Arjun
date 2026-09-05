@@ -41,8 +41,24 @@ pub async fn decide_approval(
 ) -> Result<Decision, String> {
     let signed_in = require_session(&session)?;
 
+    // Restored display requests are caches, not authority. Resolve the actor
+    // from the durable run and refuse missing, expired or terminal requests.
+    let stored = events.approval(&id)?.ok_or("This approval is not durable.")?;
+    let run = events.snapshot(&stored.run_id)?.ok_or("The approval's run is missing.")?;
+    if run.actor == signed_in.user.id || run.state.is_terminal() {
+        return Err("This run cannot be approved by the active operator.".into());
+    }
+
     let decision = queue
-        .decide(&signed_in, &id, approve, because.as_deref())
+        .decide_durable(&signed_in, &id, approve, because.as_deref(), |decision| {
+            let status = if decision.approved() {
+                crate::agent_runtime::events::ApprovalStatus::Approved
+            } else { crate::agent_runtime::events::ApprovalStatus::Rejected };
+            if !events.resolve_approval(&id, status, decision.decided_by(), because.as_deref(), chrono::Utc::now())? {
+                return Err("This request expired or was already decided. No new decision was applied.".into());
+            }
+            Ok(())
+        })
         .map_err(|e| {
             // A refused decision is recorded too. "Who tried to approve their
             // own work" is exactly the question an auditor asks later.
@@ -71,25 +87,6 @@ pub async fn decide_approval(
             "approved": approve,
         })),
     );
-
-    // Recorded durably as well as in memory, so a restart does not lose the
-    // answer. Written after the queue has accepted it: the queue is what
-    // enforces who may decide, and a decision it refused must not appear here
-    // as one that was taken.
-    let status = if approve {
-        crate::agent_runtime::events::ApprovalStatus::Approved
-    } else {
-        crate::agent_runtime::events::ApprovalStatus::Rejected
-    };
-    if let Err(error) = events.resolve_approval(
-        &id,
-        status,
-        &signed_in.user.id,
-        because.as_deref(),
-        chrono::Utc::now(),
-    ) {
-        log::warn!("[approvals] decision on {id} was not recorded durably: {error}");
-    }
 
     Ok(decision)
 }
