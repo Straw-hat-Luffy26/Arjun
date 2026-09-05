@@ -16,6 +16,17 @@ import type {
   TaskSnapshot,
 } from '../../services/agent.service';
 
+it('restores pause and recovery without claiming completion and folds resume once', () => {
+  expect(fromSnapshot(snapshot({ state: 'paused' })).phase).toBe('paused');
+  expect(fromSnapshot(snapshot({ state: 'recovering' })).phase).toBe('recovering');
+  const paused = applyDurableEvent(IDLE, event(1, 'runPaused'));
+  expect(paused.state).toBe('paused');
+  const resumed = applyDurableEvent(paused, event(2, 'runResumed'));
+  expect(resumed.state).toBe('running');
+  expect(resumed.summary).toBeNull();
+  expect(applyDurableEvent(resumed, event(1, 'runPaused'))).toBe(resumed);
+});
+
 /**
  * What the window has to be able to reconstruct.
  *

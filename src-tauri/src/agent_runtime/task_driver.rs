@@ -174,7 +174,7 @@ impl TaskDriver<'_> {
         } else {
             Grounding::GeneralKnowledge
         };
-        if has_answer {
+        if has_answer && !matches!(outcome, RunOutcome::Paused { .. }) {
             on_verifying(answer.chars().count());
         }
         let verification = has_answer.then(|| {
@@ -235,7 +235,7 @@ impl TaskDriver<'_> {
             finished_at,
         );
         outcome = completion.enforce_outcome(outcome);
-        let record_failure = match self.events.record_fenced(
+        let record_failure = if matches!(outcome, RunOutcome::Paused { .. }) { None } else { match self.events.record_fenced(
             events::EventDraft::new(self.run_id, events::TaskEventType::CompletionVerified, self.actor).with(json!({
                 "passed": completion.passed(), "outcome": completion.outcome.as_str(),
                 "verifierVersion": completion.verifier_version, "verifiedAt": completion.verified_at,
@@ -251,7 +251,7 @@ impl TaskDriver<'_> {
                 if outcome.is_success() { outcome = RunOutcome::NeedsReview { detail: detail.clone() }; }
                 Some(detail)
             }
-        };
+        } };
         plan.ended(outcome.detail());
         DrivenTask {
             response,
@@ -287,6 +287,20 @@ pub fn publish(
         .outcome
         .as_ref()
         .ok_or("The task has no typed outcome.")?;
+    if matches!(outcome, RunOutcome::Paused { .. }) {
+        let saved = events.load_context(&record.run_id)?.ok_or("A pause requires a durable context boundary.")?;
+        if saved.view.phase != events::context::ContextPhase::ModelReady || !events.effect_obligations(&record.run_id)?.0.is_empty() {
+            return Err("The task has no settled model boundary for pausing.".into());
+        }
+        record.completion_verification = None;
+        tasks::save(dir, &record)?;
+        let event = events.record_fenced(events::EventDraft::idempotent(
+            &record.run_id, events::TaskEventType::RunPaused, &record.user_id,
+            &format!("pause:{}", lease.fence_token),
+        ).with(ending_payload), lease).map_err(|error| error.to_string())?;
+        emit(event.envelope());
+        return Ok(outcome.clone());
+    }
     tasks::save_with_ending(dir, &record, || {
         let draft = events::EventDraft::idempotent(
             &record.run_id,

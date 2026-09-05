@@ -930,6 +930,7 @@ pub fn run() {
             // since that state, and which runs are still going at all.
             commands::agent::agent_run_resumability,
             commands::agent::agent_resume_run,
+            commands::agent::agent_pause_run,
             commands::agent::agent_task_snapshot,
             commands::agent::agent_task_events,
             commands::agent::agent_active_tasks,

@@ -25,6 +25,7 @@ import {
 import { labelFor, type RunViewState } from './useRun';
 import type { Activity } from './recovery';
 import { MilestoneGate } from './MilestoneGate';
+import { RecoveryControls } from './RecoveryControls';
 import styles from './RunView.module.css';
 
 /**
@@ -539,6 +540,7 @@ export const RunView = ({ state, onAbort, onNewTask, onRerun, stopping = false }
       )}
 
       {state.plan && <Plan plan={state.plan} stopped={state.stopped} />}
+      {state.runId && <RecoveryControls key={state.runId} runId={state.runId} />}
 
       {/* The milestone gate: if the run paused at a checkpoint,
         * the gate renders here, before any further work, so the

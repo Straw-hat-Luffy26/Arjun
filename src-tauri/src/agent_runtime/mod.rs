@@ -1489,6 +1489,15 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         approval.authorises(&json!({ "tool": operation.tool, "args": call.args }),chrono::Utc::now())
             .map_err(|error| WireError::new(code::REFUSED,error.explain()))?;
     }
+    if operation.status == "running" && operation.fence_token != seed.lease.fence_token {
+        let tool = crate::orchestrator::tools::ToolName::from_str(&operation.tool)
+            .ok_or_else(|| WireError::new(code::REFUSED, "The saved tool is unknown."))?;
+        let policy = tool_policy::retry_policy_of(tool);
+        if policy.safe_to_retry && operation.attempts <= u32::from(policy.max_retries) {
+            tokio::time::sleep(std::time::Duration::from_secs(policy.backoff_for(operation.attempts.min(255) as u8))).await;
+            context_api::validate_attempt(&params, deps, true)?;
+        }
+    }
     if let Some(receipt) = deps.events.start_operation(&seed.lease,&operation.id).map_err(|error| WireError::new(code::REFUSED,error))? {
         release_reservation(deps,&call.run_id,&call.tool_call_id);
         return receipt.into_result();

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { RecoveryControls } from '../components/run/RecoveryControls';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -85,6 +86,11 @@ const KIND_ICONS = {
  */
 function statusLabel(state: RunState, ready: boolean): string {
   switch (state) {
+    case 'paused': return 'paused';
+    case 'recovering': return 'ready for recovery';
+    case 'compacting': return 'compacting context';
+    case 'waiting_for_external_event': return 'waiting';
+    case 'stopped_by_length': return 'output limit';
     case 'created':
     case 'classified':
     case 'routed':
@@ -262,6 +268,7 @@ function Detail({ runId, onBack }: { runId: string; onBack: () => void }) {
       <div className={styles.page}>
         {back}
         <h1 className={styles.prompt}>{known.prompt}</h1>
+        <RecoveryControls key={runId} runId={runId} />
         <p className={styles.meta}>
           {statusLabel(known.state, false)} &middot;{' '}
           {known.modelName || 'not routed yet'} &middot; started {when(known.startedAt)}
@@ -332,6 +339,7 @@ function Detail({ runId, onBack }: { runId: string; onBack: () => void }) {
 
       <header className={styles.detailHead}>
         <h1 className={styles.prompt}>{record.prompt}</h1>
+        <RecoveryControls key={runId} runId={runId} />
         <p className={styles.meta}>
           {when(record.startedAt)} &middot; {howLong(record.durationSeconds)} &middot; {record.turns}{' '}
           turn(s)

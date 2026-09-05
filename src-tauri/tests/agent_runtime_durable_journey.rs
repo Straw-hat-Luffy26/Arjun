@@ -2,6 +2,8 @@
 //! Only model responses are scripted; the Tauri shell/router are not exercised.
 //! This does not exercise the Tauri UI, model router, or a native inference model.
 use super::*;
+#[path = "agent_runtime_native_eval.rs"]
+mod native_eval;
 use axum::{routing::post, Json, Router};
 use chrono::{Duration, Utc};
 use sarathi_lib::agent_runtime::{
@@ -23,6 +25,56 @@ use std::sync::{
 const RUN: &str = "run-1";
 const PROMPT: &str = "Search the connected collection for PUMP-A17. Read source-0.txt through source-7.txt. Preserve exact ID PUMP-A17. Write final.txt containing PUMP-A17 verified, after approval, then read it back and cite the evidence.";
 const ANSWER: &str = "PUMP-A17 verified [E1].";
+
+#[tokio::test]
+async fn requested_pause_saves_a_boundary_and_resume_does_not_repeat_the_read() {
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let count = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route("/v1/chat/completions", post({
+        let reached = reached.clone(); let release = release.clone(); let count = count.clone();
+        move || { let reached = reached.clone(); let release = release.clone(); let count = count.clone(); async move {
+            let reply = if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                reached.notify_one(); release.notified().await;
+                tool_response("read-before-pause", "workspace.read_text", json!({"path":"source-0.txt"}))
+            } else { response(json!({"content": ANSWER}), "stop") };
+            ([("content-type", "text/event-stream")], reply)
+        }}
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let _server = ServerGuard(tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); }));
+    let (deps, dir) = deps();
+    deps.plans.lock().unwrap().insert(RUN.into(), plan());
+    std::fs::write(dir.path().join("runs/run-1/source-0.txt"), "PUMP-A17 revision 2026").unwrap();
+    let execution = execution(&deps, RUN, "journey-message", PROMPT);
+    let seed = deps.checkpoints.lock().unwrap()[RUN].clone();
+    let worker = AgentRuntime::spawn(deps.clone(), Arc::new(|_| {}), bundle()).unwrap();
+    let running = tokio::spawn({ let deps=deps.clone(); let worker=worker.clone(); let seed=seed.clone(); let input=input(&url,execution);
+        async move { drive(&deps,&worker,&seed,input).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(15), reached.notified()).await.unwrap();
+    assert_eq!(worker.request("run.pause", json!({"runId":RUN})).await.unwrap()["requested"], true);
+    release.notify_one();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(20), running).await.unwrap().unwrap();
+    assert_eq!(result.outcome.kind(), "paused");
+    assert_eq!(deps.events.load_context(RUN).unwrap().unwrap().view.phase,
+        sarathi_lib::agent_runtime::events::context::ContextPhase::ModelReady);
+    let saved = record(&result, &url, &deps);
+    task_driver::publish(dir.path(), &saved, &deps.events, &seed.lease, json!({"outcome":"paused"}), |_| {}).unwrap();
+    assert_eq!(deps.events.snapshot(RUN).unwrap().unwrap().state, RunState::Paused);
+    assert!(tasks::load(dir.path(), RUN, Some("priya")).unwrap().completion_verification.is_none());
+    assert!(deps.events.ending(RUN).is_none());
+    worker.shutdown().await;
+    deps.events.release_claim(RUN,&seed.lease.owner,seed.lease.fence_token).unwrap();
+    let (restored, next) = restore(&dir,&seed,"after-pause");
+    let worker = AgentRuntime::spawn(restored.clone(),Arc::new(|_| {}),bundle()).unwrap();
+    let result = drive(&restored,&worker,&next,input(&url,identity(&next))).await;
+    worker.shutdown().await;
+    assert_eq!(result.response.unwrap()["outcome"]["kind"],"completed");
+    assert_eq!(restored.calls.lock().unwrap()[RUN].iter().filter(|call| call.tool == "workspace.read_text").count(),1);
+    assert_eq!(count.load(Ordering::SeqCst),2);
+}
 
 struct ServerGuard(tokio::task::JoinHandle<()>);
 impl Drop for ServerGuard {

@@ -8,6 +8,20 @@ fn request() -> ContextCommit {
 }
 
 #[test]
+fn startup_does_not_spend_retry_budget_on_waiting_tasks() {
+    let log = TaskEventLog::in_memory().unwrap();
+    let seed = seed(&log);
+    let run = &seed.lease.run_id;
+    log.commit_context(&request(), &seed, "operator", json!({}), Utc::now()).unwrap();
+    log.record_fenced(EventDraft::new(run, TaskEventType::RunPaused, "operator"), &seed.lease).unwrap();
+    log.release_claim(run, &seed.lease.owner, seed.lease.fence_token).unwrap();
+    for _ in 0..4 { assert!(log.recover_interrupted(super::SYSTEM_ACTOR).unwrap().is_empty()); }
+    let snapshot = log.snapshot(run).unwrap().unwrap();
+    assert_eq!(snapshot.state, super::RunState::Paused);
+    assert_eq!(snapshot.recovery_attempts, 0);
+}
+
+#[test]
 fn model_transitions_are_atomic_authority_bound_and_restartable() {
     use super::context::ContextPhase;
     use crate::agent_runtime::model_transition::{ModelContext, TransitionStatus};

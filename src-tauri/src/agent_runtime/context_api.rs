@@ -22,6 +22,15 @@ pub struct CoreCheckpoint {
 }
 
 impl CoreCheckpoint {
+    pub fn validate_evidence(&self, index: &crate::knowledge::KnowledgeIndex, session: &crate::identity::Session) -> Result<(), String> {
+        for hit in &self.passages {
+            let authorized = index.region(session, &hit.document_sha256, hit.page, hit.page, 256).map_err(|error| error.to_string())?;
+            if !authorized.iter().any(|current| current.chunk_id == hit.chunk_id && current.text == hit.text && current.classification == hit.classification) {
+                return Err("Saved evidence changed or is no longer authorized. The old transcript cannot be restored safely.".into());
+            }
+        }
+        Ok(())
+    }
     pub fn from_stored(saved: &super::events::context::StoredContext) -> Result<Self, String> {
         let core: Self = serde_json::from_value(saved.core_state.clone())
             .map_err(|_| "The saved core resources are unreadable; this run needs review.".to_string())?;
@@ -92,6 +101,20 @@ pub(super) fn commit(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wi
     let seed = validate_attempt(&params, deps, true)?.ok_or_else(|| refused("Missing execution identity."))?;
     let request: ContextCommit = serde_json::from_value(params).map_err(|_| WireError::new(code::BAD_PARAMS, "Malformed durable context boundary."))?;
     let core = capture(deps, &seed)?;
+    // Acknowledging the boundary also acknowledges durable task memory. These
+    // keys are Rust-derived; model-supplied notes never acquire operator provenance.
+    let snapshot = deps.events.snapshot(&request.run_id).map_err(refused)?.ok_or_else(|| refused("The task identity is missing."))?;
+    let classification = snapshot.classification.as_deref().and_then(|label| crate::policy::Classification::ALL.iter().copied().find(|c| c.label() == label))
+        .ok_or_else(|| refused("The task classification is missing."))?;
+    super::memory_api::remember_for_run(deps, &request.run_id, super::memory::MemoryKind::RunState,
+        "objective", &seed.objective, classification, super::memory::MemorySource::Run { run_id: request.run_id.clone() })
+        .map_err(|error| refused(error.to_string()))?;
+    for hit in &core.passages {
+        super::memory_api::remember_for_run(deps, &request.run_id, super::memory::MemoryKind::Decision,
+            &format!("evidence:{}", super::events::digest(&hit.chunk_id.to_string())), &hit.text, hit.classification,
+            super::memory::MemorySource::Document { document_sha256: hit.document_sha256.clone(), page: hit.page, classification: hit.classification })
+            .map_err(|error| refused(error.to_string()))?;
+    }
     let actor = deps.session()?.user.id;
     let core = serde_json::to_value(core).map_err(|_| refused("The run resources could not be checkpointed."))?;
     let view = deps.events.commit_context(&request, &seed, &actor, core, Utc::now()).map_err(|error| {

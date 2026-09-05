@@ -1013,6 +1013,12 @@ async fn drive_run(
         None => None,
     };
     let saved_core = saved_context.as_ref().map(crate::agent_runtime::context_api::CoreCheckpoint::from_stored).transpose()?;
+    if let Some(core) = &saved_core {
+        core.validate_evidence(&index, &signed_in)?;
+    }
+    if let Some(attempt) = &existing_attempt {
+        memory.restore_run(&attempt.run_id).map_err(|error| error.to_string())?;
+    }
 
     // Nothing runs that cannot be recorded.
     //
@@ -2230,11 +2236,17 @@ pub async fn agent_steer_run(
     text: String,
     handle: State<'_, AgentRuntimeHandle>,
     session: State<'_, CurrentSession>,
+    events: State<'_, TaskEvents>,
+    memory: State<'_, AgentMemory>,
 ) -> Result<bool, String> {
     // A correction is part of running a model. The matrix puts it under
     // `UseModel`. The orchestrator rejects no-longer-running runs, so
     // this is a sign-in + UseModel gate plus the runtime's own check.
-    require_permission(&session, Permission::UseModel)?;
+    let signed_in = require_permission(&session, Permission::UseModel)?;
+    let snapshot = events.snapshot(&run_id)?.ok_or("This task is unavailable.")?;
+    if snapshot.actor != signed_in.user.id || snapshot.state.is_terminal() {
+        return Err("This task is not active for the current operator.".into());
+    }
     if text.trim().is_empty() {
         return Err("A correction with no text would do nothing.".to_string());
     }
@@ -2247,6 +2259,16 @@ pub async fn agent_steer_run(
     let Some(runtime) = runtime else {
         return Ok(false);
     };
+
+    let classification = snapshot.classification.as_deref().and_then(|label| Classification::ALL.iter().copied().find(|c| c.label() == label))
+        .ok_or("The task classification is missing.")?;
+    memory.remember(crate::agent_runtime::memory::Remember {
+        scope: crate::agent_runtime::memory::MemoryScope::Run { run_id: run_id.clone() },
+        kind: crate::agent_runtime::memory::MemoryKind::Decision,
+        key: format!("correction:{}", crate::agent_runtime::events::digest(&text)), value: text.clone(),
+        classification, source: crate::agent_runtime::memory::MemorySource::Operator { user_id: signed_in.user.id },
+        approval: None, expires_at: None,
+    }).map_err(|error| error.to_string())?;
 
     let outcome = runtime
         .request("run.steer", json!({ "runId": run_id, "text": text }))
@@ -2318,6 +2340,25 @@ pub async fn agent_abort_run(
         .get("aborted")
         .and_then(Value::as_bool)
         .unwrap_or(false))
+}
+
+/// Request a stop at the next acknowledged model boundary. The eventual
+/// RunPaused event, not this acknowledgment, confirms the task is paused.
+#[tauri::command]
+pub async fn agent_pause_run(
+    run_id: String,
+    handle: State<'_, AgentRuntimeHandle>,
+    session: State<'_, CurrentSession>,
+    events: State<'_, TaskEvents>,
+) -> Result<bool, String> {
+    let actor = require_permission(&session, Permission::UseModel)?.user.id;
+    let snapshot = events.snapshot(&run_id)?.ok_or("This task is unavailable.")?;
+    if snapshot.actor != actor { return Err("This task belongs to another operator.".into()); }
+    if snapshot.state.is_terminal() || snapshot.state == crate::agent_runtime::events::RunState::Paused { return Ok(false); }
+    let runtime = handle.lock().map_err(|_| "The runtime handle is unavailable.")?.clone();
+    let Some(runtime) = runtime else { return Ok(false); };
+    let reply = runtime.request("run.pause", json!({ "runId": run_id })).await.map_err(|e| e.to_string())?;
+    Ok(reply.get("requested").and_then(Value::as_bool).unwrap_or(false))
 }
 
 /// What a person decided at a milestone gate, as the chat surface reads it.
@@ -3233,6 +3274,21 @@ fn assess_resumability(
     // both read from the run's own durable record rather than from the caller.
     let prompt = snapshot.prompt.clone();
     let owner = snapshot.actor.clone();
+    if owner != signed_in.user.id {
+        return Resumability::ViewOnly { because: "This task is unavailable to the current operator.".into() };
+    }
+    match events.run_holder(run_id, chrono::Utc::now()) {
+        Ok(Some(_)) => return Resumability::ViewOnly { because: "This task still has an active execution attempt. Wait for it to finish pausing.".into() },
+        Err(error) => return Resumability::ViewOnly { because: error },
+        _ => {},
+    }
+    match events.effect_obligations(run_id) {
+        Ok((keys, _)) if !keys.is_empty() => return Resumability::NeedsReconciliation {
+            because: "Unsettled effects must be reconciled before this task can continue.".into(), keys,
+        },
+        Err(error) => return Resumability::ViewOnly { because: error },
+        _ => {},
+    }
 
     let workspace_root = app_data_dir(app)
         .map(|dir| dir.join("runs").join(run_id))

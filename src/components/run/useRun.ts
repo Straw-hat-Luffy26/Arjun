@@ -326,8 +326,8 @@ export function useRun() {
         rememberRun(summary.runId);
         setState(previous => ({
           ...previous,
-          phase: 'finished',
-          state: 'completed',
+          phase: summary.outcome?.kind === 'paused' ? 'paused' : 'finished',
+          state: summary.outcome?.kind === 'paused' ? 'paused' : 'completed',
           runId: summary.runId,
           plan: summary.plan,
           turns: summary.turns,

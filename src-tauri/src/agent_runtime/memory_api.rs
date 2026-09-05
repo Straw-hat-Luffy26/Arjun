@@ -209,6 +209,10 @@ pub fn recall_authorized(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value
     })?;
 
     let scope = deps.scope_for(requested, &run_id, &session);
+    if deps.events.snapshot(&run_id).map_err(|error| WireError::new(code::INTERNAL, error))?
+        .is_some_and(|snapshot| snapshot.actor != session.user.id) {
+        return Err(WireError::new(code::REFUSED, "This task's memory belongs to another operator."));
+    }
     if params.get("transcriptSeq").is_some() {
         if requested != RequestedScope::Run { return Err(WireError::new(code::REFUSED,"Transcript retrieval is confined to the current run.")); }
         return super::context_api::read_transcript(&params,deps);
@@ -221,7 +225,12 @@ pub fn recall_authorized(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value
     let _ = deps.memory.expire(&scope);
 
     let items = deps.memory.recall(&scope, &session, project.as_deref());
-    let recalled: Vec<RecalledItem> = items.iter().map(RecalledItem::from).collect();
+    let recalled: Vec<RecalledItem> = items.iter().filter(|item| match &item.source {
+        MemorySource::Document { document_sha256, page, classification } => deps.index
+            .region(&session, document_sha256, *page, *page, 1)
+            .is_ok_and(|hits| hits.iter().any(|hit| hit.classification == *classification)),
+        _ => true,
+    }).map(RecalledItem::from).collect();
 
     remember_memory_event(
         deps,
@@ -372,6 +381,7 @@ pub fn promote_approved(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value,
 
     let stored = deps.memory.remember(request).map_err(|error| {
         let because = match &error {
+            MemoryError::Conflict { .. } => "conflicting memory source".to_string(),
             MemoryError::ApprovalDoesNotCover { field, .. } => {
                 format!("approval does not cover the {field}")
             }

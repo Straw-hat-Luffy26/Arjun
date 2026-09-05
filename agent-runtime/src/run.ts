@@ -123,6 +123,7 @@ export interface RunRequest {
  * - `policyStopped` -- it needed to do something it is not permitted to do.
  */
 export type RunOutcomeKind =
+  | "paused"
   | "completed"
   | "needsReview"
   | "failed"
@@ -216,6 +217,7 @@ function toModel(spec: RunRequest["model"]): Model {
 
 /** A run in flight, so `run.abort` can reach it. */
 export interface ActiveRun {
+  pause(): void;
   abort(reason?: unknown): void;
   /**
    * Injects a correction into a run already in flight.
@@ -317,6 +319,7 @@ export async function startRun(
   );
 
   let durabilityFailure: string | undefined;
+  let pauseRequested = false;
   const commitBoundary = async (phase: ContextPhase, options: { message?: AgentMessage; projection?: AgentMessage[] } = {}) => {
     if (!durable) return undefined;
     if (durabilityFailure) throw new DurableContextError(durabilityFailure);
@@ -391,6 +394,10 @@ export async function startRun(
       try {
         const projection = await compactor.transform(messages, signal);
         const saved = await commitBoundary("modelReady", { projection });
+        if (pauseRequested && durable) {
+          causedBy({ kind: "paused", detail: "Paused at a saved model boundary. Resume to continue this task." });
+          throw new Error("Paused at a durable boundary.");
+        }
         // The acknowledged durable projection is the model input, not an
         // uncommitted local successor that happens to look the same.
         return saved?.messages ?? projection;
@@ -551,6 +558,9 @@ export async function startRun(
   };
 
   agent.subscribe(async (event: AgentEvent) => {
+    // agent-core emits a synthetic error message when transformContext stops.
+    // Keep that out of the saved projection so resume continues the real work.
+    if (abortCause?.kind === "paused") return;
     if (event.type === "turn_end") turns += 1;
 
     // Reconciliation, on every model call rather than periodically.
@@ -614,6 +624,7 @@ export async function startRun(
   });
 
   register({
+    pause: () => { pauseRequested = true; },
     abort: (reason) => {
       causedBy({
         kind: "aborted",
@@ -699,7 +710,7 @@ export async function startRun(
       if (restored.messages.length > 0) await agent.continue();
       else await agent.prompt(request.prompt);
     }
-    if (!durabilityFailure) await commitBoundary("finished");
+    if (!durabilityFailure && (abortCause as RunTermination | null)?.kind !== "paused") await commitBoundary("finished");
   } catch (error) {
     if (!(error instanceof DurableContextError) && !(error instanceof ContextBudgetExceeded)) throw error;
     causedBy({ kind: "needsReview", detail: error.message });

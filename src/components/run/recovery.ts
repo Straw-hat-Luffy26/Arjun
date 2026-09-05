@@ -72,6 +72,8 @@ export interface Activity {
 }
 
 export type RunPhase =
+  | 'paused'
+  | 'recovering'
   | 'idle'
   | 'starting'
   | 'running'
@@ -156,6 +158,7 @@ export const IDLE: RunViewState = {
 
 /** What a recorded state means for the screen. */
 export function phaseFor(state: RunState): RunPhase {
+  if (state === 'paused' || state === 'recovering') return state;
   if (state === 'completed') return 'finished';
   if (isTerminal(state)) {
     // Cancelled, out of budget, refused by policy and degraded are all endings
@@ -169,6 +172,9 @@ export function phaseFor(state: RunState): RunPhase {
 /** How a state reads when the record is all there is to go on. */
 export function describe(state: RunState): string {
   switch (state) {
+    case 'paused': return 'Paused at a saved boundary. Resume to continue.';
+    case 'recovering': return 'Interrupted. Ready for a recovery check by the original operator.';
+    case 'stopped_by_length': return 'Stopped at the model output limit.';
     case 'created':
       return 'Accepted, and not yet started.';
     case 'classified':
@@ -318,6 +324,7 @@ function settle(
 
 /** Which state each ending event puts the run in. */
 const ENDING_STATES: Partial<Record<DurableEvent['eventType'], RunState>> = {
+  runStoppedByLength: 'stopped_by_length',
   runCompleted: 'completed',
   runFailed: 'failed',
   runCancelled: 'cancelled',
@@ -351,6 +358,12 @@ export function applyDurableEvent(state: RunViewState, event: DurableEvent): Run
   }
 
   switch (event.eventType) {
+    case 'runPaused':
+      return { ...at, phase: 'paused', state: 'paused', error: null };
+    case 'recoveryStarted':
+      return { ...at, phase: 'recovering', state: 'recovering', error: null };
+    case 'runResumed':
+      return { ...at, phase: 'running', state: 'running', error: null, summary: null };
     case 'runCreated':
       return {
         ...at,

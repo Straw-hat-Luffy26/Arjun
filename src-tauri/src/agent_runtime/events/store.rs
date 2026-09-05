@@ -529,6 +529,11 @@ impl TaskEventLog {
         let mut recovered = Vec::new();
 
         for run_id in unfinished {
+            // Discovery is not an execution attempt. Reopening the application
+            // must not spend retry budget on a task already waiting for its owner.
+            if self.snapshot(&run_id)?.is_some_and(|s| matches!(s.state, RunState::Paused | RunState::Recovering)) {
+                continue;
+            }
             let claim = match self.claim_run(&run_id, &format!("recovery:{}",uuid::Uuid::new_v4()), chrono::Duration::seconds(60), chrono::Utc::now())? {
                 Ok(claim) => claim,
                 Err(_) => continue,

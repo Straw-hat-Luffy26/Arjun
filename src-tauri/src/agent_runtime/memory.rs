@@ -17,7 +17,7 @@
 //! checked against both. Items are also *scoped*, and a scope is not a
 //! namespacing convenience:
 //!
-//! - [`MemoryScope::Run`] — one task's own state. Dies with the task.
+//! - [`MemoryScope::Run`] — one task's private, durable state, until retention deletion.
 //! - [`MemoryScope::Workspace`] — terminology, templates and stable facts for
 //!   one project. Read by every run *on that project* and by no other.
 //! - [`MemoryScope::User`] — a person's preferences. Theirs alone.
@@ -89,6 +89,10 @@ impl MemoryScope {
 
     /// The filename this scope's items are stored under.
     fn file_name(&self) -> String {
+        format!("scope-{}.json", crate::agent_runtime::events::digest(&scope_key(self)))
+    }
+
+    fn legacy_file_name(&self) -> String {
         match self {
             MemoryScope::Run { run_id } => format!("run-{}.json", sanitise(run_id)),
             MemoryScope::Workspace { project_id } => {
@@ -262,9 +266,20 @@ pub struct MemoryItem {
     /// RFC 3339, UTC.
     pub created_at: String,
     pub updated_at: String,
+    /// Prior values with their original provenance and access policy. Entries
+    /// are flat (their own history is empty) and filtered independently on read.
+    #[serde(default)]
+    pub superseded: Vec<MemoryItem>,
 }
 
 impl MemoryItem {
+    fn readable_by(&self, session: &Session, project_id: Option<&str>) -> bool {
+        self.acl.admits(session, project_id)
+            && self.classification.cleared_roles().iter().any(|role| session.user.roles.contains(role))
+            && self.source.source_classification().is_none_or(|classification|
+                classification.cleared_roles().iter().any(|role| session.user.roles.contains(role)))
+            && self.approval.as_ref().is_none_or(|binding| binding.policy_version == POLICY_VERSION)
+    }
     /// Whether this item has passed its expiry at the given instant.
     ///
     /// An unparseable expiry counts as expired. The alternative — treating a
@@ -284,6 +299,8 @@ impl MemoryItem {
 /// Why a write was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemoryError {
+    #[error("Memory {key:?} conflicts with an existing source; an explicit correction is required.")]
+    Conflict { key: String },
     #[error(
         "{value_kind:?} cannot be remembered in this scope: it belongs to a different kind of memory"
     )]
@@ -514,13 +531,13 @@ pub struct Remember {
 
 /// The store.
 ///
-/// Held in memory and mirrored to one JSON file per durable scope. Run-scope
-/// items are never written to disk: they belong to the task record, which is
-/// already written atomically and already under access control, and a second
-/// copy would be a second place to leak them from.
+/// Every scope, including private task memory, is persisted atomically. The
+/// promotion rules still apply only when data leaves its originating run.
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     items: Mutex<HashMap<MemoryScope, Vec<MemoryItem>>>,
+    /// Serializes load/mutate/persist/rollback as one operation.
+    mutation: Mutex<()>,
     root: Option<PathBuf>,
 }
 
@@ -542,6 +559,7 @@ impl MemoryStore {
     pub fn open(app_data_dir: &Path) -> Self {
         Self {
             items: Mutex::new(HashMap::new()),
+            mutation: Mutex::new(()),
             root: Some(app_data_dir.join("memory")),
         }
     }
@@ -552,6 +570,10 @@ impl MemoryStore {
     /// here, so there is no second entry point that could be added later without
     /// noticing what it skipped.
     pub fn remember(&self, request: Remember) -> Result<MemoryItem, MemoryError> {
+        let _guard = self.mutation.lock().map_err(|_| MemoryError::Storage {
+            detail: "The memory writer is unavailable.".into(),
+        })?;
+        self.load_if_needed(&request.scope)?;
         if !request.kind.permitted_in(&request.scope) {
             return Err(MemoryError::WrongScope {
                 value_kind: request.kind,
@@ -605,7 +627,7 @@ impl MemoryStore {
         // An item promoted on somebody's approval is not thereby widened: the
         // approval says this entry may exist, not that everyone may read it.
 
-        let item = MemoryItem {
+        let mut item = MemoryItem {
             id: format!("{}::{}", scope_key(&request.scope), request.key),
             scope: request.scope.clone(),
             kind: request.kind,
@@ -618,6 +640,7 @@ impl MemoryStore {
             expires_at: request.expires_at.clone(),
             created_at: now.clone(),
             updated_at: now,
+            superseded: Vec::new(),
         };
 
         // The previous value of this key, kept so a failed write can be undone.
@@ -633,7 +656,23 @@ impl MemoryStore {
                 // Updated in place rather than appended, so a key means one
                 // value and recall does not have to decide between two.
                 Some(existing) => {
+                    if existing.value == item.value && existing.source == item.source
+                        && existing.classification == item.classification && existing.approval == item.approval
+                        && existing.expires_at == item.expires_at { return Ok(existing.clone()); }
+                    if existing.value != item.value && existing.source != item.source
+                        && item.approval.is_none()
+                        && !matches!(item.source, MemorySource::Operator { .. }) {
+                        return Err(MemoryError::Conflict { key: item.key.clone() });
+                    }
+                    if existing.superseded.len() >= 64 {
+                        return Err(MemoryError::Storage { detail: "Memory history reached its 64-revision limit; review or forget this key before updating.".into() });
+                    }
                     previous = Some(existing.clone());
+                    item.created_at = existing.created_at.clone();
+                    item.superseded = existing.superseded.clone();
+                    let mut prior = existing.clone();
+                    prior.superseded.clear();
+                    item.superseded.push(prior);
                     *existing = item.clone();
                 }
                 None => {
@@ -643,7 +682,7 @@ impl MemoryStore {
             }
         }
 
-        if request.scope.is_durable() {
+        {
             if let Err(error) = self.persist(&request.scope) {
                 // Rolled back before the error is returned, so a caller that
                 // catches it and carries on is not carrying on with a value this
@@ -686,8 +725,10 @@ impl MemoryStore {
         session: &Session,
         project_id: Option<&str>,
     ) -> Result<MemoryItem, MemoryError> {
+        let _guard = self.mutation.lock().map_err(|_| MemoryError::Storage { detail: "The memory writer is unavailable.".into() })?;
+        self.load_if_needed(scope)?;
         let held = self
-            .recall_one(scope, key, session, project_id)
+            .recall_inner(scope, session, project_id).into_iter().find(|item| item.key == key)
             .ok_or_else(|| MemoryError::NotFound {
                 key: key.to_string(),
             })?;
@@ -699,7 +740,7 @@ impl MemoryStore {
             }
         }
 
-        if scope.is_durable() {
+        {
             if let Err(error) = self.persist(scope) {
                 // Put back. A delete that did not reach disk has not happened,
                 // and reporting it as done would lose the item on the next start
@@ -713,7 +754,8 @@ impl MemoryStore {
 
     /// Drops everything past its expiry in one scope. Returns the keys that went.
     pub fn expire(&self, scope: &MemoryScope) -> Result<Vec<String>, MemoryError> {
-        self.load_if_needed(scope);
+        let _guard = self.mutation.lock().map_err(|_| MemoryError::Storage { detail: "The memory writer is unavailable.".into() })?;
+        self.load_if_needed(scope)?;
         let now = chrono::Utc::now();
         let dropped: Vec<String>;
         let before: Vec<MemoryItem>;
@@ -731,7 +773,7 @@ impl MemoryStore {
         if dropped.is_empty() {
             return Ok(dropped);
         }
-        if scope.is_durable() {
+        {
             if let Err(error) = self.persist(scope) {
                 if let Ok(mut table) = self.items.lock() {
                     table.insert(scope.clone(), before);
@@ -753,7 +795,12 @@ impl MemoryStore {
         session: &Session,
         project_id: Option<&str>,
     ) -> Vec<MemoryItem> {
-        self.load_if_needed(scope);
+        let Ok(_guard) = self.mutation.lock() else { return Vec::new(); };
+        self.recall_inner(scope, session, project_id)
+    }
+
+    fn recall_inner(&self, scope: &MemoryScope, session: &Session, project_id: Option<&str>) -> Vec<MemoryItem> {
+        if self.load_if_needed(scope).is_err() { return Vec::new(); }
         let Ok(table) = self.items.lock() else {
             // A poisoned lock means a previous writer panicked. Returning
             // nothing is the safe reading: an empty recall makes a run do the
@@ -770,8 +817,12 @@ impl MemoryStore {
                     // so an item past its retention is never returned even if
                     // nothing has swept since it lapsed.
                     .filter(|item| !item.is_expired_at(now))
-                    .filter(|item| item.acl.admits(session, project_id))
-                    .cloned()
+                    .filter(|item| item.readable_by(session, project_id))
+                    .map(|item| {
+                        let mut item = item.clone();
+                        item.superseded.retain(|prior| !prior.is_expired_at(now) && prior.readable_by(session, project_id));
+                        item
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -790,17 +841,39 @@ impl MemoryStore {
             .find(|item| item.key == key)
     }
 
-    /// Drops a finished run's memory.
-    ///
-    /// Called when the run ends and its record has been written. The record is
-    /// the durable copy; holding the run's items for the life of the process
-    /// would grow without bound for no reader.
+    /// Evicts the cache; durable memory remains available for recovery.
     pub fn forget_run(&self, run_id: &str) {
+        let Ok(_guard) = self.mutation.lock() else { return; };
         if let Ok(mut table) = self.items.lock() {
             table.remove(&MemoryScope::Run {
                 run_id: run_id.to_string(),
             });
         }
+    }
+
+    /// Explicit retention deletion. Cache eviction alone must never delete a
+    /// paused task's durable memory.
+    pub fn delete_run(&self, run_id: &str) -> Result<(), MemoryError> {
+        let _guard = self.mutation.lock().map_err(|_| MemoryError::Storage { detail: "The memory writer is unavailable.".into() })?;
+        let scope = MemoryScope::Run { run_id: run_id.into() };
+        self.load_if_needed(&scope)?;
+        if let Some(root) = &self.root {
+            for name in [scope.file_name(), scope.legacy_file_name()] {
+            match std::fs::remove_file(root.join(name)) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(MemoryError::Storage { detail: error.to_string() }),
+            }
+            }
+        }
+        self.lock()?.remove(&scope);
+        Ok(())
+    }
+
+    /// Recovery must distinguish an empty scope from damaged storage.
+    pub fn restore_run(&self, run_id: &str) -> Result<(), MemoryError> {
+        let _guard = self.mutation.lock().map_err(|_| MemoryError::Storage { detail: "The memory writer is unavailable.".into() })?;
+        self.load_if_needed(&MemoryScope::Run { run_id: run_id.into() })
     }
 
     fn lock(
@@ -812,25 +885,29 @@ impl MemoryStore {
     }
 
     /// Reads a durable scope's file the first time it is asked for.
-    fn load_if_needed(&self, scope: &MemoryScope) {
-        if !scope.is_durable() {
-            return;
-        }
-        let Some(root) = &self.root else { return };
+    fn load_if_needed(&self, scope: &MemoryScope) -> Result<(), MemoryError> {
+        let Some(root) = &self.root else { return Ok(()) };
         {
-            let Ok(table) = self.items.lock() else { return };
+            let table = self.lock()?;
             if table.contains_key(scope) {
-                return;
+                return Ok(());
             }
         }
         let path = root.join(scope.file_name());
-        let loaded: Vec<MemoryItem> = std::fs::read(&path)
-            .ok()
-            .and_then(|body| serde_json::from_slice(&body).ok())
-            .unwrap_or_default();
-        if let Ok(mut table) = self.items.lock() {
-            table.entry(scope.clone()).or_insert(loaded);
+        let body = match std::fs::read(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::read(root.join(scope.legacy_file_name())),
+            other => other,
+        };
+        let loaded: Vec<MemoryItem> = match body {
+            Ok(body) => serde_json::from_slice(&body).map_err(|_| MemoryError::Storage { detail: "The saved memory is unreadable; it was not replaced.".into() })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(MemoryError::Storage { detail: error.to_string() }),
+        };
+        if loaded.iter().any(|item| &item.scope != scope || item.superseded.iter().any(|prior| &prior.scope != scope || !prior.superseded.is_empty())) {
+            return Err(MemoryError::Storage { detail: "The saved memory belongs to another scope or has invalid history.".into() });
         }
+        self.lock()?.entry(scope.clone()).or_insert(loaded);
+        Ok(())
     }
 
     /// Writes one durable scope to disk, atomically.
@@ -854,9 +931,10 @@ impl MemoryStore {
         // leaves the previous file rather than half of a new one.
         let path = root.join(scope.file_name());
         let temporary = path.with_extension("json.writing");
-        std::fs::write(&temporary, body).map_err(|error| MemoryError::Storage {
-            detail: error.to_string(),
-        })?;
+        use std::io::Write;
+        let mut file = std::fs::File::create(&temporary).map_err(|error| MemoryError::Storage { detail: error.to_string() })?;
+        file.write_all(&body).and_then(|_| file.sync_all()).map_err(|error| MemoryError::Storage { detail: error.to_string() })?;
+        drop(file);
         std::fs::rename(&temporary, &path).map_err(|error| MemoryError::Storage {
             detail: error.to_string(),
         })
@@ -1605,7 +1683,47 @@ mod tests {
     }
 
     #[test]
-    fn durable_memory_survives_a_restart_and_run_memory_does_not() {
+    fn updating_after_restart_preserves_other_keys_and_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(dir.path());
+        store.remember(term("project-a", "revision", "2019")).unwrap();
+        store.remember(term("project-a", "unit", "mm")).unwrap();
+        drop(store);
+        let store = MemoryStore::open(dir.path());
+        let corrected = store.remember(term("project-a", "revision", "2026")).unwrap();
+        assert_eq!(corrected.superseded.len(), 1);
+        assert_eq!(corrected.superseded[0].value, "2019");
+        assert_eq!(store.remember(term("project-a", "revision", "2026")).unwrap(), corrected);
+        let reader = session("kiran", vec![Role::Employee]);
+        assert_eq!(store.recall(&workspace("project-a"), &reader, Some("project-a")).len(), 2);
+        assert!(store.recall(&workspace("project-a"), &session("kiran", vec![]), Some("project-a")).is_empty());
+    }
+
+    #[test]
+    fn another_source_cannot_silently_replace_a_correction() {
+        let store = MemoryStore::in_memory();
+        store.remember(term("project-a", "revision", "2026")).unwrap();
+        let mut stale = term("project-a", "revision", "2019");
+        stale.source = MemorySource::Run { run_id: "other".into() };
+        assert!(matches!(store.remember(stale), Err(MemoryError::Conflict { .. })));
+    }
+
+    #[test]
+    fn corrupt_memory_is_not_overwritten_and_colliding_names_stay_separate() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(dir.path());
+        store.remember(term("project/a", "revision", "2019")).unwrap();
+        store.remember(term("project_a", "revision", "2026")).unwrap();
+        assert_ne!(workspace("project/a").file_name(), workspace("project_a").file_name());
+        let path = dir.path().join("memory").join(workspace("project/a").file_name());
+        std::fs::write(&path, b"broken").unwrap();
+        let reopened = MemoryStore::open(dir.path());
+        assert!(matches!(reopened.remember(term("project/a", "revision", "2027")), Err(MemoryError::Storage { .. })));
+        assert_eq!(std::fs::read(path).unwrap(), b"broken");
+    }
+
+    #[test]
+    fn all_scopes_survive_restart_until_explicit_retention_deletion() {
         let dir = tempfile::tempdir().expect("temp dir");
         let reader = session("kiran", vec![Role::Employee]);
 
@@ -1639,8 +1757,7 @@ mod tests {
                 .len(),
             1
         );
-        // The run's own state is in the task record, not here.
-        assert!(reopened
+        assert_eq!(reopened
             .recall(
                 &MemoryScope::Run {
                     run_id: "run-1".to_string()
@@ -1648,7 +1765,9 @@ mod tests {
                 &reader,
                 None
             )
-            .is_empty());
+            .len(), 1);
+        reopened.delete_run("run-1").unwrap();
+        assert!(MemoryStore::open(dir.path()).recall(&MemoryScope::Run { run_id: "run-1".into() }, &reader, None).is_empty());
     }
 
     #[test]

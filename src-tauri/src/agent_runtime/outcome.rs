@@ -50,6 +50,8 @@ use super::events::TaskEventType;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RunOutcome {
+    /// This attempt stopped at an acknowledged boundary; the task is open.
+    Paused { detail: String },
     /// The loop finished. The controller must pass its independent completion gate.
     Completed,
     /// A required check or durable effect cannot be settled safely.
@@ -77,6 +79,7 @@ impl RunOutcome {
         let detail = snapshot.failure.clone().unwrap_or_else(|| snapshot.state.describe().into());
         Some(match snapshot.state {
             RunState::Completed => Self::Completed,
+            RunState::Paused => Self::Paused { detail },
             RunState::Cancelled => Self::Aborted { detail },
             RunState::Failed => Self::Failed { detail },
             RunState::StoppedByBudget => Self::BudgetStopped { detail },
@@ -91,6 +94,7 @@ impl RunOutcome {
     pub const fn kind(&self) -> &'static str {
         match self {
             RunOutcome::Completed => "completed",
+            RunOutcome::Paused { .. } => "paused",
             RunOutcome::NeedsReview { .. } => "needsReview",
             RunOutcome::Failed { .. } => "failed",
             RunOutcome::Aborted { .. } => "aborted",
@@ -109,6 +113,7 @@ impl RunOutcome {
     pub const fn event_type(&self) -> TaskEventType {
         match self {
             RunOutcome::Completed => TaskEventType::RunCompleted,
+            RunOutcome::Paused { .. } => TaskEventType::RunPaused,
             RunOutcome::NeedsReview { .. } => TaskEventType::RunDegraded,
             RunOutcome::Failed { .. } => TaskEventType::RunFailed,
             RunOutcome::Aborted { .. } => TaskEventType::RunCancelled,
@@ -123,6 +128,7 @@ impl RunOutcome {
         match self {
             RunOutcome::Completed => None,
             RunOutcome::Failed { detail }
+            | RunOutcome::Paused { detail }
             | RunOutcome::NeedsReview { detail }
             | RunOutcome::Aborted { detail }
             | RunOutcome::LengthLimited { detail }
@@ -164,6 +170,7 @@ impl RunOutcome {
             .to_string();
         Some(match kind {
             "completed" => RunOutcome::Completed,
+            "paused" => RunOutcome::Paused { detail: fallback(detail, "Paused at a saved boundary.") },
             "needsReview" => RunOutcome::NeedsReview {
                 detail: fallback(detail, "A required check could not be completed safely."),
             },

@@ -119,6 +119,14 @@ function main(): void {
     }
   });
 
+  peer.handle("run.pause", (params) => {
+    const { runId } = (params ?? {}) as { runId?: string };
+    if (!runId) throw Object.assign(new Error("run.pause needs runId"), { code: ErrorCode.BadParams });
+    const run = active.get(runId);
+    run?.pause();
+    return { requested: Boolean(run) };
+  });
+
   peer.handle("run.abort", (params) => {
     const { runId, reason } = (params ?? {}) as { runId?: string; reason?: string };
     if (!runId) {

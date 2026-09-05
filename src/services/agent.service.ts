@@ -393,6 +393,7 @@ export type ArtifactPreview =
  * - `policyStopped` — it needed to do something it is not permitted to do.
  */
 export type RunOutcomeKind =
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'needsReview'
@@ -497,6 +498,7 @@ export function messageStatus(input: MessageStatusInput): MessageStatusKind {
     case 'failed':
       return 'failed';
     case 'aborted':
+    case 'paused':
     case 'budgetStopped':
     case 'policyStopped':
     case 'lengthLimited':
@@ -786,6 +788,11 @@ export interface TaskSummary {
  * nothing decided it, the application closed on top of the run.
  */
 export type RunState =
+  | 'paused'
+  | 'recovering'
+  | 'compacting'
+  | 'waiting_for_external_event'
+  | 'stopped_by_length'
   | 'created'
   | 'classified'
   | 'routed'
@@ -804,6 +811,7 @@ export type RunState =
 
 /** The endings. Nothing follows one. */
 export const TERMINAL_STATES: readonly RunState[] = [
+  'stopped_by_length',
   'completed',
   'cancelled',
   'failed',
@@ -998,6 +1006,11 @@ export interface CompactionRecord {
   ledger: ContextLedgerRecord;
 }
 
+export type Resumability =
+  | { status: 'resumable'; attempt_id: string; from_seq: number; state: RunState }
+  | { status: 'needsReconciliation'; because: string; keys: string[] }
+  | { status: 'viewOnly'; because: string };
+
 export interface TaskSnapshot {
   runId: string;
   /** The last event folded in. Ask for events after this to catch up. */
@@ -1058,6 +1071,11 @@ export interface UnreadableEvent {
 
 /** What a durable event is called. */
 export type TaskEventType =
+  | 'runPaused'
+  | 'runResumed'
+  | 'recoveryStarted'
+  | 'recoveryFailed'
+  | 'runStoppedByLength'
   | 'runCreated'
   | 'runClassified'
   | 'runRouted'
@@ -1450,6 +1468,18 @@ export const agentService = {
    */
   snapshot(runId: string): Promise<TaskSnapshot | null> {
     return getBackendService().invoke<TaskSnapshot | null>('agent_task_snapshot', { runId });
+  },
+
+  pause(runId: string): Promise<boolean> {
+    return getBackendService().invoke<boolean>('agent_pause_run', { runId });
+  },
+
+  resumability(runId: string): Promise<Resumability> {
+    return getBackendService().invoke<Resumability>('agent_run_resumability', { runId });
+  },
+
+  resume(runId: string, operatorIntent: string): Promise<RunSummary> {
+    return getBackendService().invoke<RunSummary>('agent_resume_run', { runId, operatorIntent });
   },
 
   /**

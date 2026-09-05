@@ -79,8 +79,8 @@
     },
     "agent_resume_run": {
       "owner": "agent",
-      "consumer": "admin",
-      "note": "Continues an interrupted run under its own run id, so the resumption's events, checkpoint and effect ledger extend the original history rather than starting a second one. Checks resumability first and refuses on any disagreement between the checkpoint and the world now. Drives the same execution path as agent_start_run via the shared internal driver. The Tasks screen's recovery flow that would call it is still to be built."
+      "consumer": "frontend",
+      "note": "Called by Task recovery controls through agent.service.ts; current operator and policy are checked on the backend."
     },
     "agent_reveal_artifact": {
       "owner": "agent",
@@ -94,8 +94,8 @@
     },
     "agent_run_resumability": {
       "owner": "agent",
-      "consumer": "admin",
-      "note": "Reports whether a run can be resumed. Same flow as agent_resume_run."
+      "consumer": "frontend",
+      "note": "Called by Task recovery controls through agent.service.ts; current operator and policy are checked on the backend."
     },
     "agent_runtime_health": {
       "owner": "agent",
@@ -641,6 +641,11 @@
       "owner": "governance",
       "consumer": "external",
       "note": "Confirms an approval decision through the zero-trust gate."
+    },
+    "agent_pause_run": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called by Task recovery controls through agent.service.ts; current operator and policy are checked on the backend."
     }
   }
 }

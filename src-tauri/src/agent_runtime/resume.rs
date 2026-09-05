@@ -61,13 +61,14 @@ pub fn policy_hash(
     roles.sort();
 
     digest(&format!(
-        "user={}|roles={}|classification={}|mode={}",
+        "user={}|roles={}|classification={}|mode={}|department={}",
         session.user.id,
         roles.join(","),
         classification
             .map(|c| c.label().to_string())
             .unwrap_or_else(|| "unclassified".to_string()),
         sovereignty_mode,
+        session.user.department.as_deref().unwrap_or_default(),
     ))
 }
 
