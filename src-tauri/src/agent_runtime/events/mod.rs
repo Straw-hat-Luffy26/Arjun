@@ -50,6 +50,7 @@ pub const MAX_RECOVERY_ATTEMPTS: u32 = 2;
 pub mod approvals;
 pub mod checkpoint;
 pub mod context;
+pub mod children;
 pub mod operations;
 pub mod idempotency;
 pub mod lease;

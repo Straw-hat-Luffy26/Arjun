@@ -68,10 +68,44 @@ npm run check:ipc
 git diff --check
 ```
 
-The planned `recovery_e2e` integration suite must exercise the real task driver
-with a deterministic provider and isolated temporary storage. Do not inject
-crashes against an operator's real work or treat mocks as proof of native-model
-performance. Record which suites actually ran and which gates remain unmet.
+### Deterministic recovery acceptance
+
+`tests/agent_runtime_durable_journey.rs`, included by the `agent_runtime` test
+target, exercises the production `agent_runtime::task_driver::TaskDriver` used
+by the desktop start/resume command. Build the actual Node bundle first:
+
+```powershell
+npm run runtime:build
+cargo test --offline --manifest-path src-tauri/Cargo.toml --test agent_runtime durable_journey --no-default-features -- --nocapture
+```
+
+On Windows, use the configured MSVC developer shell, with CMake and libclang
+available, and add `--target x86_64-pc-windows-msvc` if Cargo defaults to GNU.
+
+The journey uses an isolated SQLite database/workspace and a loopback scripted
+provider. It searches a real indexed passage, forces compaction in a 4k window,
+kills the Node worker twice (once during inference and once awaiting approval),
+restores the same approval, writes the file once, and reads it back. The shared
+driver settles the production planner's steps from successful tool receipts,
+resolves the answer's citation against restored evidence, reopens the artifact,
+records fenced completion verification, and publishes the task record and
+terminal event through the same publication function as the desktop command.
+Raw history, the single write receipt, approval identity, step budget, saved
+verification and event ordering are asserted.
+
+Two rejection cases prevent a permissive gate from passing this acceptance
+test: an invented citation after the same recovery journey, and a model that
+reports completion without performing the required search. Both must remain
+unsuccessful in the saved task and durable terminal state.
+
+The live checkpoint is a recovery input. Its execution step flags are not a
+final completion verdict; the final task plan is settled independently from
+receipts and verification. No test marks checkpoint steps done or supplies a
+hardcoded successful grounding result.
+
+This covers the production execution/completion driver, not Tauri IPC, model
+routing, authenticated resume dispatch, recovery UI, or native inference. The
+three deterministic tests do not measure real-model retention or answer quality.
 
 ## Deployment and migration
 

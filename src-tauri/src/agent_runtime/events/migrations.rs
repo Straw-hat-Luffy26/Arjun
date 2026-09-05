@@ -85,6 +85,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
 }, Migration {
     name: "tool_operations_v1",
     sql: include_str!("migrations/003_tool_operations.sql"),
+}, Migration {
+    name: "child_results_v1",
+    sql: include_str!("migrations/004_child_results.sql"),
 }];
 
 /// Applies every migration the database has not had, and returns the version

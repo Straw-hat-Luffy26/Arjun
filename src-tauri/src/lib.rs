@@ -582,16 +582,18 @@ pub fn run() {
             let subagent_manager =
                 subagents::SubagentManager::new(loaded_profiles.profiles, subagent_events);
 
-            // Said out loud at start, because the alternative is a run finding
-            // out mid-task.
-            //
-            // A profile is a declaration; a `ChildWorker` is what performs it.
-            // This build registers no workers, so every declared role is
-            // currently a role the application cannot perform — and the honest
-            // place to say that is here, once, rather than in a refusal the
-            // model reads on turn three. `tool_catalogue` withholds
-            // `agent.delegate_readonly` on the same condition, so the loop is
-            // not offered a tool that can only fail.
+            let subagent_manager = if let Some(index) = app.try_state::<Arc<knowledge::KnowledgeIndex>>() {
+                subagents::workers::register(subagent_manager, subagents::workers::Resources {
+                    index: index.inner().clone(),
+                    events: app.state::<commands::agent::TaskEvents>().inner().clone(),
+                    session: app.state::<commands::governance::CurrentSession>().inner().clone(),
+                    workspaces: app.state::<commands::agent::RunWorkspaces>().inner().clone(),
+                    passages: app.state::<agent_runtime::retrieval::RunPassages>().inner().clone(),
+                    calculations: app.state::<commands::agent::RunCalculations>().inner().clone(),
+                    produced: app.state::<agent_runtime::artifacts::RunArtifacts>().inner().clone(),
+                })
+            } else { subagent_manager };
+
             let performable = subagent_manager
                 .profiles()
                 .filter(|profile| subagent_manager.has_worker(&profile.name))
@@ -599,7 +601,7 @@ pub fn run() {
             let declared = subagent_manager.profiles().count();
             if performable < declared {
                 log::warn!(
-                    "[SUBAGENTS] {} of {} declared role(s) have no worker in this build, so                      delegation is unavailable and agent.delegate_readonly is withheld from the                      tool catalogue: {}",
+                    "[SUBAGENTS] {} of {} declared role(s) have no worker in this build; those profiles are unavailable: {}",
                     declared - performable,
                     declared,
                     subagent_manager

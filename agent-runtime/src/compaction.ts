@@ -86,6 +86,9 @@ export interface PreservedState {
   unresolvedIssues?: string[];
   /** Files the run has recently read or produced, by name. */
   recentFiles?: string[];
+  /** Exact source instructions/corrections and machine identifiers on transition. */
+  exactInstructions?: string[];
+  exactIdentifiers?: string[];
 }
 
 /** What compaction did, for the event stream and the run record. */
@@ -369,8 +372,13 @@ export function pruneStaleToolResults(
  * away from the summary it belongs beside, and so a model that follows the last
  * instruction it saw sees this after the summary rather than before it.
  */
-function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp: number): AgentMessage | undefined {
+export function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp: number): AgentMessage | undefined {
   const lines: string[] = [];
+  if (state.exactInstructions?.length) {
+    lines.push("Original user instructions and corrections, in order (later corrections take precedence):");
+    state.exactInstructions.forEach((text, index) => lines.push(`${index + 1}. ${text}`));
+  }
+  if (state.exactIdentifiers?.length) lines.push(`Exact identifiers from saved history (references, not new findings): ${state.exactIdentifiers.join(", ")}`);
   if (state.activePlan) lines.push(`Active plan: ${state.activePlan}`);
   if (state.policyDecisions?.length) {
     lines.push("Policy and approval decisions still in force:");
@@ -515,6 +523,7 @@ export class RunCompactor {
    * would compact on every single turn.
    */
   async transform(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
+    messages = messages.filter((m) => !(m as { arjunContextState?: boolean }).arjunContextState);
     const window = this.#options.model.contextTokens ?? this.#options.model.contextWindow ?? 0;
     const budget = inputBudget(window, this.#options.model.maxTokens ?? this.#settings.reserveTokens);
     const sections = this.#ledger.snapshot().sections;

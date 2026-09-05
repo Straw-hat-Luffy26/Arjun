@@ -72,7 +72,9 @@ const CALCULATION_WORDS: &[&str] = &[
 
 /// Words that mean somebody expects a file at the end, not a chat reply.
 const DELIVERABLE_WORDS: &[&str] = &[
-    "note", "memo", "letter", "report", "document", "draft", "write up", "write-up", "approval",
+    // Approval is authority to act, not a document format. "Approval note"
+    // still matches "note"; a text-file write awaiting approval needs no DOCX.
+    "note", "memo", "letter", "report", "document", "draft", "write up", "write-up",
     "summary", "brief", "minutes", "specification",
 ];
 
@@ -407,6 +409,16 @@ mod tests {
             .iter()
             .any(|step| step.intent.contains("Produce the document")));
         assert!(plan.budget.permits(ToolName::CreateDocx));
+    }
+
+    #[test]
+    fn approval_for_a_text_file_does_not_add_a_word_document_step() {
+        let plan = derive("Write final.txt containing PUMP-A17 verified, after approval.");
+        assert!(!plan.steps.iter().any(|step| {
+            step.satisfied_by == Satisfies::Tool(ToolName::CreateDocx)
+        }));
+        assert_eq!(plan.steps.len(), 3, "search, answer and verification still apply");
+        assert!(plan.budget.permits(ToolName::WriteScopedFile));
     }
 
     #[test]

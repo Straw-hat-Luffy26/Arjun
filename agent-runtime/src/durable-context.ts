@@ -5,10 +5,11 @@ import type { RpcPeer } from "./peer.js";
 import type { ContextLedgerSnapshot } from "./context-ledger.js";
 import type { WorkingNotesState } from "./working-notes.js";
 import { pendingToolCalls } from "./tool-recovery.js";
+import { sameModelContext, type ModelContext } from "./destination-context.js";
 
 export type RequestPeer = Pick<RpcPeer, "request">;
 export interface ExecutionIdentity { protocolVersion: 1; attemptId: string; fenceToken: number }
-export type ContextPhase = "observed" | "modelReady" | "beforeTool" | "afterTool" | "compactionStarted" | "compactionCompleted" | "finished" | "paused";
+export type ContextPhase = "observed" | "modelReady" | "beforeTool" | "afterTool" | "compactionStarted" | "compactionCompleted" | "finished" | "paused" | "modelTransitionStarted" | "modelTransitionReady";
 export interface ContextView {
   protocolVersion: 1;
   runId: string;
@@ -22,6 +23,8 @@ export interface ContextView {
   ledger: ContextLedgerSnapshot | null;
   pendingApprovals: string[];
   unsettledEffects: string[];
+  modelContext?: ModelContext;
+  modelTransition?: { schemaVersion: 1; transitionId: string; sourceRevision: number; sourceRawSeq: number; from: ModelContext; to: ModelContext; status: "preparing" | "ready" };
 }
 export interface ContextCommit {
   protocolVersion: 1;
@@ -91,20 +94,23 @@ export class DurableContext {
     for (const block of message.content) if (block.type === "toolCall") this.#toolSequences.set(block.id, seq);
   }
 
-  async load(): Promise<{ view: ContextView | null; messages: AgentMessage[] }> {
+  async load(): Promise<{ view: ContextView | null; messages: AgentMessage[]; sourceHistory?: AgentMessage[]; destinationModel?: ModelContext; transitionRequired?: boolean; approvalConstraints?: unknown[] }> {
     const result = await this.#peer.request("context.load", { runId: this.#runId }) as {
       protocolVersion?: number; view?: unknown; tail?: { seq: number; entryId: string; message: AgentMessage }[];
+      destinationModel?: ModelContext; transitionHistory?: { seq: number; message: AgentMessage }[] | null; approvalConstraints?: unknown[];
     };
     if (result?.protocolVersion !== 1 || !Array.isArray(result.tail)) throw new DurableContextError("The core does not support durable context recovery.");
-    if (result.view == null) return { view: null, messages: [] };
+    if (result.view == null) return { view: null, messages: [], destinationModel: result.destinationModel };
     const view = viewOf(result.view, this.#runId);
     if (view.unsettledEffects.length) throw new DurableContextError("Unsettled effects require reconciliation before this run continues.");
     this.#revision = view.revision; this.#rawSeq = view.rawSeq;
     // The current notes are re-injected from structured state. Do not carry an
     // older rendered copy alongside them after restarting.
-    const messages = view.messages.filter((message) => !(message as unknown as { arjunContextState?: boolean }).arjunContextState);
-    let expected = view.projectionSeq;
-    for (const entry of result.tail) {
+    const transitionRequired = !!view.modelContext && (!result.destinationModel || !sameModelContext(view.modelContext, result.destinationModel));
+    if (transitionRequired && (!result.destinationModel || !Array.isArray(result.transitionHistory))) throw new DurableContextError("The model transition has no authorized destination or exact source history.");
+    const messages = transitionRequired ? [] : view.messages.filter((message) => !(message as unknown as { arjunContextState?: boolean }).arjunContextState);
+    let expected = transitionRequired ? 0 : view.projectionSeq;
+    for (const entry of transitionRequired ? result.transitionHistory! : result.tail) {
       if (entry.seq !== ++expected) throw new DurableContextError("The recovery transcript has a gap.");
       messages.push(entry.message);
       (entry.message as AgentMessage & { arjunRawSeq: number }).arjunRawSeq = entry.seq;
@@ -114,7 +120,7 @@ export class DurableContext {
       throw new DurableContextError("The recovery transcript needs tool reconciliation before it is provider-valid.");
     }
     try { pendingToolCalls(messages); } catch { throw new DurableContextError("The recovery transcript contains an invalid tool batch."); }
-    return { view, messages };
+    return { view, messages, sourceHistory: result.transitionHistory?.map((e) => e.message), destinationModel: result.destinationModel, transitionRequired, approvalConstraints: result.approvalConstraints };
   }
 
   commit(phase: ContextPhase, notes: WorkingNotesState, ledger: ContextLedgerSnapshot | null,

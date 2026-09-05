@@ -59,6 +59,7 @@ pub mod manager;
 pub mod packet;
 pub mod profile;
 pub mod result;
+pub mod workers;
 
 use std::path::Path;
 

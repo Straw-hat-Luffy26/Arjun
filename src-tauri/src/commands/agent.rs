@@ -33,7 +33,7 @@ use crate::agent_runtime::tasks::{
 use crate::agent_runtime::workspace::Workspace;
 use crate::agent_runtime::{artifacts, planning, retrieval, tasks};
 use crate::agent_runtime::{AgentRuntime, RuntimeDeps, AGENT_DURABLE_EVENT, AGENT_EVENT};
-use crate::artifacts::{verify, Evidence, Grounding, VerificationReport};
+use crate::artifacts::VerificationReport;
 use crate::audit::{AuditKind, AuditService};
 use crate::commands::governance::{require_permission, require_session, CurrentSession};
 use crate::identity::{Permission, Session};
@@ -1179,9 +1179,7 @@ async fn drive_run(
             routing.model_id
         )
     })?;
-    if saved_context.as_ref().is_some_and(|saved| saved.checkpoint.model_id != routing.model_id) {
-        return Err("Resumption selected a different model; this run needs a reviewed model transition.".into());
-    }
+
 
     // Now that the model is known, so is its window — and the prompt can be
     // rebuilt to fit it.
@@ -1517,25 +1515,6 @@ async fn drive_run(
         calls.lock().map_err(|_| "The tool history is unavailable.")?.insert(run_id.clone(), core.calls.clone());
     }
     let plan_note = describe_plan(&task_plan);
-    // What this task's answer will have to rest on, decided from the plan
-    // rather than guessed from the wording.
-    //
-    // A plan that permits a retrieval tool is a plan for a question the
-    // organisation's own record has to answer: the planner put that tool in
-    // because the question needs it. A plan without one is general knowledge,
-    // and demanding citations there would make the product refuse to say what
-    // a standard says. Captured here, where the plan is fixed, because the
-    // verifier runs long after and the budget is released in between.
-    let grounding = if task_plan
-        .budget
-        .permitted_tools
-        .iter()
-        .any(|tool| tool.is_retrieval())
-    {
-        Grounding::OrganisationRecord
-    } else {
-        Grounding::GeneralKnowledge
-    };
     let planned = PlanRecord::of(&task_plan);
     // The fixed half of every checkpoint this attempt will take. Established
     // here because this is the first point at which all of it is known: the
@@ -1566,6 +1545,12 @@ async fn drive_run(
                 .and_then(crate::agent_runtime::resume::workspace_hash_of)
                 .unwrap_or_default(),
             model_id: routing.model_id.clone(),
+            model_context: Some(crate::agent_runtime::model_transition::ModelContext {
+                model_id: routing.model_id.clone(), served_model_id: endpoint.served_model_id.clone(),
+                provider: provider_label(endpoint.runtime).into(), context_window: entry.context_length,
+                max_tokens: DEFAULT_MAX_TOKENS.min((entry.context_length / 4).max(128)),
+                input: vec!["text".into()],
+            }),
         };
         checkpoints.lock().map_err(|_| "The checkpoint identity table is unavailable.")?.insert(run_id.clone(), seed);
     }
@@ -1769,83 +1754,52 @@ async fn drive_run(
         }),
     );
 
-    // How the run ended, read off what the loop reported rather than off the
-    // fact that the request came back.
-    //
-    // The three arms are three different questions. A reply carries the
-    // runtime's own typed ending — completed, failed, aborted, cut off at the
-    // output cap — and that ending is used as given. An RPC *error* is this
-    // side classifying a refusal it recognises. A timeout is this side's own
-    // decision and overrides whatever the loop was about to say, because the
-    // run stopped for a reason the loop never learned.
-    let (outcome, mut run_outcome): (Result<Value, String>, RunOutcome) =
-        match tokio::time::timeout(allowed, runtime.request("run.start", params)).await {
-            Ok(Ok(value)) => {
-                // Never `RunCompleted` by default. A runtime that answered
-                // without saying how the run ended is a runtime this build
-                // cannot read, and calling that success is the defect this
-                // whole type exists to remove.
-                let reported = RunOutcome::from_runtime(&value).unwrap_or_else(|| {
-                    log::warn!(
-                        "[agent] run {run_id}: the runtime returned no typed outcome;                          recording it as a failure rather than assuming it finished"
-                    );
-                    RunOutcome::Failed {
-                        detail: "The runtime finished without saying how the run ended."
-                            .to_string(),
-                    }
-                });
-                (Ok(value), reported)
-            }
-            Ok(Err(error)) => {
-                let detail = error.to_string();
-                let classified = RunOutcome::from_rpc_error(detail.clone());
-                (Err(detail), classified)
-            }
-            Err(_) => {
-                // Told to stop, because the deadline expiring here does not
-                // reach the child on its own: the loop would carry on holding a
-                // model server and a workspace for a run nobody is waiting for.
-                let _ = runtime
-                    .request("run.abort", json!({ "runId": run_id }))
-                    .await;
-                let detail = format!(
-                    "Stopped: it ran past the {} minutes this task was allowed.",
-                    allowed.as_secs() / 60
-                );
-                (
-                    Err(detail.clone()),
-                    RunOutcome::BudgetStopped { detail },
-                )
-            }
-        };
-
-    // From here the run is over, one way or the other, and everything below is
-    // about leaving a record of it. A run that failed gets the same treatment
-    // as one that worked: the failure is written into the record rather than
-    // returned instead of it, because the run somebody most wants to look at
-    // afterwards is the one that went wrong.
-    let (answer, turns) = match &outcome {
-        Ok(value) => (
-            value
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            value.get("turns").and_then(Value::as_u64).unwrap_or(0) as u32,
-        ),
-        Err(_) => (String::new(), 0),
-    };
-    // Taken from the typed ending, not from whether the request errored.
-    //
-    // A run cut off at the output cap, and a run an operator stopped, both come
-    // back as `Ok` and both have something to say for themselves. Reading the
-    // caveat off `Result` meant the only runs that ever carried one were the
-    // ones whose transport failed.
-    let mut failure = run_outcome.detail().map(str::to_string);
-    if _claim.lost.load(std::sync::atomic::Ordering::Acquire) {
-        run_outcome = RunOutcome::NeedsReview { detail: "The execution lease was lost; this attempt cannot declare completion.".into() };
-        failure = run_outcome.detail().map(str::to_string);
+    let driven = crate::agent_runtime::task_driver::TaskDriver {
+        run_id: &run_id,
+        prompt: &request.prompt,
+        actor: &signed_in.user.id,
+        lease: &_claim.lease,
+        lease_lost: &_claim.lost,
+        events: &events,
+        health: &audit_health.0,
+        plans: &plans,
+        passages: &passages,
+        calculations: &calculations,
+        produced: &produced,
+        calls: &calls,
     }
+    .run(
+        &runtime,
+        params,
+        allowed,
+        |answer_chars| {
+            reporter.stage_with(Stage::Verifying, json!({ "answerChars": answer_chars }));
+            let _ = record_and_publish(
+                &app,
+                &events,
+                EventDraft::new(&run_id, TaskEventType::VerificationStarted, &signed_in.user.id)
+                    .with(json!({ "answerChars": answer_chars })),
+            );
+        },
+        |event| { let _ = app.emit(AGENT_DURABLE_EVENT, event); },
+    )
+    .await;
+    let crate::agent_runtime::task_driver::DrivenTask {
+        response: outcome,
+        outcome: mut run_outcome,
+        answer,
+        turns,
+        plan: final_plan,
+        verification,
+        completion,
+        artifacts: produced_files,
+        passages: retrieved,
+        calculations: worked,
+        calls: made_calls,
+        finished_at,
+        record_failure: mut record_failed,
+    } = driven;
+    let mut failure = run_outcome.detail().map(str::to_string);
 
     // The run's own notes and its final context ledger, as the loop reported
     // them. Read from the outcome rather than reconstructed: a run that failed
@@ -1864,62 +1818,6 @@ async fn drive_run(
         .ok()
         .and_then(|value| value.get("ledger"))
         .and_then(|ledger| ledger_record(ledger));
-
-    // Re-opened, not taken on the model's word. A document that was written and
-    // then corrupted still passes every test of the code that wrote it.
-    let produced_files = artifacts::report_for_run(&produced, &run_id);
-    let retrieved = retrieval::for_run(&passages, &run_id);
-    // Read off the engine's own table, never rebuilt from the answer's figures.
-    // ARJUN design rule 27 makes the engine the source of numerical truth, and a record
-    // recovered from the text would be the model's account of its arithmetic
-    // rather than the arithmetic.
-    let worked = calculations
-        .lock()
-        .ok()
-        .and_then(|table| table.get(&run_id).cloned())
-        .unwrap_or_default();
-
-    // The check between a draft and something somebody signs. Skipped when
-    // there is no answer to check — reporting "nothing to verify" as a pass
-    // would be the one misleading outcome available here.
-    if !answer.trim().is_empty() {
-        reporter.stage_with(
-            Stage::Verifying,
-            json!({ "answerChars": answer.chars().count() }),
-        );
-        let _ = record_and_publish(
-            &app,
-            &events,
-            EventDraft::new(
-                &run_id,
-                TaskEventType::VerificationStarted,
-                &signed_in.user.id,
-            )
-            .with(json!({ "answerChars": answer.chars().count() })),
-        );
-    }
-
-    let verification = (!answer.trim().is_empty()).then(|| {
-        verify(
-            &answer,
-            &Evidence {
-                // Fixed when the plan was, above.
-                grounding,
-                passages: &retrieved,
-                calculations: &worked,
-                // The document service reports these; nothing on this path
-                // produces them yet, and an invented list would fabricate a
-                // finding rather than omit one.
-                unread_pages: &[],
-            },
-        )
-    });
-
-    let made_calls = calls
-        .lock()
-        .ok()
-        .and_then(|table| table.get(&run_id).cloned())
-        .unwrap_or_default();
 
     // Everything a person was asked to allow during this run, decided or not.
     // Read from the queue by run id rather than tracked separately, so the
@@ -1956,116 +1854,8 @@ async fn drive_run(
         })
         .collect::<Vec<_>>();
 
-    let finished_at = chrono::Utc::now();
-    let mut final_plan = plans
-        .lock()
-        .ok()
-        .and_then(|table| table.get(&run_id).map(PlanRecord::of))
-        .unwrap_or(planned);
-    // Which steps the run actually carried out, judged against what it left
-    // behind rather than what it said. Re-deriving the plan is safe because the
-    // derivation is deterministic over the prompt — this is the same plan the
-    // run was held to, so the steps line up one for one.
-    let succeeded: Vec<String> = made_calls
-        .iter()
-        .filter(|call| call.outcome == crate::agent_runtime::tasks::CallOutcome::Succeeded)
-        .map(|call| call.tool.clone())
-        .collect();
-    final_plan.settle(
-        &planning::derive(&request.prompt).steps,
-        &succeeded,
-        !answer.trim().is_empty(),
-        verification.is_some(),
-    );
-
-    // The plan only knows the endings it caused. A loop that simply finished,
-    // or a runtime that fell over, ends the run without it hearing about it.
-    final_plan.ended(failure.as_deref());
-
-    // Whether this run may be called finished, decided from what it left
-    // behind rather than from the loop having stopped.
-    //
-    // Every input is a record something else wrote for its own reasons: the
-    // plan's step ledger, the effect ledger, the approval queue, files
-    // re-opened from disk, the grounding report. Nothing here reads the
-    // answer's claims about itself.
-    let completion = {
-        let (unknown_effects, pending_approvals, evidence_error) =
-            match events.completion_obligations(&run_id) {
-                Ok((effects, approvals)) => (effects, approvals, None),
-                Err(error) => (Vec::new(), 0, Some(error)),
-            };
-
-        crate::agent_runtime::completion::verify(
-            &crate::agent_runtime::completion::CompletionInputs {
-                evidence_error,
-                failure: failure.clone(),
-                unfinished_steps: final_plan.unfinished().len(),
-                unknown_effects,
-                pending_approvals,
-                artifacts: produced_files
-                    .iter()
-                    .map(|artifact| (artifact.name.clone(), artifact.sound))
-                    .collect(),
-                grounding_ready: verification
-                    .as_ref()
-                    .map(crate::artifacts::verifier::VerificationReport::is_ready),
-                has_answer: !answer.trim().is_empty(),
-            },
-            finished_at,
-        )
-    };
-
-    // Recorded as its own event, distinct from `verification_started`. Before
-    // this, the history said a check had begun and never what it concluded, so
-    // "it was checked" and "it passed" were indistinguishable after the fact.
-    let completion_commit = record_and_publish_watched(
-        &app,
-        &events,
-        EventDraft::new(
-            &run_id,
-            TaskEventType::CompletionVerified,
-            &signed_in.user.id,
-        )
-        .with(json!({
-            "passed": completion.passed(),
-            "outcome": completion.outcome.as_str(),
-            "verifierVersion": completion.verifier_version,
-            "verifiedAt": completion.verified_at,
-            // Ids, statuses and short evidence strings. No passage, no answer.
-            "criteria": completion
-                .criteria
-                .iter()
-                .map(|criterion| json!({
-                    "criterionId": criterion.criterion_id,
-                    "status": criterion.status.as_str(),
-                    "evidence": criterion.evidence,
-                }))
-                .collect::<Vec<_>>(),
-        })),
-        Some(&audit_health.0),
-    );
-
-    if !completion.passed() {
-        log::info!(
-            "[tasks] run {run_id}: {}",
-            completion.explain()
-        );
-    }
-
-    run_outcome = completion.enforce_outcome(run_outcome);
-    let mut record_failed = completion_commit.err().map(|_| {
-        "The completion-verification record could not be saved.".to_string()
-    });
-    if let Some(detail) = &record_failed {
-        if run_outcome.is_success() {
-            run_outcome = RunOutcome::NeedsReview { detail: detail.clone() };
-        }
-    }
-    failure = run_outcome.detail().map(str::to_string);
-    final_plan.ended(failure.as_deref());
-
     let record = TaskRecord {
+        children: Vec::new(),
         run_id: run_id.clone(),
         prompt: request.prompt.clone(),
         started_at: started_at.to_rfc3339(),
@@ -2140,19 +1930,10 @@ async fn drive_run(
     // with no ending in the log is a run recovery will later find still
     // "running" and close off as interrupted — so an unwritten ending does not
     // merely lose a row, it rewrites what the history says happened.
-    let publication = app_data_dir(&app).and_then(|dir| tasks::save_with_ending(&dir, &record, || {
-        let draft = EventDraft::idempotent(&run_id, run_outcome.event_type(), &signed_in.user.id, "ending")
-            .with(ending_payload);
-        match events.record_fenced(draft, &_claim.lease) {
-            Ok(event) => { let _ = app.emit(AGENT_DURABLE_EVENT, event.envelope()); }
-            Err(crate::agent_runtime::events::AppendError::Duplicate { .. })
-            | Err(crate::agent_runtime::events::AppendError::AlreadyEnded { .. }) => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        events.snapshot(&run_id)?
-            .as_ref().and_then(RunOutcome::from_snapshot)
-            .ok_or_else(|| "The authoritative terminal state could not be confirmed.".into())
-    }));
+    let publication = app_data_dir(&app).and_then(|dir| {
+        crate::agent_runtime::task_driver::publish(&dir, &record, &events, &_claim.lease,
+            ending_payload, |event| { let _ = app.emit(AGENT_DURABLE_EVENT, event); })
+    });
     match publication {
         Ok(ending) => run_outcome = ending,
         Err(error) => {

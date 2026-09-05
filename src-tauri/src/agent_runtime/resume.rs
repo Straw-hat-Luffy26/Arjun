@@ -212,6 +212,7 @@ pub struct CheckpointSeed {
     pub policy_hash: String,
     pub workspace_hash: String,
     pub model_id: String,
+    pub model_context: Option<super::model_transition::ModelContext>,
 }
 
 impl CheckpointSeed {

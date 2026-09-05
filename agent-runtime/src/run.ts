@@ -28,6 +28,8 @@ import { observeToolResult } from "./note-taking.js";
 import { DurableContext, DurableContextError, scopedPeer, type ContextPhase, type ExecutionIdentity } from "./durable-context.js";
 import { ContextBudgetExceeded } from "./context-budget.js";
 import { pendingToolCalls } from "./tool-recovery.js";
+import { buildDestinationContext, transitionPins } from "./destination-context.js";
+import { projectedTokens } from "./context-budget.js";
 import { validateToolArguments } from "@openclaw/ai/validation";
 
 /** What Rust sends with `run.start`. */
@@ -274,6 +276,11 @@ export async function startRun(
   const notes = WorkingNotes.from(restored.view?.notes ?? request.notes);
   notes.setGoal(request.prompt);
   let preserved: PreservedState = { ...(request.preserved ?? {}) };
+  const transitioning = restored.transitionRequired === true;
+  if (restored.sourceHistory) {
+    preserved = { ...preserved, ...transitionPins(restored.sourceHistory),
+      policyDecisions: (restored.approvalConstraints ?? []).map((a) => JSON.stringify(a)) };
+  }
 
   // The notes are kept from what the tools returned rather than from what the
   // model chose to write down. See `note-taking.ts` — the entries that make a
@@ -554,6 +561,11 @@ export async function startRun(
     // measurement for the whole life of the run instead of only at the end.
     if (event.type === "message_end") {
       const message = event.message;
+      if (preserved.exactInstructions && message.role === "user" && !(message as { arjunContextState?: boolean }).arjunContextState) {
+        const pins = transitionPins([message]);
+        preserved.exactInstructions.push(...(pins.exactInstructions ?? []));
+        preserved.exactIdentifiers = [...new Set([...(preserved.exactIdentifiers ?? []), ...(pins.exactIdentifiers ?? [])])];
+      }
       // agent-core awaits listeners before executing the tools in this model
       // response. Raw assistant/tool messages must land before that boundary.
       if (!durabilityFailure) {
@@ -625,6 +637,23 @@ export async function startRun(
   });
 
   try {
+    const target = restored.destinationModel;
+    if (target && (target.servedModelId !== request.model.id || target.provider !== request.model.provider
+      || target.contextWindow !== request.model.contextWindow || target.maxTokens !== request.model.maxTokens
+      || [...target.input].sort().join(",") !== [...(request.model.input ?? ["text"])].sort().join(","))) {
+      throw new DurableContextError("The worker model differs from the authorized destination contract.");
+    }
+    const buildDestination = (messages: AgentMessage[]) => {
+      if (!target) throw new DurableContextError("The model transition has no destination contract.");
+      const fixed = contextLedger.get("system") + contextLedger.get("toolSchema") + contextLedger.get("skill");
+      return buildDestinationContext({ messages, destination: target, notes, preserved, fixedTokens: fixed });
+    };
+    if (transitioning && durable) {
+      await durable.commit("modelTransitionStarted", notes.state, restored.view?.ledger ?? null);
+      // Refuse an impossible destination before asking for or executing any
+      // pending action. The pending suffix is retained exactly until resolved.
+      agent.state.messages = buildDestination(restored.messages).projection;
+    }
     for (const pending of pendingToolCalls(agent.state.messages)) {
       const tool = tools.find((tool) => tool.name === pending.toolCall.name);
       if (!tool) throw new DurableContextError("A saved tool is no longer available under this run's policy.");
@@ -648,6 +677,21 @@ export async function startRun(
       await commitBoundary("afterTool", { message });
       agent.state.messages = [...agent.state.messages, message];
     }
+    if (transitioning && durable) {
+      // Approval decisions may have changed while a pending batch was resumed.
+      // Re-read authoritative constraints, not the pre-approval snapshot.
+      const current = await durable.load();
+      preserved = { ...preserved, ...transitionPins(current.messages),
+        policyDecisions: (current.approvalConstraints ?? []).map((a) => JSON.stringify(a)) };
+      const destination = buildDestination(current.messages);
+      contextLedger.set("notes", 0);
+      contextLedger.set("evidence", 0);
+      contextLedger.set("compaction", 0);
+      contextLedger.set("transcript", projectedTokens(destination.projection));
+      contextLedger.set("reserve", target!.maxTokens);
+      const saved = await commitBoundary("modelTransitionReady", { projection: destination.projection });
+      agent.state.messages = saved!.messages;
+    }
     const lastRestored = agent.state.messages.at(-1);
     const stoppedAfterResponse = lastRestored?.role === "assistant"
       && !lastRestored.content.some((block) => block.type === "toolCall");
@@ -657,7 +701,7 @@ export async function startRun(
     }
     if (!durabilityFailure) await commitBoundary("finished");
   } catch (error) {
-    if (!(error instanceof DurableContextError)) throw error;
+    if (!(error instanceof DurableContextError) && !(error instanceof ContextBudgetExceeded)) throw error;
     causedBy({ kind: "needsReview", detail: error.message });
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);

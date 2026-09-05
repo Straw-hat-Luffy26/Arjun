@@ -14,7 +14,7 @@ fn seeded() -> (Arc<RuntimeDeps>, tempfile::TempDir, CheckpointSeed, Value) {
         attempt_id:"attempt-1".into(), objective:"Write note.txt".into(),conversation_id:"conversation-1".into(),message_id:"message-1".into(),deadline_ms:(Utc::now()+Duration::minutes(2)).timestamp_millis(),
         lease:deps.events.claim_run("r","worker-1",Duration::minutes(2),Utc::now()).unwrap().unwrap(),
         policy_hash:policy_hash(&deps.session().unwrap(),Some(Classification::Internal),&format!("{:?}",crate::sovereignty::global_broker().mode())),
-        plan_hash:"plan".into(),workspace_hash:"workspace".into(),model_id:"local".into(),
+        plan_hash:"plan".into(),workspace_hash:"workspace".into(),model_context: None, model_id:"local".into(),
     };
     deps.checkpoints.lock().unwrap().insert("r".into(),seed.clone());
     let call = json!({"runId":"r","attemptId":"attempt-1","fenceToken":seed.lease.fence_token,"operationSeq":1,"toolCallId":"call-1","tool":"workspace.write_text","args":{"path":"note.txt","content":"persisted result"}});

@@ -231,6 +231,12 @@ impl ChildResult {
     /// and folding it in would put an extraction where a calculation belongs.
     pub fn answers(&self, packet: &super::packet::ChildTaskPacket) -> bool {
         self.child_id == packet.child_id && self.schema == packet.required_schema
+            && self.profile == packet.profile
+            && self.result_hash == hash_of(&self.status, self.schema, &self.findings)
+            && self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence)
+            && self.turns_used <= packet.limits.max_turns
+            && serde_json::to_vec(&(&self.findings, &self.uncertainty, &self.detail))
+                .is_ok_and(|body| body.len() <= packet.limits.max_output_tokens as usize * 4)
     }
 
     /// One line for the parent's trace.

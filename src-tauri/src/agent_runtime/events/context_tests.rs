@@ -7,6 +7,55 @@ fn request() -> ContextCommit {
     serde_json::from_str(include_str!("../../../../contracts/runtime-context-v1.json")).unwrap()
 }
 
+#[test]
+fn model_transitions_are_atomic_authority_bound_and_restartable() {
+    use super::context::ContextPhase;
+    use crate::agent_runtime::model_transition::{ModelContext, TransitionStatus};
+    for window in [4096, 32768] {
+        let dir = tempfile::tempdir().unwrap();
+        let log = TaskEventLog::open(dir.path()).unwrap();
+        let mut source = seed(&log);
+        source.model_context = Some(ModelContext { model_id: "local".into(), served_model_id: "served-00017".into(), provider: "local".into(), context_window: 8192, max_tokens: 256, input: vec!["text".into()] });
+        log.commit_context(&request(), &source, "operator", json!({}), Utc::now()).unwrap();
+        let raw = log.context_history(&request().run_id, 0, 512).unwrap();
+        let mut target = source.clone();
+        target.model_id = "destination-00042".into();
+        target.model_context.as_mut().unwrap().model_id = target.model_id.clone();
+        target.model_context.as_mut().unwrap().context_window = window;
+        let mut boundary = request();
+        boundary.expected_revision = 1; boundary.commit_id = "transition-00001".into();
+        boundary.entries.clear(); boundary.projection = None;
+        assert!(log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).is_err());
+        boundary.phase = ContextPhase::ModelTransitionStarted;
+        let mut unauthorized = target.clone(); unauthorized.policy_hash = "changed".into();
+        assert!(log.commit_context(&boundary, &unauthorized, "operator", json!({}), Utc::now()).is_err());
+        let preparing = log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).unwrap();
+        assert_eq!(preparing.model_context, source.model_context);
+        drop(log);
+        let log = TaskEventLog::open(dir.path()).unwrap();
+        boundary.expected_revision = 2; boundary.commit_id = "retry-transition".into();
+        let retry = log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).unwrap();
+        assert_eq!(retry.model_transition.as_ref().unwrap().transition_id, "transition-00001");
+        boundary.expected_revision = 3; boundary.commit_id = "ready-transition".into();
+        boundary.phase = ContextPhase::ModelTransitionReady;
+        assert!(log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).is_err());
+        boundary.projection = request().projection;
+        boundary.ledger.as_mut().unwrap().window = window;
+        boundary.ledger.as_mut().unwrap().occupied = window;
+        assert!(log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).is_err());
+        boundary.ledger.as_mut().unwrap().occupied = 144;
+        assert!(log.commit_context(&boundary, &source, "operator", json!({}), Utc::now()).is_err());
+        log.conn.lock().unwrap().execute("INSERT INTO run_approvals (approval_id,run_id,tool,args_fingerprint,arguments,status,created_at) VALUES ('approval-00042',?1,'write_scoped_file','exact','{}','pending','2026-09-05T00:00:00Z')", [&boundary.run_id]).unwrap();
+        assert!(log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).is_err(), "pending approvals must settle before destination inference");
+        log.conn.lock().unwrap().execute("UPDATE run_approvals SET status='approved' WHERE approval_id='approval-00042'", []).unwrap();
+        let ready = log.commit_context(&boundary, &target, "operator", json!({}), Utc::now()).unwrap();
+        assert_eq!(ready.model_context, target.model_context);
+        assert_eq!(ready.model_transition.unwrap().status, TransitionStatus::Ready);
+        assert_eq!(log.checkpoint(&boundary.run_id).unwrap().unwrap().model_id, target.model_id);
+        assert_eq!(serde_json::to_value(raw).unwrap(), serde_json::to_value(log.context_history(&boundary.run_id, 0, 512).unwrap()).unwrap());
+    }
+}
+
 fn seed(log: &TaskEventLog) -> CheckpointSeed {
     let run = request().run_id;
     log.record(EventDraft::new(&run, TaskEventType::RunCreated, "operator")).unwrap();
@@ -14,7 +63,7 @@ fn seed(log: &TaskEventLog) -> CheckpointSeed {
         attempt_id: "attempt-1".into(),
         objective: "Create report.txt".into(), conversation_id: "conversation".into(), message_id: "message".into(), deadline_ms: (Utc::now() + Duration::minutes(10)).timestamp_millis(),
         lease: log.claim_run(&run, "worker", Duration::seconds(60), Utc::now()).unwrap().unwrap(),
-        plan_hash: "plan".into(), policy_hash: "policy".into(), workspace_hash: "workspace".into(), model_id: "local".into(),
+        plan_hash: "plan".into(), policy_hash: "policy".into(), workspace_hash: "workspace".into(), model_context: None, model_id: "local".into(),
     }
 }
 

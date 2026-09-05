@@ -121,8 +121,30 @@ pub(super) fn load(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wire
         let last = tail.last().map(|entry| entry.seq).unwrap_or(saved.view.projection_seq);
         if last != saved.view.raw_seq { return Err(refused("The checkpoint tail requires a bounded repair before resuming.")); }
     }
+    let destination = seed.model_context.as_ref();
+    if let Some(destination) = destination { destination.validate().map_err(refused)?; }
+    let transitioning = saved.as_ref().is_some_and(|s| s.view.model_context.as_ref().is_some_and(|source| Some(source) != destination));
+    if saved.as_ref().is_some_and(|s| s.view.model_context.is_none() && s.checkpoint.model_id != seed.model_id) {
+        return Err(refused("This legacy checkpoint has no source model contract for a cross-model transition."));
+    }
+    // A transition starts from exact history, not an earlier model's lossy
+    // projection. Read limits refuse oversized recovery rather than omit data.
+    let history = if transitioning || saved.as_ref().is_some_and(|s| s.view.model_transition.is_some()) {
+        let history = deps.events.context_history(run, 0, 512).map_err(refused)?;
+        if history.last().map(|e| e.seq).unwrap_or(0) != saved.as_ref().unwrap().view.raw_seq {
+            return Err(refused("The transition history exceeds its bounded recovery page."));
+        }
+        Some(history)
+    } else { None };
+    let approvals = deps.events.approvals_for_run(run).map_err(refused)?;
+    let approval_constraints: Vec<Value> = approvals.iter().map(|a| json!({
+        "id": a.approval_id, "tool": a.tool, "arguments": a.display_arguments(),
+        "status": a.status, "expiresAt": a.expires_at,
+    })).collect();
     // Explicit whitelist: no core resources or another operator's raw history.
-    Ok(json!({ "protocolVersion": 1, "view": saved.map(|saved| saved.view), "tail": tail }))
+    Ok(json!({ "protocolVersion": 1, "view": saved.map(|saved| saved.view), "tail": tail,
+        "destinationModel": destination, "transitionHistory": history,
+        "approvalConstraints": approval_constraints }))
 }
 
 /// Exact, paged retrieval through the existing authorized run-memory tool.

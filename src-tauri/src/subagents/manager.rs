@@ -63,6 +63,13 @@ pub trait ChildWorker: Send + Sync {
     /// The profile this worker serves.
     fn profile(&self) -> &str;
 
+    /// Rust selects references from the parent's actual resources, under the
+    /// narrowed policy. Workers revalidate these immediately before reading.
+    fn handoff_inputs(&self, _policy: &EffectivePolicy) -> Result<Vec<InputRef>, String> { Ok(Vec::new()) }
+    fn validate_inputs(&self, _policy: &EffectivePolicy, _inputs: &[InputRef]) -> Result<(), String> { Ok(()) }
+    fn result_evidence(&self, _policy: &EffectivePolicy, _result: &ChildResult) -> Result<Vec<crate::knowledge::SearchResult>, String> { Ok(Vec::new()) }
+    fn restore_evidence(&self, _policy: &EffectivePolicy, _record: &crate::agent_runtime::events::children::ChildRecord) -> Result<(), String> { Ok(()) }
+
     /// Runs the work.
     ///
     /// Returning `Err` is a worker saying it failed; the manager turns that
@@ -87,11 +94,13 @@ pub enum SpawnRefusal {
     /// A separate refusal from an unknown profile on purpose: the role exists
     /// and is correctly declared, and this build simply cannot perform it.
     NoWorker { profile: String },
+    Unavailable { detail: String },
 }
 
 impl SpawnRefusal {
     pub fn explain(&self) -> String {
         match self {
+            SpawnRefusal::Unavailable { detail } => detail.clone(),
             SpawnRefusal::UnknownProfile { name } => {
                 format!("There is no subagent profile called {name:?}.")
             }
@@ -140,7 +149,7 @@ impl Spawned {
 }
 
 /// One idempotency slot: the lock a second caller waits on, and the answer.
-type Slot = Arc<Mutex<Option<ChildResult>>>;
+type Slot = Arc<Mutex<()>>;
 
 /// The Rust side of subagents.
 pub struct SubagentManager {
@@ -187,6 +196,11 @@ impl SubagentManager {
     /// Whether this build can actually perform a role.
     pub fn has_worker(&self, profile: &str) -> bool {
         self.workers.contains_key(profile)
+    }
+
+    pub fn handoff_inputs(&self, profile: &str, inherited: &InheritedPolicy) -> Result<Vec<InputRef>, String> {
+        let (_, policy) = self.plan(profile, inherited, "handoff").map_err(|e| e.explain())?;
+        self.workers.get(profile).ok_or("No worker is registered for this profile.")?.handoff_inputs(&policy)
     }
 
     /// Works out what a child would be permitted, without starting it.
@@ -238,16 +252,24 @@ impl SubagentManager {
             Arc::clone(
                 slots
                     .entry(key.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(None))),
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
             )
         };
-        let mut held = slot.lock().await;
-        if let Some(existing) = held.as_ref() {
-            return Ok(Spawned::Existing(existing.clone()));
-        }
-
         let child_id = uuid::Uuid::new_v4().to_string();
         let (profile, policy) = self.plan(profile_name, inherited, &child_id)?;
+        let policy_hash = crate::agent_runtime::events::digest(&serde_json::to_string(&(&profile, inherited)).unwrap());
+        if let Some(worker) = self.workers.get(profile_name) {
+            worker.validate_inputs(&policy, &inputs).map_err(|detail| SpawnRefusal::Unavailable { detail })?;
+        }
+        let _held = slot.lock().await;
+        if let Some(saved) = self.events.child_result(&inherited_run_id(inherited), &key, &policy_hash)
+            .map_err(|detail| SpawnRefusal::Unavailable { detail })? {
+            if let Some(worker) = self.workers.get(profile_name) {
+                worker.restore_evidence(&policy, &saved).map_err(|detail| SpawnRefusal::Unavailable { detail })?;
+            }
+            return Ok(Spawned::Existing(saved.result));
+        }
+        let packet = ChildTaskPacket::new(&child_id, inherited_run_id(inherited), &key, objective, inputs, &policy, Utc::now());
 
         let Some(worker) = self.workers.get(&profile.name).cloned() else {
             let refusal = SpawnRefusal::NoWorker {
@@ -257,35 +279,26 @@ impl SubagentManager {
             // Recorded even though nothing ran. A parent that asked for a
             // worker this build does not have should see that in the trace
             // rather than only in a returned error.
+            self.events.save_child_result(&crate::agent_runtime::events::children::ChildRecord { packet, result: result.clone(), evidence: Vec::new() }, &policy_hash)
+                .map_err(|detail| SpawnRefusal::Unavailable { detail })?;
             self.record_stop(inherited, &child_id, &result, &model);
-            *held = Some(result.clone());
             return Ok(Spawned::Fresh(result));
         };
 
-        let packet = ChildTaskPacket::new(
-            &child_id,
-            inherited_run_id(inherited),
-            &key,
-            objective,
-            inputs,
-            &policy,
-            Utc::now(),
-        );
-
         self.record_start(inherited, &packet, &policy, &model);
 
-        // The lane. Held for exactly as long as the work, and released before
-        // the stop is recorded so a slow event write does not hold the lane.
-        let _reader;
-        let _writer;
-        if policy.is_concurrent() {
-            _reader = self.readers.clone().acquire_owned().await.ok();
-        } else {
-            _writer = Some(self.exclusive.clone().lock_owned().await);
-        }
-
-        let budget = std::time::Duration::from_secs(policy.limits.max_duration_seconds.max(1));
-        let outcome = tokio::time::timeout(budget, worker.run(&packet, &policy)).await;
+        // Queueing consumes the same absolute lifetime as execution.
+        let budget = (packet.deadline - Utc::now()).to_std().unwrap_or_default();
+        let outcome = tokio::time::timeout(budget, async {
+            let _reader;
+            let _writer;
+            if policy.is_concurrent() {
+                _reader = self.readers.clone().acquire_owned().await.ok();
+            } else {
+                _writer = Some(self.exclusive.clone().lock_owned().await);
+            }
+            worker.run(&packet, &policy).await
+        }).await;
 
         let result = match outcome {
             Ok(Ok(mut produced)) => {
@@ -293,7 +306,7 @@ impl SubagentManager {
                 // that decide whether the parent may rely on it. A worker that
                 // returned a result answering a different packet is a worker
                 // that answered a different question.
-                if !produced.answers(&packet) {
+                if !produced.answers(&packet) || packet.is_expired(Utc::now()) {
                     produced = ChildResult::ended(
                         &child_id,
                         &profile.name,
@@ -301,7 +314,7 @@ impl SubagentManager {
                         profile.required_schema,
                         Vec::new(),
                         "the worker returned a result for a different task or shape".to_string(),
-                        produced.turns_used,
+                        produced.turns_used.min(policy.limits.max_turns),
                     );
                 }
                 produced
@@ -330,8 +343,10 @@ impl SubagentManager {
             ),
         };
 
+        let evidence = worker.result_evidence(&policy, &result).map_err(|detail| SpawnRefusal::Unavailable { detail })?;
+        self.events.save_child_result(&crate::agent_runtime::events::children::ChildRecord { packet, result: result.clone(), evidence }, &policy_hash)
+            .map_err(|detail| SpawnRefusal::Unavailable { detail })?;
         self.record_stop(inherited, &child_id, &result, &model);
-        *held = Some(result.clone());
         Ok(Spawned::Fresh(result))
     }
 

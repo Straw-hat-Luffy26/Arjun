@@ -875,24 +875,23 @@ impl<'a> LocalToolRunner<'a> {
         let profile_owned = profile.to_string();
         let task_owned = task.to_string();
         let inherited_clone = inherited.clone();
-        // The child uses the parent's model rather than picking a fresh
-        // one: requirement 4 says a child inherits the parent's policy,
-        // and the model is part of that. The routing decision here is
-        // the parent's own — recorded for the audit trail.
+        let inputs = subagents.handoff_inputs(profile, inherited)?;
+        // These registered specialists use local deterministic services.
         let decision = crate::subagents::certification::Decision {
-            model_id: String::from("parent-inherited"),
+            model_id: String::from("deterministic-local-services-v1"),
             role: crate::registry::ModelRole::Reasoning,
-            cheaper_than_parent: true,
-            reason: "subagent inherits the parent's model and routing".to_string(),
+            cheaper_than_parent: false,
+            reason: "bounded local service worker; no inference model or comparative cost measurement".to_string(),
             tier: None,
             score: None,
         };
         let result = subagents
-            .spawn(&profile_owned, &inherited_clone, &task_owned, Vec::new(), decision)
+            .spawn(&profile_owned, &inherited_clone, &task_owned, inputs, decision)
             .await
             .map_err(|refusal| refusal.explain())?;
 
         let child = result.result();
+        if !child.is_complete() { return Err(child.describe()); }
         // The shape the model sees: status, findings (or refusal text),
         // and a one-line citation so a model citing the result has
         // something concrete to point at.
@@ -905,7 +904,12 @@ impl<'a> LocalToolRunner<'a> {
         if !child.findings.is_empty() {
             out.push_str("Findings:\n");
             for finding in &child.findings {
-                out.push_str(&format!("- {}\n", finding.statement));
+                out.push_str(&format!("- {}", finding.statement));
+                for evidence in &finding.evidence {
+                    if let Some(marker) = evidence.marker { out.push_str(&format!(" [E{marker}]")); }
+                    out.push_str(&format!(" ({})", evidence.citation));
+                }
+                out.push('\n');
             }
         }
         if !child.uncertainty.is_empty() {

@@ -22,7 +22,7 @@ const MAX_COMMITS: i64 = 4096;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum ContextPhase { Observed, ModelReady, BeforeTool, AfterTool, CompactionStarted, CompactionCompleted, Finished, Paused }
+pub enum ContextPhase { Observed, ModelReady, BeforeTool, AfterTool, CompactionStarted, CompactionCompleted, Finished, Paused, ModelTransitionStarted, ModelTransitionReady }
 
 impl ContextPhase {
     fn event(self) -> TaskEventType {
@@ -106,6 +106,10 @@ pub struct ContextView {
     pub ledger: Option<ContextLedgerWire>,
     pub pending_approvals: Vec<String>,
     pub unsettled_effects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_context: Option<crate::agent_runtime::model_transition::ModelContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_transition: Option<crate::agent_runtime::model_transition::ModelTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +213,26 @@ impl TaskEventLog {
             return Ok(decode(&body, &body_hash)?.view);
         }
         let previous = load(&tx, &request.run_id)?;
+        let (model_context, model_transition) = crate::agent_runtime::model_transition::advance(
+            previous.as_ref(), seed, request.phase, &request.commit_id)?;
+        if let Some(saved) = &previous {
+            for key in ["objective", "conversationId", "messageId", "deadlineMs"] {
+                if saved.core_state.get(key) != core_state.get(key) {
+                    return Err("A continuation cannot replace its objective, turn identity or lifetime deadline.".into());
+                }
+            }
+        }
+        if request.phase == ContextPhase::ModelTransitionStarted && (request.projection.is_some() || !request.entries.is_empty()) {
+            return Err("The source transition checkpoint cannot rewrite transcript history.".into());
+        }
+        if request.phase == ContextPhase::ModelTransitionReady {
+            let target = model_context.as_ref().ok_or("The destination model contract is missing.")?;
+            let ledger = request.ledger.as_ref().ok_or("The destination projection has no admission ledger.")?;
+            let budget = (target.context_window * 7 / 10).min(target.context_window - target.max_tokens - 256);
+            if request.projection.is_none() || !request.entries.is_empty() || ledger.window != target.context_window || ledger.occupied > budget {
+                return Err("The destination context has not been admitted within its model window.".into());
+            }
+        }
         // Human milestone signatures are Rust-owned. A worker cannot erase or
         // manufacture them by submitting a new copy of its working notes.
         if !request.notes.milestones.is_empty() { return Err("The worker cannot submit approval milestones.".into()); }
@@ -241,17 +265,22 @@ impl TaskEventLog {
         };
         let unsettled = keys("SELECT idempotency_key FROM task_tool_effects WHERE run_id = ?1 AND status IN ('pending','unknown') ORDER BY idempotency_key")?;
         let approvals = keys("SELECT approval_id FROM run_approvals WHERE run_id = ?1 AND status = 'pending' ORDER BY approval_id")?;
+        if request.phase == ContextPhase::ModelTransitionReady && (!approvals.is_empty() || !unsettled.is_empty()) {
+            return Err("The source model's approvals and effects must settle before destination inference.".into());
+        }
         let (messages, projection_seq) = match &request.projection {
             Some(projection) => (projection.clone(), raw_seq),
             None => previous.as_ref().map(|saved| (saved.view.messages.clone(), saved.view.projection_seq)).unwrap_or_default(),
         };
-        let view = ContextView { protocol_version: CONTEXT_PROTOCOL_VERSION, run_id: request.run_id.clone(), revision: revision + 1, checkpoint_id: request.commit_id.clone(), raw_seq, projection_seq, phase: request.phase, messages, notes: notes.clone(), ledger: request.ledger.clone(), pending_approvals: approvals, unsettled_effects: unsettled.clone() };
+        let view = ContextView { protocol_version: CONTEXT_PROTOCOL_VERSION, run_id: request.run_id.clone(), revision: revision + 1, checkpoint_id: request.commit_id.clone(), raw_seq, projection_seq, phase: request.phase, messages, notes: notes.clone(), ledger: request.ledger.clone(), pending_approvals: approvals, unsettled_effects: unsettled.clone(), model_context, model_transition };
         let event_seq: i64 = tx.query_row("SELECT COALESCE(MAX(seq),0)+1 FROM task_events WHERE run_id = ?1", [&request.run_id], |row| row.get(0)).map_err(storage_error)?;
-        let checkpoint = seed.checkpoint(&request.run_id, request.phase.state(), event_seq, notes, request.ledger.as_ref().map(ContextLedgerWire::record), unsettled);
+        let mut checkpoint_seed = seed.clone();
+        if let Some(model) = &view.model_context { checkpoint_seed.model_id = model.model_id.clone(); }
+        let checkpoint = checkpoint_seed.checkpoint(&request.run_id, request.phase.state(), event_seq, notes, request.ledger.as_ref().map(ContextLedgerWire::record), unsettled);
         let stored = StoredContext { view: view.clone(), checkpoint: checkpoint.clone(), core_state };
         let body = encoded(&stored)?;
         tx.execute("INSERT INTO run_context_commits (run_id,revision,commit_id,request_hash,fence_token,body,body_hash,at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![request.run_id, view.revision, request.commit_id, request_hash, request.fence_token, body, digest(&body), now.to_rfc3339()]).map_err(storage_error)?;
-        let draft = EventDraft::new(&request.run_id, request.phase.event(), actor).with(json!({ "contextRevision": view.revision, "checkpointId": view.checkpoint_id, "rawSeq": raw_seq, "phase": request.phase, "messages": request.entries.len() }));
+        let draft = EventDraft::new(&request.run_id, request.phase.event(), actor).with(json!({ "contextRevision": view.revision, "checkpointId": view.checkpoint_id, "rawSeq": raw_seq, "phase": request.phase, "messages": request.entries.len(), "modelTransition": view.model_transition }));
         tx.execute("INSERT INTO task_events (event_id,run_id,seq,event_type,at,actor,schema_version,payload,payload_hash) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![draft.event_id, request.run_id, event_seq, draft.event_type.as_str(), now.to_rfc3339(), actor, SCHEMA_VERSION, encoded(&draft.payload)?, payload_hash(&draft.payload)]).map_err(storage_error)?;
         tx.execute("INSERT INTO run_checkpoints (run_id,attempt_id,last_event_seq,state,at,schema_version,checkpoint_hash,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(run_id) DO UPDATE SET attempt_id=excluded.attempt_id,last_event_seq=excluded.last_event_seq,state=excluded.state,at=excluded.at,schema_version=excluded.schema_version,checkpoint_hash=excluded.checkpoint_hash,body=excluded.body", params![request.run_id, request.attempt_id, event_seq, checkpoint.state.as_str(), checkpoint.at, checkpoint.schema_version, checkpoint.checkpoint_hash, encoded(&checkpoint)?]).map_err(storage_error)?;
         tx.commit().map_err(storage_error)?;

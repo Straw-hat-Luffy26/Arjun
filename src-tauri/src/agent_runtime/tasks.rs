@@ -355,6 +355,9 @@ pub struct CompactionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRecord {
+    /// Full private specialist packets/results, persisted under this parent.
+    #[serde(default)]
+    pub children: Vec<super::events::children::ChildRecord>,
     pub run_id: String,
     pub prompt: String,
     /// RFC 3339, UTC.
@@ -710,6 +713,7 @@ pub(crate) mod tests {
     /// from this one.
     pub(crate) fn record(run_id: &str, finished_at: &str) -> TaskRecord {
         TaskRecord {
+            children: Vec::new(),
             run_id: run_id.to_string(),
             prompt: "draft an approval note".to_string(),
             started_at: "2026-08-27T10:00:00+00:00".to_string(),
