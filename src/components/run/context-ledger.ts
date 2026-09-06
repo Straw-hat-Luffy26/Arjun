@@ -27,7 +27,69 @@
  * `recovery.ts` already uses.
  */
 
-import type { CompactionRecord, ContextLedgerRecord } from '../../services/agent.service';
+import type {
+  AgentEvent,
+  CompactionRecord,
+  ContextLedgerRecord,
+} from '../../services/agent.service';
+
+/**
+ * Folds one compaction into the list, keyed by its ordinal.
+ *
+ * A run's compactions are numbered 1..n by the runtime, so the ordinal is the
+ * identity. Merging on it is what lets the live event and the stored record
+ * describe the same pass without producing two rows for it — which is what an
+ * append-only list would do the moment a run finished while its panel was open.
+ *
+ * Sorted, because the two sources do not arrive in order: the stored record is
+ * fetched once and may land after several live events.
+ */
+export function mergeCompaction(
+  current: CompactionRecord[],
+  arriving: CompactionRecord,
+): CompactionRecord[] {
+  const at = current.findIndex(held => held.ordinal === arriving.ordinal);
+  if (at === -1) {
+    return [...current, arriving].sort((a, b) => a.ordinal - b.ordinal);
+  }
+  const next = current.slice();
+  next[at] = arriving;
+  return next;
+}
+
+/**
+ * Builds a compaction record from a live event, or `null` if it cannot.
+ *
+ * ## Why this can fail
+ *
+ * The runtime has always sent the whole record; the wire type declared three of
+ * its seven fields. So nothing could be built from a live event, and the
+ * compaction count in the meter came only from the record written *after* the
+ * run — which is the one time nobody is watching it.
+ *
+ * A frame genuinely missing its ordinal is skipped rather than given one: an
+ * invented ordinal merges with somebody else's row, and a wrong row is worse
+ * than a missing one.
+ */
+export function liveCompaction(
+  event: Extract<AgentEvent, { type: 'context_compacted' }>,
+  now: () => string = () => new Date().toISOString(),
+): CompactionRecord | null {
+  if (typeof event.ordinal !== 'number' || !event.ledger) return null;
+  return {
+    ordinal: event.ordinal,
+    // Stamped by the runtime, which is the side that knows when it happened.
+    // A missing one is filled from this clock — a worse answer, but one field
+    // of a row whose numbers are all real.
+    at: event.at ?? now(),
+    tokensBefore: event.tokensBefore,
+    tokensAfter: event.tokensAfter,
+    messagesSummarised: event.messagesSummarised,
+    refinedExistingSummary: event.refinedExistingSummary ?? false,
+    toolResultsCleared: event.toolResultsCleared ?? 0,
+    ledger: event.ledger,
+  };
+}
 
 /** The sections, in the order they are shown. */
 export const LEDGER_SECTIONS = [

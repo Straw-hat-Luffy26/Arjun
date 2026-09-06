@@ -161,6 +161,15 @@ pub enum ToolName {
     /// Search both the prose index and the multimodal index (image regions
     /// and table rows), returning passages alongside their visual evidence.
     KnowledgeMultimodalRetrieve,
+    /// Read a page range of a document attached to *this conversation*.
+    ///
+    /// The counterpart to the OCR budget. A large attachment enters the prompt
+    /// in part or not at all, and before this the rest was simply gone — the
+    /// text existed only inside the composed prompt string. Every page is now
+    /// stored as it is read, and this is how a run reaches the pages the budget
+    /// left out, including the ones it never saw and the ones an earlier turn
+    /// in the same conversation attached.
+    ReadAttachedPages,
 }
 
 impl ToolName {
@@ -182,6 +191,7 @@ impl ToolName {
         ToolName::AgentDelegateReadonly,
         ToolName::SovereigntyGetEvidence,
         ToolName::KnowledgeMultimodalRetrieve,
+        ToolName::ReadAttachedPages,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -204,6 +214,7 @@ impl ToolName {
             ToolName::AgentDelegateReadonly => "agent.delegate_readonly",
             ToolName::SovereigntyGetEvidence => "sovereignty.get_evidence",
             ToolName::KnowledgeMultimodalRetrieve => "knowledge.multimodal_retrieve",
+            ToolName::ReadAttachedPages => "document.read_pages",
         }
     }
 
@@ -232,7 +243,8 @@ impl ToolName {
             | ToolName::CapabilitySearch
             | ToolName::AgentDelegateReadonly
             | ToolName::SovereigntyGetEvidence
-            | ToolName::KnowledgeMultimodalRetrieve => None,
+            | ToolName::KnowledgeMultimodalRetrieve
+            | ToolName::ReadAttachedPages => None,
         }
     }
 
@@ -264,6 +276,7 @@ impl ToolName {
                 | ToolName::LoadMoreEvidence
                 | ToolName::MediaExtractFindings
                 | ToolName::KnowledgeMultimodalRetrieve
+                | ToolName::ReadAttachedPages
         )
     }
 
@@ -279,7 +292,8 @@ impl ToolName {
             | ToolName::CapabilitySearch
             | ToolName::AgentDelegateReadonly
             | ToolName::SovereigntyGetEvidence
-            | ToolName::KnowledgeMultimodalRetrieve => true,
+            | ToolName::KnowledgeMultimodalRetrieve
+            | ToolName::ReadAttachedPages => true,
             ToolName::MemoryPromoteApproved
             | ToolName::WriteScopedFile
             | ToolName::CreateDocx
@@ -309,6 +323,7 @@ impl ToolName {
             ToolName::AgentDelegateReadonly => "hand a read-only sub-task to a worker",
             ToolName::SovereigntyGetEvidence => "read this machine's own network record",
             ToolName::KnowledgeMultimodalRetrieve => "search text, image regions, and tables together",
+            ToolName::ReadAttachedPages => "read pages of a document attached to this conversation",
         }
     }
 }
@@ -467,6 +482,42 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             // *and* image regions, each with its own citation. The model is
             // expected to use it once and reason about a result, not to
             // page through twenty of them.
+            max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ReadAttachedPages => ToolSpec {
+            // `UseModel`, not `SearchKnowledge`, and the difference is the whole
+            // reason this is a separate tool from `load_evidence_region`.
+            //
+            // `SearchKnowledge` is clearance to read the *organisation's* shelf,
+            // and the classifications on it are what that permission exists to
+            // enforce. This reads nothing from that shelf. It reads back a file
+            // the signed-in person attached to their own conversation minutes
+            // ago — a document they already hold, part of whose text they were
+            // already shown in this same turn. Requiring shelf clearance to
+            // re-read your own attachment would refuse a person their own file;
+            // granting shelf clearance through this door would be a way to read
+            // the shelf by page number.
+            //
+            // The isolation that matters here is owner and conversation, and it
+            // is enforced inside the operation rather than by a permission: see
+            // `agent_runtime::documents`, where a document is invisible to
+            // anyone who did not attach it and to any conversation it was not
+            // attached to.
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "documentSha256", kind: Text },
+                ArgumentSpec { name: "fromPage", kind: Integer },
+                ArgumentSpec { name: "toPage", kind: Integer },
+            ],
+            // Reads a file this machine already wrote. No model, no sidecar, no
+            // socket.
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            // The store's own `MAX_READ_BYTES` is the real bound and is applied
+            // first; this is the outer guard, sized above it so a read the store
+            // considered complete is never truncated a second time by the
+            // gateway without anything saying so.
             max_response_bytes: 32 * 1024,
             ..defaults(name)
         },

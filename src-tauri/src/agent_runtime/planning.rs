@@ -283,6 +283,21 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         // table. A run without it can search the words around a P&ID and never
         // reach the P&ID.
         ToolName::KnowledgeMultimodalRetrieve,
+        // Reading back a document the person attached to this very conversation.
+        //
+        // Always available, because withholding it would recreate the exact
+        // failure the extraction store exists to remove: a 40-page scan enters
+        // the window in part, and a run that may not ask for the rest can only
+        // answer from the beginning of it — or apologise for a document it was
+        // given. It reads nothing but the asker's own attachments, in the
+        // asker's own thread, so there is nothing here to withhold.
+        //
+        // In the always-permitted list rather than added by `derive` when the
+        // turn happens to carry an attachment, because the pages worth
+        // retrieving are most often the ones an *earlier* turn attached — and
+        // that turn's files are exactly what a plan derived from today's prompt
+        // cannot see.
+        ToolName::ReadAttachedPages,
         // Reading memory is always available: a run that may not consult what
         // the project already agreed a term means will re-derive it, differently
         // each time. Promotion is not here — writing something later runs read

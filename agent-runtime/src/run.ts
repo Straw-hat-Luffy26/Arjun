@@ -13,7 +13,7 @@
  * a tool does -- lives on the other side of the wire.
  */
 
-import { Agent, convertToLlm, type AgentEvent } from "@openclaw/agent-core";
+import { Agent, convertToLlm, type AgentEvent, type AgentMessage } from "@openclaw/agent-core";
 import { createLlmRuntime, type Model } from "@openclaw/ai";
 import { registerBuiltInApiProviders } from "@openclaw/ai/providers";
 import type { RpcPeer } from "./peer.js";
@@ -38,6 +38,52 @@ export interface RunRequest {
   messageId: string;
   prompt: string;
   systemPrompt: string;
+  /**
+   * The conversation so far, oldest first. Never this turn's question.
+   *
+   * ## Why a run is given history at all
+   *
+   * Every chat message starts a new run, and a run used to be handed exactly
+   * one thing: the prompt. So the second turn of a conversation began with a
+   * model that had never seen the first, and "what was the rating you just
+   * quoted?" was answered by a model with no quote. The history was on screen
+   * and in a file on disk; it simply never entered a model request.
+   *
+   * ## Why it is seeded and not prompted
+   *
+   * These become `initialState.messages` — the transcript the loop *starts*
+   * from — and `request.prompt` is then submitted through `agent.prompt`
+   * exactly as it always was. Two things follow, and both are the point:
+   *
+   * - The new question is appended by exactly one line of code, so it cannot be
+   *   asked twice however this is called.
+   * - The seeded transcript never ends on the live question, so no path exists
+   *   on which the loop reads it as already-asked and returns without
+   *   generating. A run that seeded the question *into* the history would have
+   *   both failure modes available to it depending on where the seam fell.
+   *
+   * ## Why this is not `notes`
+   *
+   * {@link RunRequest.notes} is same-run recovery: what an earlier attempt at
+   * *this run* already did, including the side effects that must not happen
+   * twice. This is fresh-turn initialisation: what was said in earlier turns of
+   * this conversation. They arrive together and are kept apart, because a first
+   * turn should not inherit a resumption's machinery and a resumption should not
+   * re-read a conversation it never lost.
+   *
+   * Fitted to this model's window on the Rust side, which is where the model was
+   * chosen and where the signed-in owner is known. Absent or empty for the first
+   * turn of a conversation.
+   */
+  history?: { role: "user" | "assistant"; content: string }[];
+  /**
+   * Earlier messages the window could not hold, dropped oldest-first.
+   *
+   * Forwarded to the surface so a person can see that a conversation is being
+   * shortened. A run that quietly forgets its own history looks, from the
+   * outside, exactly like the defect this replaced.
+   */
+  historyDropped?: number;
   /** The routed model. Chosen by `registry::router` on the Rust side. */
   model: {
     id: string;
@@ -160,6 +206,117 @@ export interface RunOutcome {
 }
 
 /**
+ * Turns the conversation Rust sent into the loop's own message shape.
+ *
+ * ## Why this validates rather than casts
+ *
+ * The history crosses a JSON-RPC channel, and a message the loop does not
+ * understand does not fail here — it fails at the provider, as a
+ * malformed-request error partway through a turn, which reads to everyone
+ * involved like a bug in the agent loop. So an entry that is not a `user` or
+ * `assistant` turn carrying non-empty text is dropped, and nothing is guessed
+ * at: a role this does not recognise is not silently rewritten to `user`,
+ * because putting the model's own words in the person's mouth is a worse
+ * outcome than a shorter history.
+ *
+ * Timestamps are synthesised in order rather than carried. The loop uses them
+ * only to order messages for compaction's cut-point search, and the order is
+ * exactly what the array already encodes — whereas a real `createdAt` from the
+ * conversation file would be days old and would sort this turn's seeded history
+ * against a live tool result by wall clock, which is not the ordering
+ * compaction wants.
+ */
+export function seedMessages(
+  history: RunRequest["history"],
+  model: Pick<Model, "id" | "api" | "provider">,
+  dropped = 0,
+): AgentMessage[] {
+  if (!Array.isArray(history) || history.length === 0) return [];
+  const base = Date.now() - history.length - 1;
+  const seeded: AgentMessage[] = [];
+
+  // A conversation that was shortened says so, before the part that survived.
+  //
+  // The same rule the attachment budget follows on the Rust side, for the same
+  // reason: a model handed a truncated document with nothing marking the
+  // truncation answers as though it read the whole thing, and a model handed a
+  // truncated *conversation* will answer as though it remembers the whole
+  // thing. "I do not have that earlier message" is a true answer; behaving as
+  // if the conversation began where the trimming did is not.
+  //
+  // Written as a `user` message for the same reason `preservedMessage` in
+  // `compaction.ts` is: a system-role message can be reordered away from what
+  // it describes, and this has to stay immediately before the history it is
+  // about.
+  if (dropped > 0) {
+    seeded.push({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text:
+            `[${dropped} earlier message(s) in this conversation did not fit this model's ` +
+            `context window and are not shown below. If the answer depends on something said ` +
+            `before what follows, say that you do not have it rather than reconstructing it.]`,
+        },
+      ],
+      timestamp: base,
+    } as AgentMessage);
+  }
+  for (const turn of history) {
+    if (turn?.role !== "user" && turn?.role !== "assistant") continue;
+    const text = typeof turn.content === "string" ? turn.content.trim() : "";
+    if (text.length === 0) continue;
+    const timestamp = base + seeded.length;
+    if (turn.role === "user") {
+      seeded.push({
+        role: "user",
+        content: [{ type: "text", text }],
+        timestamp,
+      } as AgentMessage);
+      continue;
+    }
+    seeded.push({
+      role: "assistant",
+      content: [{ type: "text", text }],
+      // The model answering *now*, not the one that answered then.
+      //
+      // These three fields are the loop's record of which provider produced a
+      // message, and the honest answer for a replayed turn is "we are not
+      // carrying that" — the conversation store keeps the model *name* for the
+      // person to read, not the api/provider triple this wants. Naming the
+      // current model is what the transports expect to find on a message they
+      // are about to send back, and it is also the truthful description of the
+      // request being made: this text is going to *this* model, whoever wrote
+      // it. Which model originally answered stays visible where it has always
+      // been, on the message in the chat surface.
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      // Zeroes, because nothing here was measured on this turn. The ledger
+      // reconciles against `message_end` events, which only the loop's own
+      // turns emit, so these never reach a total — and a fabricated count here
+      // would show up in the context meter as tokens somebody was charged.
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      // Every message that reaches here passed the Rust side's eligibility
+      // check, which admits only turns that finished. A seeded message claiming
+      // `length` or `error` would tell the model the conversation is full of
+      // failures it is being asked to continue.
+      stopReason: "stop",
+      timestamp,
+    } as AgentMessage);
+  }
+  return seeded;
+}
+
+/**
  * A model served locally has no price and no vendor.
  *
  * agent-core requires the cost table, and zeros are the truthful entry: the
@@ -279,6 +436,15 @@ export async function startRun(
     catalogue.tools,
   );
 
+  // The conversation this turn continues, as loop messages.
+  //
+  // Validated rather than trusted: this arrives over a JSON-RPC channel, and a
+  // role the loop does not understand becomes a message the provider rejects —
+  // which surfaces as the whole turn failing with a malformed-request error
+  // that reads like a bug in the agent loop. An entry that is not a `user` or
+  // `assistant` turn with text is dropped, not guessed at.
+  const seeded = seedMessages(request.history, model, request.historyDropped ?? 0);
+
   const contextLedger = new ContextLedger(request.model.contextWindow ?? 0);
   // Measured once. Neither the system prompt nor the tool catalogue changes
   // during a run, and re-counting them every turn would spend real time
@@ -365,6 +531,20 @@ export async function startRun(
       systemPrompt: request.systemPrompt,
       model,
       tools,
+      /**
+       * The conversation this turn continues.
+       *
+       * Seeded as the loop's starting transcript, and deliberately *not*
+       * merged into the prompt. `agent.prompt(request.prompt)` below appends
+       * the new question to whatever this holds — one append, one question,
+       * always — and because nothing here is the live question, there is no
+       * arrangement of these messages under which the loop can decide the work
+       * is already done.
+       *
+       * Empty on a first turn, which is `Agent`'s own default and therefore
+       * the behaviour that shipped before this existed.
+       */
+      messages: seeded,
       /**
        * Why this is set at all, and why it decides whether anything streams.
        *
@@ -588,17 +768,36 @@ export async function startRun(
   }
 
   const messages = agent.state.messages;
-  const last = messages[messages.length - 1];
-  const text =
-    last && last.role === "assistant" && Array.isArray(last.content)
-      ? last.content
-          .filter((block): block is { type: "text"; text: string } => block.type === "text")
-          .map((block) => block.text)
-          .join("\n")
-      : "";
+  // The last *assistant* message, not the last message.
+  //
+  // These are not the same thing on exactly the path where it matters most. A
+  // run that is stopped has an interrupt message appended after the assistant
+  // turn — `Agent` adds a `custom` message saying the previous turn was
+  // interrupted and tools may have partially executed — so reading
+  // `messages[messages.length - 1]` found *that*, not the answer, and the run
+  // reported no text at all.
+  //
+  // The consequence was quiet and only visible afterwards: the chat cell kept
+  // what had streamed into it, because the reducer persists its own buffer, but
+  // the *task record* recorded an empty answer for every stopped run. So a turn
+  // somebody stopped halfway through a useful answer was, in the durable
+  // record, a turn that produced nothing.
+  //
+  // Found the same way `terminationOf` below already does it, which is what
+  // makes the inconsistency obvious in hindsight: the ending was read off the
+  // last assistant message while the text was read off whatever happened to be
+  // last.
+  const finalAssistant = [...messages].reverse().find((message) => isAssistantMessage(message));
+  const assistantContent = (finalAssistant as { content?: unknown } | undefined)?.content;
+  const text = Array.isArray(assistantContent)
+    ? assistantContent
+        .filter((block): block is { type: "text"; text: string } => block?.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+    : "";
 
   const outcome = terminationOf({
-    finalAssistant: [...messages].reverse().find((message) => isAssistantMessage(message)),
+    finalAssistant,
     errorMessage: agent.state.errorMessage,
     abortCause,
   });

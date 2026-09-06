@@ -18,8 +18,8 @@
 //! is. A dropped SSE frame looks exactly like a page with less text on it.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+
+use crate::agent_runtime::cancellation::CancelToken;
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -236,18 +236,39 @@ pub fn request_body(
 /// `cancel` is checked between chunks: a page the operator abandoned should
 /// stop costing GPU time immediately, and the summary says it was cancelled
 /// rather than reporting a short page as a complete one.
+/// The summary for a page that was stopped before it produced anything.
+///
+/// A distinct shape from an empty read, and the distinction is load-bearing:
+/// `assemble_pdf_text` lists a page that yielded nothing as unread, and a page
+/// nobody looked at because the turn was stopped is exactly that — not a blank
+/// page, which is a claim about the document.
+fn stopped_before_reading(elapsed_ms: u64) -> StreamSummary {
+    StreamSummary {
+        tokens: 0,
+        elapsed_ms,
+        hit_decode_cap: false,
+        cancelled: true,
+        looped_at: None,
+    }
+}
+
 pub async fn stream_ocr<F>(
     client: &reqwest::Client,
     base_url: &str,
     model_id: &str,
     image_path: &Path,
     profile: &OcrProfile,
-    cancel: Arc<AtomicBool>,
+    cancel: &CancelToken,
     mut on_event: F,
 ) -> Result<StreamSummary>
 where
     F: FnMut(OcrEvent),
 {
+    // Before anything is read off disk or sent anywhere. A page whose turn was
+    // stopped while an earlier page was still decoding must not start at all.
+    if cancel.is_cancelled() {
+        return Ok(stopped_before_reading(0));
+    }
     let bytes = tokio::fs::read(image_path)
         .await
         .with_context(|| format!("could not read page image {}", image_path.display()))?;
@@ -269,12 +290,23 @@ where
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let started = std::time::Instant::now();
-    let response = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("OCR request to {url} failed"))?;
+    // The header wait, which had no cancellation at all.
+    //
+    // A vision model handed a dense A1 drawing spends tens of seconds on the
+    // image before it sends a single byte, and this `await` is where all of
+    // that time is spent. A flag tested in the loop below is not reached until
+    // the model has already done the work it was being asked to stop doing —
+    // so Stop pressed here used to take effect only once the page had finished.
+    //
+    // Dropping the future closes the socket, which is what actually stops
+    // llama-server: the same mechanism the repetition guard relies on.
+    let response = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Ok(stopped_before_reading(started.elapsed().as_millis() as u64)),
+        sent = client.post(&url).json(&body).send() => {
+            sent.with_context(|| format!("OCR request to {url} failed"))?
+        }
+    };
 
     if !response.status().is_success() {
         let status = response.status();
@@ -292,11 +324,27 @@ where
     // failure it exists for is invisible at token level. See the module.
     let mut repetition = RepetitionGuard::new();
 
-    'outer: while let Some(next) = stream.next().await {
-        if cancel.load(Ordering::Relaxed) {
-            cancelled = true;
-            break;
-        }
+    // The chunk wait.
+    //
+    // This was `while let Some(next) = stream.next().await` with the flag
+    // tested *inside* the body — that is, only ever after a chunk had already
+    // arrived. A model that has stopped producing, or is thinking between
+    // tokens, leaves this parked on the socket with the check unreachable, so a
+    // page that stalled could not be stopped at all.
+    //
+    // Selecting on the token means the wait itself is interruptible. `biased`
+    // so cancellation is polled first: with the default random order a stream
+    // that always has a chunk ready could starve the cancel arm indefinitely.
+    'outer: loop {
+        let next = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                cancelled = true;
+                break;
+            }
+            item = stream.next() => item,
+        };
+        let Some(next) = next else { break };
         let chunk = next.context("OCR stream broke mid-page")?;
         let text = String::from_utf8_lossy(&chunk).to_string();
         for frame in sse.feed(&text) {
@@ -626,5 +674,189 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+/// Stopping a page that is not producing anything.
+///
+/// The two waits this module spends nearly all of its time in, driven against a
+/// real socket. Both used to be uninterruptible:
+///
+/// - The **header wait** had no cancellation at all. A vision model handed a
+///   dense drawing spends tens of seconds on the image before it sends a byte,
+///   and `send().await` simply sat there.
+/// - The **chunk wait** tested the flag only *after* a chunk had arrived, so a
+///   model that stalled mid-page left the check unreachable.
+///
+/// Each test is bounded by a timeout, and the timeout elapsing **is** the
+/// failure: a regression here does not produce a wrong value, it produces a
+/// hang, and a test that hangs for ever reports nothing.
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use crate::agent_runtime::cancellation::CancelToken;
+    use crate::ai_engine::ocr_profile::OcrDetent;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    /// A page image on disk, which `stream_ocr` reads before it connects.
+    fn a_png() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // The 8-byte signature is all this needs: the file is base64'd whole
+        // and never decoded on this side.
+        std::fs::write(dir.path().join("page-1.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write the page");
+        dir
+    }
+
+    /// A server that accepts the connection and then does exactly nothing.
+    ///
+    /// Stands in for a model still looking at the image: connected, no headers.
+    async fn a_server_that_never_answers() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            // Held rather than dropped: dropping the socket would close the
+            // connection and turn this into a transport error, which is a
+            // different test.
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// A server that sends headers and one frame, then stalls for ever.
+    ///
+    /// Stands in for a model that produced some of a page and stopped.
+    async fn a_server_that_stalls_mid_page() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let head = concat!(
+                    "HTTP/1.1 200 OK\r\n",
+                    "content-type: text/event-stream\r\n",
+                    "transfer-encoding: chunked\r\n\r\n",
+                );
+                let _ = socket.write_all(head.as_bytes()).await;
+                let body = "data: {\"choices\":[{\"delta\":{\"content\":\"half a page\"}}]}\n\n";
+                let _ = socket
+                    .write_all(format!("{:x}\r\n{}\r\n", body.len(), body).as_bytes())
+                    .await;
+                let _ = socket.flush().await;
+                // No terminating chunk. The stream stays open and silent.
+                held.push(socket);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_stop_interrupts_the_wait_for_the_first_byte() {
+        let dir = a_png();
+        let base = a_server_that_never_answers().await;
+        let token = CancelToken::never();
+
+        let stopper = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            stopper.cancel();
+        });
+
+        let summary = tokio::time::timeout(
+            Duration::from_secs(10),
+            stream_ocr(
+                &reqwest::Client::new(),
+                &base,
+                "test-model",
+                &dir.path().join("page-1.png"),
+                &OcrDetent::Fast.profile(),
+                &token,
+                |_| {},
+            ),
+        )
+        .await
+        .expect("the header wait must be interruptible, not merely pollable")
+        .expect("a stopped page is not an error");
+
+        assert!(summary.cancelled, "the page must report that it was stopped");
+        assert_eq!(summary.tokens, 0, "nothing was read");
+    }
+
+    #[tokio::test]
+    async fn a_stop_interrupts_a_stream_that_has_gone_quiet() {
+        let dir = a_png();
+        let base = a_server_that_stalls_mid_page().await;
+        let token = CancelToken::never();
+
+        let stopper = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            stopper.cancel();
+        });
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let sink = seen.clone();
+        let summary = tokio::time::timeout(
+            Duration::from_secs(10),
+            stream_ocr(
+                &reqwest::Client::new(),
+                &base,
+                "test-model",
+                &dir.path().join("page-1.png"),
+                &OcrDetent::Fast.profile(),
+                &token,
+                move |event| {
+                    if let OcrEvent::Text { delta, .. } = event {
+                        if let Ok(mut held) = sink.lock() {
+                            held.push_str(&delta);
+                        }
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("the chunk wait must be interruptible, not checked only on arrival")
+        .expect("a stopped page is not an error");
+
+        assert!(summary.cancelled);
+        // Whatever arrived before the stop is kept. A stopped read is not a
+        // failed one, and the text already decoded is still evidence.
+        assert!(
+            seen.lock().unwrap().contains("half a page"),
+            "the text that did arrive must survive the stop"
+        );
+    }
+
+    /// A page whose turn was already stopped does no work at all: no disk read,
+    /// no socket, no model. This is what stops page 12 of 40 from starting.
+    #[tokio::test]
+    async fn a_page_of_an_already_stopped_turn_never_connects() {
+        let dir = a_png();
+        let summary = tokio::time::timeout(
+            Duration::from_secs(5),
+            stream_ocr(
+                &reqwest::Client::new(),
+                // Nothing is listening here. Reaching the socket at all would
+                // be a connection error rather than a clean cancellation, so
+                // this address is the assertion.
+                "http://127.0.0.1:1",
+                "test-model",
+                &dir.path().join("page-1.png"),
+                &OcrDetent::Fast.profile(),
+                &CancelToken::cancelled_now(),
+                |_| {},
+            ),
+        )
+        .await
+        .expect("an already-stopped page returns at once")
+        .expect("a stopped page is not an error");
+
+        assert!(summary.cancelled);
+        assert_eq!(summary.tokens, 0);
     }
 }

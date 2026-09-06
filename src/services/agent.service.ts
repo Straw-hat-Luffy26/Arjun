@@ -967,6 +967,29 @@ export interface AttachmentContextEvent {
   strategy: 'full' | 'chunked' | 'referenceOnly';
   /** Shown verbatim: how much of the document the answer rests on. */
   explanation: string;
+  /**
+   * Which turn this document belongs to, as the caller named it.
+   *
+   * `attachment:context` is an application-wide channel, and the meter used to
+   * fold in every event that arrived on it — so a second window, a scripted
+   * turn, or simply the previous turn of the same conversation put its
+   * documents into whatever meter happened to be open.
+   *
+   * This is the *correlation* id, because the event is emitted before the run
+   * has one of its own: the whole value of it is being early enough to price a
+   * document while somebody is still deciding whether to attach another. That
+   * is also exactly what the surface holds at that moment, since it learns the
+   * run's real id from `plan_ready`, which has not been sent yet.
+   */
+  correlationId?: string;
+  /**
+   * The assistant cell this document was attached to.
+   *
+   * Stable for the whole turn, unlike either run id, so this is the key a
+   * consumer scopes on when it wants one rather than two. Absent for an entry
+   * point that reserved no cell.
+   */
+  messageId?: string;
 }
 
 /** Subscribes to per-attachment context costs. */
@@ -974,6 +997,55 @@ export async function listenAttachmentContext(
   callback: (payload: AttachmentContextEvent) => void,
 ) {
   return listen<AttachmentContextEvent>('attachment:context', (e) => callback(e.payload));
+}
+
+/**
+ * What a Stop actually reached.
+ *
+ * Two facts, because they are two different things and the surface has to tell
+ * them apart:
+ *
+ * - `requested` — the stop landed on something. **Not** a promise the turn has
+ *   ended.
+ * - `loopAborted` — the agent loop itself was in flight and was aborted.
+ *   `false` for a turn stopped during OCR or model loading, which is an
+ *   ordinary outcome and not a failure.
+ *
+ * This was one bare boolean, and the composer discarded it — so a stop that
+ * reached nothing looked exactly like one that stopped a run. Since the id
+ * being sent was the correlation id, which nothing had heard of, it was always
+ * the former.
+ */
+export interface AbortOutcome {
+  requested: boolean;
+  loopAborted: boolean;
+}
+
+/**
+ * What happened to a pin.
+ *
+ * Two answers, because there are two things that can be true and a person is
+ * entitled to know which. `stored` is the one that matters: a pin written to
+ * the conversation is honoured by the *next* turn even when nothing is running
+ * now. `appliedToRun` says whether a run was in flight and took it immediately.
+ *
+ * A single boolean conflated "kept for next time" with "in force right now",
+ * and the surface had to guess.
+ */
+export interface PinOutcome {
+  stored: boolean;
+  appliedToRun: boolean;
+}
+
+/**
+ * Where one run's context window stood, as the stored record holds it.
+ *
+ * Returned by {@link agentService.taskContext}, which answers `null` for a run
+ * that has not written a record yet rather than rejecting.
+ */
+export interface RunContextSnapshot {
+  ledger: ContextLedgerRecord | null;
+  compactions: CompactionRecord[];
 }
 
 /** One time a run's older history was replaced by a summary. */
@@ -1180,6 +1252,26 @@ export type AgentEvent =
       tokensBefore: number;
       tokensAfter: number;
       messagesSummarised: number;
+      /**
+       * The rest of the record, which the runtime has always sent.
+       *
+       * This event was declared with three fields while `RunCompactor` emitted
+       * seven, so a surface folding compactions in live could not build a
+       * {@link CompactionRecord} from one and had to wait for the run to end
+       * and the record to be written. The count in the chip was therefore
+       * always describing a *finished* run — which is the one time nobody is
+       * watching it.
+       *
+       * Optional because a build of the runtime older than this may not stamp
+       * them, and a missing ordinal is a reason to skip a row rather than to
+       * invent one.
+       */
+      ordinal?: number;
+      /** ISO 8601, stamped by the runtime — the side that knows when. */
+      at?: string;
+      refinedExistingSummary?: boolean;
+      toolResultsCleared?: number;
+      ledger?: ContextLedgerRecord;
     }
   | {
       /**
@@ -1370,13 +1462,19 @@ export const agentService = {
   },
 
   /**
-   * Stops a run in flight.
+   * Asks a turn to stop, at whatever stage it is in.
    *
-   * Resolves `false` when there was nothing to stop, which is an ordinary race
-   * rather than a failure — do not surface it as an error.
+   * Resolving is **not** the turn having ended. It says the request reached
+   * something — a stage was told to stop, or the agent loop was — and nothing
+   * more. A turn stopped mid-tool finishes the tool first; a turn stopped
+   * during OCR unwinds through several awaits. Termination is only knowable
+   * from the run own events, and the caller waits for those.
+   *
+   * `requested: false` means the id named nothing: the turn had already ended.
+   * An ordinary race rather than a failure.
    */
-  abort(runId: string): Promise<boolean> {
-    return getBackendService().invoke<boolean>('agent_abort_run', { runId });
+  abort(runId: string): Promise<AbortOutcome> {
+    return getBackendService().invoke<AbortOutcome>('agent_abort_run', { runId });
   },
 
   /**
@@ -1389,6 +1487,50 @@ export const agentService = {
    */
   steer(runId: string, text: string): Promise<boolean> {
     return getBackendService().invoke<boolean>('agent_steer_run', { runId, text });
+  },
+
+  /**
+   * Tells a run in flight which context entries a person wants kept.
+   *
+   * The whole set every time, not a delta: unpinning is as meaningful as
+   * pinning, and a call that could only add would make the pin a one-way
+   * decision nobody could take back. The runtime replaces what it holds with
+   * what arrives.
+   *
+   * The ids are the ledger's own entity ids — a document's content hash, an
+   * evidence marker — which are what the context meter is already keyed by, so
+   * the row somebody pressed and the entry the compactor protects are the same
+   * name.
+   *
+   * Resolves `false` when the run had already finished. An ordinary race, and
+   * the caller is told rather than left believing the pin landed.
+   */
+  pinContext(
+    conversationId: string,
+    runId: string | null,
+    pinned: string[],
+  ): Promise<PinOutcome> {
+    return getBackendService().invoke<PinOutcome>('agent_pin_context', {
+      conversationId,
+      runId,
+      pinned,
+    });
+  },
+
+  /**
+   * Where one run's context window stood, as the record holds it.
+   *
+   * Narrower than {@link task}, and it answers a different question: `null`
+   * means there is no reading yet, which is the ordinary state of every run for
+   * its first few seconds. `task` rejects for that case with the same shape it
+   * rejects for a disk that will not read, so a caller could not tell "still
+   * starting" from "the read failed" — and the meter rendered both, plus
+   * "genuinely empty", as one grey chip.
+   */
+  taskContext(runId: string): Promise<RunContextSnapshot | null> {
+    return getBackendService().invoke<RunContextSnapshot | null>('agent_task_context', {
+      runId,
+    });
   },
 
   /**
@@ -1811,4 +1953,21 @@ export interface Conversation {
   messages: ChatMessage[];
   runs: ChatRunMeta[];
   compactions: number;
+  /**
+   * Context entries the owner has asked to keep, by ledger entity id.
+   *
+   * Persisted on the conversation rather than on the run in flight, because a
+   * pin is a person saying "the rest of this task depends on that" — and a task
+   * spans turns while a run is one turn. A pin held only by the live run was
+   * forgotten the moment that run ended, so somebody who pinned once and asked
+   * five follow-ups was protected for the first and nothing after it, with the
+   * panel showing the pin the whole time.
+   *
+   * Read back by the context meter, so a reopened thread draws the pins it is
+   * actually being given rather than showing every row unpinned while the
+   * backend goes on protecting them.
+   *
+   * Absent on conversations written before this existed, which read as none.
+   */
+  pinnedContext?: string[];
 }

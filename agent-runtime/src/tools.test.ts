@@ -116,6 +116,7 @@ describe("host tools", () => {
       "artifact.verify_docx",
       "calculation.evaluate_with_units",
       "capability.search",
+      "document.read_pages",
       "knowledge.load_evidence_region",
       "knowledge.multimodal_retrieve",
       "knowledge.search_authorized",

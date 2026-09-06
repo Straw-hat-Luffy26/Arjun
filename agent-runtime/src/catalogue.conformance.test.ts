@@ -49,6 +49,7 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "capability.search",
   "agent.delegate_readonly",
   "sovereignty.get_evidence",
+  "document.read_pages",
 ]);
 
 /**
@@ -98,6 +99,7 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["capability.search", true],
   ["agent.delegate_readonly", true],
   ["sovereignty.get_evidence", true],
+  ["document.read_pages", true],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

@@ -257,6 +257,31 @@ export class ContextLedger {
   }
 
   /**
+   * Makes the pinned set exactly `ids`, releasing everything else.
+   *
+   * ## Why this replaces rather than adds
+   *
+   * The pinned set arrives whole on every `run.note`, because unpinning matters
+   * as much as pinning. A caller that looped `setPinned(id, true)` over the
+   * arriving list would therefore never release anything: an id the person had
+   * just *removed* would keep its row drawn as protected for the rest of the
+   * run, while the compactor — reading the same list — correctly stopped
+   * protecting it. The meter would then be promising something nothing was
+   * doing, which is the precise failure the pin was wired up to remove.
+   *
+   * Case-insensitive on the way in, matching `pruneStaleToolResults`, so a pin
+   * cannot be honoured by one and dropped by the other over how an id happened
+   * to be spelled.
+   */
+  applyPins(ids: readonly string[]): void {
+    const wanted = new Set(ids.map((id) => id.toUpperCase()));
+    for (const [id, entity] of this.#entities) {
+      const pinned = wanted.has(id.toUpperCase());
+      if (entity.pinned !== pinned) this.#entities.set(id, { ...entity, pinned });
+    }
+  }
+
+  /**
    * Records what one model call was predicted to cost and what it actually did.
    *
    * Called on every model turn — see `token_reconciliation.rs` for why that

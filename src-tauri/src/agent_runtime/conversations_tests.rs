@@ -827,3 +827,354 @@ fn completion_reconciles_the_surface_run_id_to_the_runtime_one() {
     assert!(!run.live, "a finished run must not stay marked live");
     assert!(run.finished_at.is_some(), "a finished run must carry when");
 }
+
+/// The run id has to be reconciled while the run is going, not only when it ends.
+///
+/// The chat surface reserves the assistant cell before the run exists, so it
+/// files the `RunMeta` under a correlation id it invented. The runtime then
+/// mints the run's own id, and *that* is the id the task record, the audit
+/// trail, the event stream and the context ledger are keyed by.
+///
+/// `record_message_completion` already corrected this — at the one moment the
+/// correction is worth nothing, because everything that reads the id reads it
+/// while the run is in flight. See `ConversationStore::bind_run` for the three
+/// things that were addressing a run that did not exist.
+mod binding_a_run_to_its_real_id {
+    use super::*;
+
+    fn started(store: &ConversationStore) -> Conversation {
+        let conversation = store
+            .create("t".into(), "welcome".into(), OWNER)
+            .expect("create");
+        store
+            .append_user_turn(
+                &conversation.id,
+                "what is the rating?",
+                "a-cell-1",
+                "correlation-1",
+                OWNER,
+            )
+            .expect("append")
+            .expect("owned")
+    }
+
+    #[test]
+    fn the_run_list_holds_the_runtimes_id_and_not_the_correlation_id() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = started(&store);
+        assert_eq!(
+            conversation.runs[0].run_id, "correlation-1",
+            "the surface files it under the id it invented"
+        );
+
+        store
+            .bind_run(&conversation.id, "a-cell-1", "server-run-1", OWNER)
+            .expect("bind")
+            .expect("owned");
+
+        let reread = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+        assert_eq!(reread.runs[0].run_id, "server-run-1");
+        assert_eq!(reread.runs[0].message_id, "a-cell-1", "matched by cell");
+    }
+
+    /// The inspector opens from the message's own run id, so it has to move too.
+    #[test]
+    fn the_assistant_message_carries_the_runtimes_id() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = started(&store);
+
+        store
+            .bind_run(&conversation.id, "a-cell-1", "server-run-1", OWNER)
+            .expect("bind");
+
+        let reread = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+        let cell = reread
+            .messages
+            .iter()
+            .find(|m| m.id == "a-cell-1")
+            .expect("the reserved cell");
+        assert_eq!(cell.run_id.as_deref(), Some("server-run-1"));
+    }
+
+    /// The isolation boundary every other read of this store applies.
+    #[test]
+    fn another_owner_cannot_rebind_a_run() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = started(&store);
+
+        let outcome = store
+            .bind_run(&conversation.id, "a-cell-1", "hostile-run", OTHER)
+            .expect("no error");
+        assert!(outcome.is_none(), "a non-owner gets the unknown-id answer");
+
+        let reread = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+        assert_eq!(reread.runs[0].run_id, "correlation-1", "left untouched");
+    }
+
+    #[test]
+    fn an_unknown_conversation_is_not_an_error() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        assert!(store
+            .bind_run("no-such-conversation", "a-1", "r-1", OWNER)
+            .expect("no error")
+            .is_none());
+    }
+
+    /// A caller that reserved no cell of its own has nothing to correct, and
+    /// the ordinary case must not rewrite the file on every turn.
+    #[test]
+    fn binding_an_id_that_is_already_right_changes_nothing() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = started(&store);
+
+        store
+            .bind_run(&conversation.id, "a-cell-1", "server-run-1", OWNER)
+            .expect("bind");
+        let after_first = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+
+        store
+            .bind_run(&conversation.id, "a-cell-1", "server-run-1", OWNER)
+            .expect("bind again");
+        let after_second = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+
+        assert_eq!(after_first.last_activity_at, after_second.last_activity_at);
+        assert_eq!(after_second.runs[0].run_id, "server-run-1");
+    }
+
+    /// Completion still reconciles, for a run that died before reaching the
+    /// start-time binding.
+    #[test]
+    fn completion_still_reconciles_a_run_that_was_never_bound() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = started(&store);
+
+        store
+            .record_message_completion(
+                &conversation.id,
+                "a-cell-1",
+                "server-run-1",
+                MessageCompletion {
+                    final_content: Some("Class 300."),
+                    ..Default::default()
+                },
+                OWNER,
+            )
+            .expect("complete")
+            .expect("owned");
+
+        let reread = store.get(&conversation.id, Some(OWNER)).unwrap().unwrap();
+        assert_eq!(reread.runs[0].run_id, "server-run-1");
+        assert!(!reread.runs[0].live);
+    }
+}
+
+/// Pins are a person's answer to "what does the rest of this task depend on?",
+/// and that answer has to outlive the run they gave it in.
+///
+/// Held only by the run in flight, a pin was forgotten the moment that run
+/// ended — so somebody who pinned once and asked five follow-ups was protected
+/// for the first and nothing after it, with the panel showing the pin the whole
+/// time.
+mod pinned_context {
+    use super::*;
+    use crate::agent_runtime::conversations::MAX_PINNED_CONTEXT;
+
+    fn thread(store: &ConversationStore) -> Conversation {
+        store
+            .create("t".into(), "welcome".into(), OWNER)
+            .expect("create")
+    }
+
+    #[test]
+    fn a_new_conversation_protects_nothing() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+        assert!(conversation.pinned_context.is_empty());
+    }
+
+    #[test]
+    fn a_pin_survives_being_written_and_read_back() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        store
+            .set_pinned_context(&conversation.id, &["E3".to_string()], OWNER)
+            .expect("write")
+            .expect("owned");
+
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap(),
+            vec!["E3".to_string()]
+        );
+    }
+
+    /// The whole set replaces what was held. Unpinning matters as much as
+    /// pinning, and a call that could only add would make this a decision
+    /// nobody could take back.
+    #[test]
+    fn the_arriving_set_replaces_rather_than_merges() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        store
+            .set_pinned_context(
+                &conversation.id,
+                &["E1".to_string(), "E2".to_string()],
+                OWNER,
+            )
+            .unwrap();
+        store
+            .set_pinned_context(&conversation.id, &["E2".to_string()], OWNER)
+            .unwrap();
+
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap(),
+            vec!["E2".to_string()],
+            "E1 was unpinned and must not survive"
+        );
+    }
+
+    #[test]
+    fn unpinning_everything_leaves_nothing_protected() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        store
+            .set_pinned_context(&conversation.id, &["E1".to_string()], OWNER)
+            .unwrap();
+        store.set_pinned_context(&conversation.id, &[], OWNER).unwrap();
+
+        assert!(store
+            .pinned_context(&conversation.id, OWNER)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// An empty id matches every message under a substring test, which is how
+    /// one blank string silently protects a whole run's context and fills the
+    /// window. Dropped at the boundary that owns the file.
+    #[test]
+    fn a_blank_id_is_refused_rather_than_stored() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        store
+            .set_pinned_context(
+                &conversation.id,
+                &["".to_string(), "   ".to_string(), "E1".to_string()],
+                OWNER,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap(),
+            vec!["E1".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_same_id_twice_is_stored_once() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        store
+            .set_pinned_context(
+                &conversation.id,
+                &["E1".to_string(), "E1".to_string()],
+                OWNER,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_list_is_bounded() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+
+        let many: Vec<String> = (0..(MAX_PINNED_CONTEXT + 20))
+            .map(|i| format!("E{i}"))
+            .collect();
+        store
+            .set_pinned_context(&conversation.id, &many, OWNER)
+            .unwrap();
+
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap().len(),
+            MAX_PINNED_CONTEXT
+        );
+    }
+
+    /// The isolation boundary every other write here applies.
+    #[test]
+    fn another_owner_can_neither_read_nor_set_the_pins() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+        store
+            .set_pinned_context(&conversation.id, &["E1".to_string()], OWNER)
+            .unwrap();
+
+        assert!(
+            store
+                .set_pinned_context(&conversation.id, &["hostile".to_string()], OTHER)
+                .expect("no error")
+                .is_none(),
+            "a non-owner gets the unknown-conversation answer"
+        );
+        assert!(
+            store.pinned_context(&conversation.id, OTHER).unwrap().is_empty(),
+            "and cannot read what is pinned either"
+        );
+        assert_eq!(
+            store.pinned_context(&conversation.id, OWNER).unwrap(),
+            vec!["E1".to_string()],
+            "the owner's pins are untouched"
+        );
+    }
+
+    /// Pinning is a decision about a conversation, not activity in it.
+    /// Reordering somebody's sidebar because they pressed a pin would be a
+    /// surprise.
+    #[test]
+    fn pinning_does_not_bump_the_conversation_up_the_sidebar() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        let conversation = thread(&store);
+        let before = conversation.last_activity_at.clone();
+
+        let after = store
+            .set_pinned_context(&conversation.id, &["E1".to_string()], OWNER)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(after.last_activity_at, before);
+    }
+
+    #[test]
+    fn an_unknown_conversation_is_not_an_error() {
+        let dir = temp_dir();
+        let store = ConversationStore::open(&dir).expect("open");
+        assert!(store
+            .set_pinned_context("no-such-thread", &["E1".to_string()], OWNER)
+            .expect("no error")
+            .is_none());
+    }
+}

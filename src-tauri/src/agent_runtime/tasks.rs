@@ -607,6 +607,26 @@ pub fn save(app_data_dir: &Path, record: &TaskRecord) -> Result<PathBuf, String>
 /// `Err` (the same shape as a missing file, so the UI sees a
 /// "task not found" rather than a 403-style leak). `None` is the
 /// unrestricted form, used by tests and the audit log.
+/// Where one run's record would be, if it has one.
+///
+/// `None` for an id that is not a single path component — the same check
+/// [`load`] makes, and for the same reason: a run id is a UUID this process
+/// generated, but a task id arriving from the UI must not be able to name a
+/// path.
+///
+/// Exists so a caller can tell "no record has been written yet" from "the read
+/// failed" without matching on the wording of an error message. That
+/// distinction is the whole difference between a meter that is waiting and one
+/// that is broken, and a coupling to error text survives exactly until somebody
+/// rephrases it.
+pub fn record_path(app_data_dir: &Path, run_id: &str) -> Option<PathBuf> {
+    let name = format!("{run_id}.json");
+    if Path::new(&name).components().count() != 1 {
+        return None;
+    }
+    Some(directory(app_data_dir).join(name))
+}
+
 pub fn load(
     app_data_dir: &Path,
     run_id: &str,
@@ -701,6 +721,7 @@ pub(crate) mod tests {
                 served_model_id: "qwen2.5-7b".to_string(),
                 managed: true,
                 runtime: Runtime::LlamaCpp,
+                context_tokens: Some(32_768),
             },
             plan: PlanRecord::of(&PlanRun::new(
                 run_id,

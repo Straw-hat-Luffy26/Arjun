@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 import type { CompactionRecord, ContextLedgerRecord } from '../../services/agent.service';
 import {
   LEDGER_SECTIONS,
+  liveCompaction,
+  mergeCompaction,
   compactionWarning,
   describeCompaction,
   explainLedger,
@@ -227,5 +229,119 @@ describe('the warning above the compaction list', () => {
 
   it('stays quiet when nothing compacted at all', () => {
     expect(compactionWarning([])).toBeNull();
+  });
+});
+
+/**
+ * The two sources of a run's compaction list, and why they must merge.
+ *
+ * A compaction reaches the panel twice: live, as the runtime performs it, and
+ * again in the record written when the run ends. Appending both produced two
+ * rows for one pass the moment a run finished while its panel was open, so the
+ * chip read "x4 compactions" for a run that compacted twice — and that count is
+ * the number an operator uses to decide whether to route the task to a bigger
+ * model.
+ */
+describe('folding compactions from two sources', () => {
+  const ledgerAt = (occupied: number): ContextLedgerRecord =>
+    ({
+      window: 32_000,
+      occupied,
+      committed: occupied,
+      sections: {},
+    }) as unknown as ContextLedgerRecord;
+
+  const record = (ordinal: number, tokensAfter = 1_000): CompactionRecord => ({
+    ordinal,
+    at: '2026-09-06T03:00:00.000Z',
+    tokensBefore: 8_000,
+    tokensAfter,
+    messagesSummarised: 4,
+    refinedExistingSummary: ordinal > 1,
+    toolResultsCleared: 0,
+    ledger: ledgerAt(tokensAfter),
+  });
+
+  it('adds a compaction it has not seen', () => {
+    expect(mergeCompaction([], record(1))).toHaveLength(1);
+  });
+
+  it('replaces rather than duplicates the same ordinal', () => {
+    const held = mergeCompaction([], record(1, 1_000));
+    const merged = mergeCompaction(held, record(1, 2_000));
+    expect(merged).toHaveLength(1);
+    // The later description of the same pass wins, which is what lets the
+    // stored record correct a live event that was missing a field.
+    expect(merged[0].tokensAfter).toBe(2_000);
+  });
+
+  it('keeps the list in ordinal order however the rows arrive', () => {
+    let held = mergeCompaction([], record(3));
+    held = mergeCompaction(held, record(1));
+    held = mergeCompaction(held, record(2));
+    expect(held.map(r => r.ordinal)).toEqual([1, 2, 3]);
+  });
+
+  it('folding a stored list into live rows leaves one row per pass', () => {
+    const live = [record(1), record(2)].reduce(mergeCompaction, [] as CompactionRecord[]);
+    const withStored = [record(1), record(2)].reduce(mergeCompaction, live);
+    expect(withStored).toHaveLength(2);
+  });
+});
+
+/**
+ * Building a compaction row from the live event.
+ *
+ * The runtime has always sent the whole record; the wire type declared three of
+ * its fields, so nothing could be built and the count only ever came from the
+ * record written after the run — the one time nobody is watching it.
+ */
+describe('reading a compaction off the live channel', () => {
+  const full = {
+    type: 'context_compacted' as const,
+    tokensBefore: 9_000,
+    tokensAfter: 2_500,
+    messagesSummarised: 6,
+    ordinal: 2,
+    at: '2026-09-06T03:05:00.000Z',
+    refinedExistingSummary: true,
+    toolResultsCleared: 3,
+    ledger: { window: 32_000, occupied: 2_500, committed: 2_500, sections: {} },
+  };
+
+  it('carries every number the event holds', () => {
+    const built = liveCompaction(full as never);
+    expect(built).not.toBeNull();
+    expect(built!.ordinal).toBe(2);
+    expect(built!.tokensBefore).toBe(9_000);
+    expect(built!.tokensAfter).toBe(2_500);
+    expect(built!.messagesSummarised).toBe(6);
+    expect(built!.refinedExistingSummary).toBe(true);
+    expect(built!.toolResultsCleared).toBe(3);
+  });
+
+  it('uses the runtime timestamp, not the reader clock', () => {
+    const built = liveCompaction(full as never, () => 'LOCAL-CLOCK');
+    expect(built!.at).toBe('2026-09-06T03:05:00.000Z');
+  });
+
+  it('falls back to the local clock only when the event carries no time', () => {
+    const { at: _dropped, ...withoutTime } = full;
+    const built = liveCompaction(withoutTime as never, () => 'LOCAL-CLOCK');
+    expect(built!.at).toBe('LOCAL-CLOCK');
+  });
+
+  /**
+   * An invented ordinal merges with somebody else's row, so a frame without one
+   * is skipped. A wrong row is worse than a missing one.
+   */
+  it('refuses to build a row it would have to invent an ordinal for', () => {
+    const { ordinal: _dropped, ...withoutOrdinal } = full;
+    expect(liveCompaction(withoutOrdinal as never)).toBeNull();
+  });
+
+  it('refuses to build a row with no ledger to show', () => {
+    const { ledger: _dropped, ...withoutLedger } = full;
+    expect(liveCompaction(withoutLedger as never)).toBeNull();
   });
 });

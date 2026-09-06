@@ -86,6 +86,34 @@ export interface PreservedState {
   unresolvedIssues?: string[];
   /** Files the run has recently read or produced, by name. */
   recentFiles?: string[];
+  /**
+   * Context entries a person has asked to keep, by ledger entity id.
+   *
+   * ## Why this is here rather than only in the surface
+   *
+   * The context meter draws a pin beside every evictable row, labelled "Keep
+   * this when the window fills". Pressing it set a boolean in the component's
+   * own React state and stopped there — nothing sent it anywhere, and this side
+   * had never heard of it. So the row went dark, the "what goes first" line
+   * moved on to the next row, and the compactor cleared the pinned document on
+   * its next pass exactly as if nothing had been pressed.
+   *
+   * A control that appears to protect something and does not is worse than no
+   * control at all: it converts a decision the person could still have made —
+   * attach less, ask differently, start a new thread — into one they believe
+   * they already made.
+   *
+   * Carried in {@link PreservedState} rather than on a channel of its own
+   * because it is exactly what this structure is for: state the Rust side owns,
+   * that changes between turns, and whose loss changes what the run may do. It
+   * is pushed by `run.note`, from `agent_pin_context`.
+   *
+   * The ids are the ledger's own entity ids, which are what the meter shows: a
+   * document's content hash, an evidence marker. So what a person pinned and
+   * what this protects are the same names, not two lists somebody has to
+   * reconcile.
+   */
+  pinned?: string[];
 }
 
 /** What compaction did, for the event stream and the run record. */
@@ -107,6 +135,16 @@ export interface CompactionEvent {
   toolResultsCleared: number;
   /** The ledger as it stood after the compaction. */
   ledger: ContextLedgerSnapshot;
+  /**
+   * When this happened, ISO 8601.
+   *
+   * Stamped here rather than by whoever receives the event, because this is the
+   * side that knows. A surface folding compactions in live had no timestamp to
+   * put on the row and would have had to invent one from its own clock — which
+   * is a different clock, read at a later moment, presented as the moment the
+   * history was lost.
+   */
+  at: string;
 }
 
 export interface CompactorOptions {
@@ -321,9 +359,26 @@ const PRUNE_KEEPS_RECENT = 6;
 export function pruneStaleToolResults(
   messages: AgentMessage[],
   durableMarkers: readonly string[],
+  /**
+   * Entries a person asked to keep. Never cleared, however durable they are.
+   *
+   * A third condition on top of the two above, and the only one that comes from
+   * outside this process. The other two are about whether clearing is *safe*;
+   * this is about whether it is *wanted*. Somebody watching the meter fill and
+   * pinning the drawing they are working from has said which of these results
+   * they still need, and that answer outranks a rule about what is retrievable
+   * — retrievable costs a tool call and a turn, and the person pinned it
+   * because they did not want to spend those.
+   *
+   * Matched against both the evidence markers a result carries (`E3`) and the
+   * document ids in its text, because the meter shows rows of both kinds and a
+   * pin has to mean the same thing whichever row it was pressed on.
+   */
+  pinned: readonly string[] = [],
 ): { messages: AgentMessage[]; cleared: number } {
   if (durableMarkers.length === 0) return { messages, cleared: 0 };
   const markers = new Set(durableMarkers.map((marker) => marker.toUpperCase()));
+  const kept = new Set(pinned.map((id) => id.toUpperCase()).filter((id) => id.length > 0));
   const cutoff = messages.length - PRUNE_KEEPS_RECENT;
   let cleared = 0;
 
@@ -334,6 +389,15 @@ export function pruneStaleToolResults(
 
     const text = textOf(message);
     if (!text) return message;
+
+    // Pinned, and therefore not this pass's to reclaim. Checked before the
+    // durability rules below, because a person's answer to "do you still need
+    // this?" is not improved by this code's opinion about whether it could be
+    // fetched again.
+    if (kept.size > 0) {
+      const upper = text.toUpperCase();
+      if ([...kept].some((id) => upper.includes(id))) return message;
+    }
 
     // Every marker this result carried, and only markers that are durable.
     const found = [...text.matchAll(/\[E(\d+)\]/g)].map((match) => `E${match[1]}`);
@@ -383,6 +447,15 @@ function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp:
   }
   if (state.recentFiles?.length) {
     lines.push(`Files in play: ${state.recentFiles.join(", ")}`);
+  }
+  if (state.pinned?.length) {
+    // Named across the compaction as well as protected by it. The person who
+    // pinned these said they are what the rest of the task depends on, and a
+    // model that keeps the text without being told why has lost the reason it
+    // was kept.
+    lines.push(
+      `Kept at the operator's request, and still current: ${state.pinned.join(", ")}`,
+    );
   }
 
   const rendered = notes.render();
@@ -513,7 +586,25 @@ export class RunCompactor {
     // retrievable, and clearing it may be enough that no summary is needed at
     // all. Doing it only at compaction time would mean the run summarises
     // history it did not have to lose.
-    const pruned = pruneStaleToolResults(messages, this.#notes.state.evidenceIds);
+    // Read at the moment of the turn rather than captured, so a pin pressed
+    // thirty seconds ago is honoured on the very next projection instead of
+    // whenever the compactor happens to be rebuilt.
+    const preserved = this.#options.preserved?.() ?? {};
+    const pinned = preserved.pinned ?? [];
+    // The meter is redrawn from this snapshot, so a pin that landed here shows
+    // as held in the panel the person pressed it in. Before this the ledger had
+    // a `setPinned` that nothing ever called, and the panel's pin state lived
+    // only in the component that drew it.
+    //
+    // Released as well as set, and that direction is not optional. `pinned` is
+    // the whole set every time, so an id that has left it has been *unpinned* —
+    // and a loop that only ever set `true` would leave the row drawn as
+    // protected for the rest of the run while `pruneStaleToolResults`, reading
+    // the same list, correctly stopped protecting it. That is the same lie this
+    // work exists to remove, pointing the other way.
+    this.#ledger.applyPins(pinned);
+
+    const pruned = pruneStaleToolResults(messages, this.#notes.state.evidenceIds, pinned);
     const working = pruned.messages;
     this.#cleared = pruned.cleared;
 
@@ -597,6 +688,7 @@ export class RunCompactor {
       refinedExistingSummary,
       toolResultsCleared: this.#cleared,
       ledger: this.#ledger.snapshot(),
+      at: new Date().toISOString(),
     });
     return projected;
   }

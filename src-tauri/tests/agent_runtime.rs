@@ -124,6 +124,13 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             // Durable: this test is about the wire between the two processes,
             // and a degraded installation has its own tests in `audit_health`.
             audit_health: Arc::new(sarathi_lib::agent_runtime::audit_health::AuditHealth::durable()),
+        documents: Arc::new(
+            sarathi_lib::agent_runtime::documents::DocumentStore::open(dir.path())
+                .expect("an extraction store"),
+        ),
+        run_to_conversation: Arc::new(
+            sarathi_lib::agent_runtime::conversations::RunToConversation::new(),
+        ),
         }),
         // Returned so the directory outlives the test; dropping it early would
         // delete the SQLite file out from under the runtime.
@@ -346,6 +353,15 @@ async fn message_stream_events_carry_message_id_and_text_deltas() {
         eprintln!("skipping: local model at {base_url} is not reachable");
         return;
     }
+    // One local model, several tests that want it.
+    //
+    // These share a single llama-server, and cargo runs tests in parallel by
+    // default. Two of them decoding at once starve each other: a long answer
+    // holds the slots while a short one waits past its own timeout, which
+    // surfaces as an unrelated test failing intermittently. Serialised on the
+    // scarce resource rather than made lenient, so a real regression still
+    // fails and a busy machine does not.
+    let _one_at_a_time = real_model_lock().lock().await;
 
     let (deps, _dir) = deps();
     // Collect every event the runtime emits. Held under a Mutex so the
@@ -544,6 +560,15 @@ async fn a_longer_prompt_streams_in_the_wire_contract() {
         eprintln!("skipping: local model at {base_url} is not reachable");
         return;
     }
+    // One local model, several tests that want it.
+    //
+    // These share a single llama-server, and cargo runs tests in parallel by
+    // default. Two of them decoding at once starve each other: a long answer
+    // holds the slots while a short one waits past its own timeout, which
+    // surfaces as an unrelated test failing intermittently. Serialised on the
+    // scarce resource rather than made lenient, so a real regression still
+    // fails and a busy machine does not.
+    let _one_at_a_time = real_model_lock().lock().await;
 
     let (deps, _dir) = deps();
     let events: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
@@ -641,6 +666,15 @@ async fn two_runs_in_a_row_each_carry_their_own_messageId() {
         eprintln!("skipping: local model at {base_url} is not reachable");
         return;
     }
+    // One local model, several tests that want it.
+    //
+    // These share a single llama-server, and cargo runs tests in parallel by
+    // default. Two of them decoding at once starve each other: a long answer
+    // holds the slots while a short one waits past its own timeout, which
+    // surfaces as an unrelated test failing intermittently. Serialised on the
+    // scarce resource rather than made lenient, so a real regression still
+    // fails and a busy machine does not.
+    let _one_at_a_time = real_model_lock().lock().await;
 
     let (deps, _dir) = deps();
     let events: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
@@ -742,5 +776,654 @@ async fn two_runs_in_a_row_each_carry_their_own_messageId() {
             !wrong,
             "run {run_id} emitted a message-stream event with the wrong messageId"
         );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The journey across the real process boundary.
+//
+// The runtime's own tests drive `startRun` in-process. These spawn the actual
+// Node child from the built bundle, speak real JSON-RPC over stdio, and point
+// it at a real HTTP server — so what is asserted is the request bytes that
+// reached a socket, having crossed the language boundary the product ships.
+//
+// The model server is a fixture rather than a real model, deliberately: what is
+// under test is whether the conversation *arrives*, and a real model would make
+// that assertion depend on what it chose to say.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// What one fixture model server saw and how it answers.
+struct FixtureServer {
+    base_url: String,
+    /// Request bodies, in arrival order.
+    seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+}
+
+/// A local OpenAI-compatible endpoint that records what it is sent.
+///
+/// `hold` leaves the response open after the scripted frames, which is what
+/// makes a run still be generating when a Stop arrives.
+async fn fixture_model_server(frames: Vec<String>, hold: bool) -> FixtureServer {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind a fixture model server");
+    let addr = listener.local_addr().expect("addr");
+    let seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut raw = Vec::new();
+            let mut buffer = [0u8; 8192];
+            // Read headers, then exactly the declared body.
+            loop {
+                let read = match socket.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                raw.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&raw).to_string();
+                let Some(head_end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let head = &text[..head_end];
+                let want: usize = head
+                    .lines()
+                    .find_map(|line| {
+                        let lower = line.to_ascii_lowercase();
+                        lower
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse().ok())
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= head_end + 4 + want {
+                    let body = &raw[head_end + 4..head_end + 4 + want];
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
+                        if let Ok(mut recorded) = sink.lock() {
+                            recorded.push(value);
+                        }
+                    }
+                    break;
+                }
+            }
+
+            let head = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-type: text/event-stream\r\n",
+                "cache-control: no-cache\r\n",
+                "connection: keep-alive\r\n\r\n",
+            );
+            let _ = socket.write_all(head.as_bytes()).await;
+            for frame in &frames {
+                let _ = socket.write_all(frame.as_bytes()).await;
+            }
+            let _ = socket.flush().await;
+            if hold {
+                // Still generating. Held so the socket is not closed, which
+                // would end the run for the wrong reason.
+                held.push(socket);
+                continue;
+            }
+            let _ = socket.write_all(b"data: [DONE]\n\n").await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    FixtureServer {
+        base_url: format!("http://{addr}/v1"),
+        seen,
+    }
+}
+
+fn sse(delta: serde_json::Value, finish: Option<&str>) -> String {
+    format!(
+        "data: {}\n\n",
+        serde_json::json!({
+            "id": "chatcmpl-fixture",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "fixture",
+            "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
+        })
+    )
+}
+
+/// Everything one recorded request carried, flattened to one string.
+fn sent_text(body: &serde_json::Value) -> String {
+    let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
+        return String::new();
+    };
+    messages
+        .iter()
+        .map(|message| match message.get("content") {
+            Some(serde_json::Value::String(text)) => text.clone(),
+            Some(serde_json::Value::Array(blocks)) => blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Waits until the fixture server has received a request, or gives up.
+///
+/// A fixed sleep is the wrong tool here: spawning the real Node child,
+/// fetching the tool catalogue and reaching the first model call takes
+/// however long the machine takes, and a sleep long enough to be safe makes
+/// every run of the suite pay it. Waiting on the thing that actually has to
+/// have happened is both faster and not flaky.
+///
+/// Returns whether it arrived, so the caller can fail with its own message.
+async fn awaited_first_call(server: &FixtureServer) -> bool {
+    for _ in 0..600 {
+        if server.seen.lock().map(|seen| !seen.is_empty()).unwrap_or(false) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// The conversation reaches the model, across the process boundary.
+///
+/// This is the claim the whole context change rests on, asserted at the only
+/// place it can be settled: the bytes a socket received, sent by the real child
+/// process the product ships.
+#[tokio::test]
+async fn a_continuing_turn_carries_its_history_across_the_process_boundary() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let server = fixture_model_server(
+        vec![
+            sse(serde_json::json!({ "role": "assistant", "content": "" }), None),
+            sse(serde_json::json!({ "content": "Class 300." }), Some("stop")),
+        ],
+        false,
+    )
+    .await;
+
+    let (deps, _dir) = deps();
+    let runtime = AgentRuntime::spawn(deps, Arc::new(|_| {}), bundle()).expect("runtime starts");
+
+    let _ = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "journey-run-1",
+                "messageId": "journey-msg-1",
+                "prompt": "And the gasket torque?",
+                "systemPrompt": "Answer from what you were given.",
+                "history": [
+                    { "role": "user", "content": "What is the pressure rating?" },
+                    { "role": "assistant", "content": "Class 300 throughout the skid." }
+                ],
+                "model": {
+                    "id": "fixture",
+                    "provider": "sovereign-local",
+                    "baseUrl": server.base_url,
+                }
+            }),
+        )
+        .await
+        .expect("run.start resolves");
+    runtime.shutdown().await;
+
+    let seen = server.seen.lock().expect("lock").clone();
+    assert!(!seen.is_empty(), "the model server received no request");
+    let sent = sent_text(&seen[0]);
+    assert!(
+        sent.contains("What is the pressure rating?"),
+        "the earlier question did not reach the model: {sent}"
+    );
+    assert!(
+        sent.contains("Class 300 throughout the skid."),
+        "the earlier answer did not reach the model: {sent}"
+    );
+    assert!(
+        sent.contains("And the gasket torque?"),
+        "the new question did not reach the model: {sent}"
+    );
+}
+
+/// Stop, while the model is thinking, across the process boundary.
+///
+/// The server holds the stream open, so the run is genuinely mid-generation
+/// when the abort arrives — not merely finished early.
+#[tokio::test]
+async fn stopping_a_thinking_run_ends_it_as_aborted_and_keeps_what_it_wrote() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let server = fixture_model_server(
+        vec![
+            sse(serde_json::json!({ "role": "assistant", "content": "" }), None),
+            sse(serde_json::json!({ "content": "half an answer" }), None),
+        ],
+        true,
+    )
+    .await;
+
+    let (deps, _dir) = deps();
+    let runtime = AgentRuntime::spawn(deps, Arc::new(|_| {}), bundle()).expect("runtime starts");
+
+    // Driven on a task, not merely constructed.
+    //
+    // `request` returns a future, and a Rust future does nothing until it is
+    // polled. Holding it in a local and then sleeping sends no request at all,
+    // so the abort below would name a run that had never started — which is
+    // exactly what the first version of this test did, and it reported a
+    // missing abort rather than a missing run.
+    let driven = Arc::clone(&runtime);
+    let base = server.base_url.clone();
+    let started = tokio::spawn(async move {
+        driven
+            .request(
+                "run.start",
+                serde_json::json!({
+                    "runId": "journey-stop-1",
+                    "messageId": "journey-stop-msg-1",
+                    "prompt": "write at length",
+                    "systemPrompt": "Answer at length.",
+                    "model": {
+                        "id": "fixture",
+                        "provider": "sovereign-local",
+                        "baseUrl": base,
+                    }
+                }),
+            )
+            .await
+    });
+
+    // The run is genuinely mid-generation once the model server has been
+    // called and the server is holding the stream open.
+    assert!(
+        awaited_first_call(&server).await,
+        "the run never reached the model server, so there was nothing to stop"
+    );
+    // A short grace for the scripted delta to be decoded into the answer.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let aborted = runtime
+        .request("run.abort", serde_json::json!({ "runId": "journey-stop-1" }))
+        .await
+        .expect("run.abort resolves");
+    assert_eq!(
+        aborted.get("aborted").and_then(|v| v.as_bool()),
+        Some(true),
+        "the runtime did not report a live run to abort: {aborted}"
+    );
+
+    let outcome = started
+        .await
+        .expect("the run task finished")
+        .expect("the stopped run still returns");
+    runtime.shutdown().await;
+
+    assert_eq!(
+        outcome
+            .get("outcome")
+            .and_then(|o| o.get("kind"))
+            .and_then(|k| k.as_str()),
+        Some("aborted"),
+        "a stopped run must not be recorded as completed: {outcome}"
+    );
+    // The half-written answer is the person's, and a stopped turn keeps it.
+    assert!(
+        outcome
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .contains("half an answer"),
+        "partial output was lost: {outcome}"
+    );
+}
+
+/// A stop, then a normal turn. A stopped run is not a broken session.
+#[tokio::test]
+async fn the_turn_after_a_stop_runs_normally() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let held = fixture_model_server(
+        vec![sse(
+            serde_json::json!({ "role": "assistant", "content": "partial" }),
+            None,
+        )],
+        true,
+    )
+    .await;
+
+    let (deps, _dir) = deps();
+    let runtime = AgentRuntime::spawn(deps, Arc::new(|_| {}), bundle()).expect("runtime starts");
+
+    // Driven on a task, for the same reason as above.
+    let driven = Arc::clone(&runtime);
+    let base = held.base_url.clone();
+    let first = tokio::spawn(async move {
+        driven
+            .request(
+                "run.start",
+                serde_json::json!({
+                    "runId": "journey-recover-1",
+                    "messageId": "m-1",
+                    "prompt": "one",
+                    "systemPrompt": "s",
+                    "model": {
+                        "id": "fixture",
+                        "provider": "sovereign-local",
+                        "baseUrl": base,
+                    },
+                }),
+            )
+            .await
+    });
+    assert!(
+        awaited_first_call(&held).await,
+        "the first run never reached the model server"
+    );
+    let stopped = runtime
+        .request(
+            "run.abort",
+            serde_json::json!({ "runId": "journey-recover-1" }),
+        )
+        .await
+        .expect("run.abort resolves");
+    assert_eq!(
+        stopped.get("aborted").and_then(|v| v.as_bool()),
+        Some(true),
+        "there was no live run to stop: {stopped}"
+    );
+    let _ = first
+        .await
+        .expect("the run task finished")
+        .expect("the stopped run returns");
+
+    // A second, ordinary turn on the same runtime process.
+    let ordinary = fixture_model_server(
+        vec![
+            sse(serde_json::json!({ "role": "assistant", "content": "" }), None),
+            sse(serde_json::json!({ "content": "all done" }), Some("stop")),
+        ],
+        false,
+    )
+    .await;
+    let outcome = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "journey-recover-2",
+                "messageId": "m-2",
+                "prompt": "two",
+                "systemPrompt": "s",
+                "model": {
+                    "id": "fixture",
+                    "provider": "sovereign-local",
+                    "baseUrl": ordinary.base_url,
+                },
+            }),
+        )
+        .await
+        .expect("the next turn runs");
+    runtime.shutdown().await;
+
+    assert_eq!(
+        outcome
+            .get("outcome")
+            .and_then(|o| o.get("kind"))
+            .and_then(|k| k.as_str()),
+        Some("completed"),
+        "the turn after a stop did not run cleanly: {outcome}"
+    );
+    assert!(outcome
+        .get("text")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default()
+        .contains("all done"));
+}
+
+/// Serialises the tests that share the one local model server.
+fn real_model_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// The proof a fixture cannot give: a real model answering from the history.
+///
+/// Every other context test asserts that the earlier turns *reached* the
+/// provider. This asserts that they were usable — the question is answerable
+/// only from the conversation, the reference is arbitrary enough that no model
+/// could produce it from its weights, and the answer is the model's own.
+///
+/// Skips when no local model is serving, because it is a proof against a real
+/// model rather than a fixture. The skip prints the endpoint it tried, so a
+/// missing model is reported explicitly rather than as a silent pass.
+#[tokio::test]
+async fn a_real_model_answers_from_the_conversation_it_was_given() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let base_url = std::env::var("ARJUN_TEST_MODEL_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:61353/v1".to_string());
+    if !endpoint_reachable(&base_url).await {
+        eprintln!("skipping: local model at {base_url} is not reachable");
+        return;
+    }
+    // One local model, several tests that want it.
+    //
+    // These share a single llama-server, and cargo runs tests in parallel by
+    // default. Two of them decoding at once starve each other: a long answer
+    // holds the slots while a short one waits past its own timeout, which
+    // surfaces as an unrelated test failing intermittently. Serialised on the
+    // scarce resource rather than made lenient, so a real regression still
+    // fails and a busy machine does not.
+    let _one_at_a_time = real_model_lock().lock().await;
+
+    let (deps, _dir) = deps();
+    let runtime = AgentRuntime::spawn(deps, Arc::new(|_| {}), bundle()).expect("runtime starts");
+
+    // Arbitrary, and stated only in the history. A model that did not receive
+    // the earlier turn cannot produce it.
+    let outcome = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "real-history-1",
+                "messageId": "real-history-msg-1",
+                "prompt": "What is my reference number? Answer with the code only.",
+                "systemPrompt": "Answer from the conversation. Be very brief.",
+                "history": [
+                    { "role": "user", "content": "Please note my reference number: ZX-4471-QD." },
+                    { "role": "assistant", "content": "Noted. Your reference number is ZX-4471-QD." }
+                ],
+                "model": {
+                    "id": "local-model",
+                    "provider": "sovereign-local",
+                    "baseUrl": base_url,
+                }
+            }),
+        )
+        .await
+        .expect("run.start resolves");
+    runtime.shutdown().await;
+
+    let answer = outcome
+        .get("text")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        answer.contains("ZX-4471"),
+        "the model could not answer from the history it was sent, so the history did not reach it usefully. It said: {answer:?}"
+    );
+}
+
+/// Stop, against a real model that is genuinely generating.
+///
+/// The fixture version proves the mechanism; this proves it against a model
+/// that is actually decoding on the GPU, which is the case an operator presses
+/// the button in.
+#[tokio::test]
+async fn stopping_a_real_model_mid_answer_ends_the_run_as_aborted() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let base_url = std::env::var("ARJUN_TEST_MODEL_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:61353/v1".to_string());
+    if !endpoint_reachable(&base_url).await {
+        eprintln!("skipping: local model at {base_url} is not reachable");
+        return;
+    }
+    // One local model, several tests that want it.
+    //
+    // These share a single llama-server, and cargo runs tests in parallel by
+    // default. Two of them decoding at once starve each other: a long answer
+    // holds the slots while a short one waits past its own timeout, which
+    // surfaces as an unrelated test failing intermittently. Serialised on the
+    // scarce resource rather than made lenient, so a real regression still
+    // fails and a busy machine does not.
+    let _one_at_a_time = real_model_lock().lock().await;
+
+    let (deps, _dir) = deps();
+    // The event sink, so the stop can be timed against what the model has
+    // actually produced rather than against a stopwatch.
+    //
+    // A fixed sleep is wrong here for a reason specific to this product: a
+    // reasoning model emits its thinking first, and thinking is deliberately
+    // never counted as answer text. Stopping during that phase leaves an
+    // assistant message carrying reasoning and no text blocks — nothing was
+    // lost, there was simply nothing visible yet. Waiting for the first
+    // visible delta is what makes 'partial output is preserved' a claim this
+    // test can actually make.
+    let seen_text: Arc<std::sync::atomic::AtomicBool> =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watcher = seen_text.clone();
+    let emit: Arc<dyn Fn(serde_json::Value) + Send + Sync> = Arc::new(move |value| {
+        let is_visible_delta = value.pointer("/event/type").and_then(|t| t.as_str())
+            == Some("message_update")
+            && value
+                .pointer("/event/delta")
+                .and_then(|d| d.as_str())
+                .is_some_and(|delta| !delta.is_empty());
+        if is_visible_delta {
+            watcher.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    let runtime = AgentRuntime::spawn(deps, emit, bundle()).expect("runtime starts");
+
+    let driven = Arc::clone(&runtime);
+    let endpoint = base_url.clone();
+    let started = tokio::spawn(async move {
+        driven
+            .request(
+                "run.start",
+                serde_json::json!({
+                    "runId": "real-stop-1",
+                    "messageId": "real-stop-msg-1",
+                    // Long enough that it is still decoding when the stop lands.
+                    "prompt": "Write a detailed 800-word description of a centrifugal pump.",
+                    "systemPrompt": "Write at length.",
+                    "model": {
+                        "id": "local-model",
+                        "provider": "sovereign-local",
+                        "baseUrl": endpoint,
+                        "maxTokens": 2048,
+                    }
+                }),
+            )
+            .await
+    });
+
+    // Wait for the model to have written something visible, then stop it.
+    //
+    // Bounded short deliberately. Measured on this machine, llama-server with
+    // Nemotron3-Nano-4B delivers the whole answer as a *single* `message_update`
+    // — one delta, arriving with `message_end` — so there is no mid-generation
+    // window to stop in at all. Waiting longer would not create one; it would
+    // only make the suite slower before reaching the same place.
+    let mut wrote_something = false;
+    for _ in 0..80 {
+        if seen_text.load(std::sync::atomic::Ordering::SeqCst) {
+            wrote_something = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !wrote_something {
+        // No window existed. Reported rather than proceeding to an abort that
+        // would find a finished run and assert nothing — a test that passes
+        // while proving nothing is worse than one that says why it could not.
+        //
+        // The mechanism itself is covered without a real model, against a
+        // server that holds the stream open: see
+        // `stopping_a_thinking_run_ends_it_as_aborted_and_keeps_what_it_wrote`.
+        eprintln!(
+            "skipping the assertion: this model returned no incremental output, so there was              no mid-generation window to stop in"
+        );
+        let _ = started.await;
+        runtime.shutdown().await;
+        return;
+    }
+    let aborted = runtime
+        .request("run.abort", serde_json::json!({ "runId": "real-stop-1" }))
+        .await
+        .expect("run.abort resolves");
+
+    let outcome = started
+        .await
+        .expect("the run task finished")
+        .expect("the stopped run still returns");
+    runtime.shutdown().await;
+
+    let kind = outcome
+        .get("outcome")
+        .and_then(|o| o.get("kind"))
+        .and_then(|k| k.as_str())
+        .unwrap_or_default()
+        .to_string();
+    // If the model finished before the stop landed the run is legitimately
+    // complete, and asserting otherwise would make this flaky on a fast
+    // machine. Reported rather than silently passing.
+    if aborted.get("aborted").and_then(|v| v.as_bool()) != Some(true) {
+        eprintln!("note: the model finished before the stop arrived; ending was {kind}");
+        return;
+    }
+
+    // The load-bearing claim, and it holds either way.
+    assert_eq!(
+        kind, "aborted",
+        "a run stopped mid-answer was recorded as {kind}: {outcome}"
+    );
+
+    let text = outcome
+        .get("text")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    if wrote_something {
+        // It had written something visible, so a stopped turn must keep it. A
+        // stopped turn is not a failed one, and discarding the text would lose
+        // real work.
+        assert!(
+            !text.is_empty(),
+            "the model had written visible text and the stop discarded it"
+        );
+    } else {
+        // Still reasoning when the stop landed. Nothing visible existed to
+        // preserve, and reasoning is never counted as answer text — so an
+        // empty answer here is correct rather than a loss. Reported so a run
+        // of the suite that took this branch is not read as having proven
+        // preservation.
+        eprintln!("note: the model was still reasoning at the stop; no visible text to preserve");
     }
 }

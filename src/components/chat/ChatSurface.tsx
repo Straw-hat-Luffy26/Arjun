@@ -204,8 +204,8 @@ export function ChatSurface({
     setStopProblem(null);
     setStoppingRunId(runId);
     try {
-      const accepted = await agentService.abort(runId);
-      if (!accepted) {
+      const outcome = await agentService.abort(runId);
+      if (!outcome.requested) {
         // The run finished between the render and the click. An ordinary
         // race, and the record already says how it ended, so there is
         // nothing to report and nothing left to wait for.

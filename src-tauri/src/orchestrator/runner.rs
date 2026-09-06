@@ -940,6 +940,15 @@ impl ToolRunner for LocalToolRunner<'_> {
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),
             ToolName::KnowledgeMultimodalRetrieve => self.multimodal_retrieve(call),
+            // Agent-path, for the same reason memory is: the store is keyed by
+            // the signed-in owner and the conversation the document was
+            // attached to, and this runner is rebuilt per call and holds
+            // neither. Answering here would mean answering a question about who
+            // may read a document with no idea who is asking.
+            ToolName::ReadAttachedPages => Err(format!(
+                "{} is served on the agent path, not by this runner.",
+                tool.as_str()
+            )),
             ToolName::ReadScopedFile => self.read(call, resolved_path),
             ToolName::WriteScopedFile => self.write(call, resolved_path),
             ToolName::RunCalculation => self.calculate(call),

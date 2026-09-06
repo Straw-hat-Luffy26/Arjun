@@ -17,6 +17,7 @@ import {
   type Activity,
   type RunViewState,
 } from './recovery';
+import { liveCompaction, mergeCompaction } from './context-ledger';
 
 /**
  * Adopt a single run by id, without going through `useRun`.
@@ -263,12 +264,91 @@ export function useTaskRecord(runId: string | null) {
 }
 
 /**
- * Read the context ledger + the list of compactions for one run.
- * Used by the chat header's `ContextPanel` chip.
+ * How much the meter knows, and whether it is still finding out.
+ *
+ * Three states the surface used to render identically, as one grey chip
+ * reading "No context yet":
+ *
+ * - `loading` — the stored reading has been asked for and has not come back.
+ * - `empty` — it came back, and there is no reading yet. The ordinary state of
+ *   every run for its first few seconds, and of a conversation nobody has sent
+ *   a turn in.
+ * - `failed` — the read genuinely failed. The meter is showing nothing and can
+ *   say why.
+ *
+ * Told apart because the right response differs: wait, send a message, or
+ * report a fault. A person watching a meter that never filled could not tell
+ * which of the three they were looking at.
  */
-export function useContextLedger(runId: string | null) {
+export type ContextLedgerStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'failed';
+
+export interface ContextLedgerView {
+  ledger: ContextLedgerRecord | null;
+  compactions: CompactionRecord[];
+  attachments: AttachmentContextEvent[];
+  status: ContextLedgerStatus;
+  /** The sentence to show when `status` is `failed`. Never model output. */
+  error: string | null;
+}
+
+/**
+ * Read the context ledger, the compactions and the attachment costs for a turn.
+ *
+ * ## Two keys, and why it is not one
+ *
+ * `runId` is not stable across a turn. The composer mints a correlation id
+ * before the request goes out, the run reports its own id on `plan_ready`, and
+ * the surface reconciles to the real one the moment it arrives. So the id this
+ * hook is given *changes mid-turn*, by design.
+ *
+ * The ledger and the compactions belong to the run, are stamped with the run's
+ * own id, and are correctly re-fetched and re-subscribed when it changes — no
+ * ledger event is ever emitted under the correlation id, because the runtime is
+ * the only thing that emits them and it does not exist until the run does.
+ *
+ * The attachment costs belong to the *turn*. They are published before the run
+ * has an id at all, which is the whole point of them: a document's price is
+ * known while the OCR model is still finishing, and the meter should show it
+ * then. Keying those on `runId` would throw them away at the exact moment the
+ * id was reconciled — the correlation-id subscription that received them torn
+ * down and its state cleared, seconds after they arrived.
+ *
+ * So attachments are keyed on `messageId`, which the surface reserves before
+ * the turn starts and which nothing changes for its whole life.
+ *
+ * ## What each effect clears
+ *
+ * Both clear their own state when their own key changes. That is the fix for
+ * the retention: switching runs, or conversations, used to leave the previous
+ * run's ledger, compactions and attachments on screen until new ones happened
+ * to arrive — and because the stored fetch merged with `current ??`, the *new*
+ * run's stored reading was then discarded in favour of the old run's. The meter
+ * showed one run's numbers under another run's name, indefinitely.
+ *
+ * ## The race
+ *
+ * The stored fetch and the live subscription both write the ledger, and the
+ * fetch can land after an event describing a later moment. `liveArrived`
+ * settles it: the fetch applies only while nothing newer has arrived, and it is
+ * scoped to this effect run so it cannot leak across a key change.
+ */
+export function useContextLedger(
+  runId: string | null,
+  /**
+   * The assistant cell this turn is streaming into.
+   *
+   * Scopes the attachment events, which are published on an application-wide
+   * channel: without it the meter folded in every document any run read,
+   * another window's included. Omitted for a finished run opened from the Tasks
+   * screen, which has no live attachments to receive — the stored ledger
+   * carries its documents as entities.
+   */
+  messageId?: string | null,
+): ContextLedgerView {
   const [ledger, setLedger] = useState<ContextLedgerRecord | null>(null);
   const [compactions, setCompactions] = useState<CompactionRecord[]>([]);
+  const [status, setStatus] = useState<ContextLedgerStatus>('idle');
+  const [error, setError] = useState<string | null>(null);
   /**
    * Per-attachment costs, keyed by content hash.
    *
@@ -279,40 +359,53 @@ export function useContextLedger(runId: string | null) {
    */
   const [attachments, setAttachments] = useState<AttachmentContextEvent[]>([]);
 
+  // ── The run's own readings: ledger and compactions ────────────────────
   useEffect(() => {
+    // Cleared on every key change, including to null. This is the retention
+    // fix: nothing from the previous run survives into the next one's panel,
+    // not even for the moment before its first event lands.
+    setLedger(null);
+    setCompactions([]);
+    setError(null);
+
     if (!runId) {
-      setLedger(null);
-      setCompactions([]);
-      setAttachments([]);
+      setStatus('idle');
       return;
     }
+    setStatus('loading');
+
     let cancelled = false;
+    // Set by the first live event. A stored reading describes an earlier moment
+    // than any event that has already arrived, so once one has, the in-flight
+    // fetch must not be allowed to write over it.
+    let liveArrived = false;
     const unsubscribers: (() => void)[] = [];
 
-    // The stored reading first, so a finished run opened from the Tasks screen
-    // shows its ledger without waiting for events that will never come.
-    void (async () => {
-      try {
-        const task = await agentService.task(runId);
-        if (cancelled) return;
-        // Only as a starting point. A live event that has already landed
-        // describes a later moment than this fetch does, so it must not be
-        // overwritten by a reply that was in flight when it arrived.
-        setLedger(current => current ?? task.contextLedger ?? null);
-        setCompactions(current => (current.length > 0 ? current : task.compactions ?? []));
-      } catch {
-        // A run with no stored record yet is the normal case for one that has
-        // only just started. The live events below are what populate it, so
-        // this is not an error worth clearing state for.
-      }
-    })();
-
-    // Live: every turn and every compaction.
+    // Subscribed first, so the window in which an event can be missed is as
+    // short as this side can make it. It is not zero: registering a Tauri
+    // listener is itself asynchronous, so an event emitted in the next few
+    // milliseconds reaches nobody. That is why the stored fetch below is not
+    // merely a nicety for finished runs — it is also the backstop that fills in
+    // whatever the subscription was too late for.
     void agentService
       .subscribe(({ event }: AgentEventEnvelope) => {
         if (cancelled) return;
         if (event.type === 'context_ledger') {
+          liveArrived = true;
           setLedger(event.ledger);
+          setStatus('ready');
+          return;
+        }
+        if (event.type === 'context_compacted') {
+          const record = liveCompaction(event);
+          if (!record) return;
+          liveArrived = true;
+          setCompactions(current => mergeCompaction(current, record));
+          // A compaction carries the ledger as it stood afterwards, so the
+          // meter moves with it rather than waiting for the next turn's
+          // reading — which is a whole model call away.
+          setLedger(record.ledger);
+          setStatus('ready');
         }
       }, runId)
       .then(un => {
@@ -320,10 +413,70 @@ export function useContextLedger(runId: string | null) {
         else unsubscribers.push(un);
       });
 
-    // Live: what each attached document cost, known before the first model
-    // call and therefore before any ledger exists.
+    // The stored reading, so a finished run opened from the Tasks screen shows
+    // its ledger without waiting for events that will never come.
+    void (async () => {
+      try {
+        const snapshot = await agentService.taskContext(runId);
+        if (cancelled) return;
+        if (!snapshot) {
+          // No record yet. Not an error: it is the ordinary state of a run in
+          // its first seconds, and of every run that has not made a model call.
+          setStatus(current => (current === 'loading' ? 'empty' : current));
+          return;
+        }
+        // Applied only where nothing newer has landed. A live event describes a
+        // later moment than this reply, which was in flight while it arrived.
+        if (!liveArrived) {
+          setLedger(snapshot.ledger ?? null);
+        }
+        setCompactions(current =>
+          (snapshot.compactions ?? []).reduce(mergeCompaction, current),
+        );
+        setStatus(current =>
+          current === 'ready' ||
+          snapshot.ledger ||
+          (snapshot.compactions ?? []).length > 0
+            ? 'ready'
+            : 'empty',
+        );
+      } catch (cause) {
+        if (cancelled) return;
+        // A real failure, distinguished from "no record yet" by the backend:
+        // `agent_task_context` answers `null` for that and rejects only when
+        // the read genuinely went wrong. A live event that has already arrived
+        // outranks it — the meter is working, whatever the stored copy did.
+        if (liveArrived) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setStatus('failed');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      for (const un of unsubscribers) un();
+    };
+  }, [runId]);
+
+  // ── The turn's attachment costs ───────────────────────────────────────
+  //
+  // A separate effect with a separate key, so the run-id reconciliation that
+  // re-runs the effect above does not discard documents that arrived under the
+  // correlation id seconds earlier.
+  useEffect(() => {
+    setAttachments([]);
+    if (!messageId) return;
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
     void listenAttachmentContext(payload => {
       if (cancelled) return;
+      // Scoped to this turn. The channel is application-wide, so without this
+      // the meter folded in every document any run read — another window's
+      // included. An event naming no message reaches nobody, which is the safe
+      // direction to fail.
+      if (payload.messageId !== messageId) return;
       setAttachments(current => {
         // Keyed by content hash, so re-reading the same file replaces its row
         // rather than adding a second one for the same document.
@@ -335,16 +488,16 @@ export function useContextLedger(runId: string | null) {
       });
     }).then(un => {
       if (cancelled) un();
-      else unsubscribers.push(un);
+      else unlisten = un;
     });
 
     return () => {
       cancelled = true;
-      for (const un of unsubscribers) un();
+      unlisten?.();
     };
-  }, [runId]);
+  }, [messageId]);
 
-  return { ledger, compactions, attachments };
+  return { ledger, compactions, attachments, status, error };
 }
 
 /**

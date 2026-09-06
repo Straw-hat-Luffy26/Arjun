@@ -216,6 +216,115 @@ pub async fn probe(base_url: &str) -> ProbeOutcome {
     }
 }
 
+/// What `llama-server` reports about the context it is holding.
+///
+/// Only the field that matters, and read from two places because the server has
+/// moved it between versions: `n_ctx` at the top of `/props` on newer builds,
+/// and inside `default_generation_settings` on older ones. Absent in both
+/// means this server does not answer the question, not that it has no limit.
+#[derive(Debug, Deserialize)]
+struct PropsResponse {
+    #[serde(default)]
+    n_ctx: Option<u32>,
+    #[serde(default)]
+    default_generation_settings: Option<GenerationSettings>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GenerationSettings {
+    #[serde(default)]
+    n_ctx: Option<u32>,
+}
+
+/// The context window a running server will actually accept, in tokens.
+///
+/// ## Why this is asked rather than assumed
+///
+/// A registry entry states the window the model was *trained* with. What a
+/// server was *started* with is a different number, and on this product it is
+/// routinely smaller: [`crate::ai_engine::vram_planner`] walks a context ladder
+/// down to buy GPU layers, so a 32 768-token model is commonly served at 8 192.
+/// Budgeting a turn against the trained figure and sending it to a server
+/// holding the smaller one produces exactly the refusal this function exists to
+/// prevent — `400 request (8590 tokens) exceeds the available context size
+/// (8192 tokens)`.
+///
+/// For a server ARJUN started, [`crate::serving::Endpoint::context_tokens`]
+/// already carries the number from the command line and this is not needed.
+/// This is for the server ARJUN did **not** start, where the only authority is
+/// the server itself.
+///
+/// ## Why `None` rather than a default
+///
+/// A guess here would be indistinguishable from a measurement to every caller,
+/// and would reintroduce the bug in a new place. A server that does not answer
+/// is reported as unknown and the caller decides what to do about it.
+pub async fn served_context_tokens(base_url: &str) -> Option<u32> {
+    if check_loopback(base_url).is_err() {
+        return None;
+    }
+    let client = shared_client().ok()?;
+    // `/props` sits at the server root, not under the `/v1` OpenAI prefix that
+    // `base_url` carries.
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+    let response = client.get(format!("{root}/props")).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let props = response.json::<PropsResponse>().await.ok()?;
+    props
+        .n_ctx
+        .or_else(|| props.default_generation_settings.and_then(|s| s.n_ctx))
+        .filter(|tokens| *tokens > 0)
+}
+
+/// How many tokens this server makes of a string, counted by the server.
+///
+/// ## Why an exact count is worth a round trip
+///
+/// Every budget upstream of this is built on `chars / 4`, which is a decent
+/// average for English prose and badly wrong for what this product actually
+/// carries: OCR'd tables, tag numbers like `PV-2201`, and drawing annotations
+/// all tokenise far denser than four characters a token. A turn estimated at
+/// 7 800 can genuinely be 8 590, which is how a request budgeted to fit is
+/// refused for not fitting.
+///
+/// `POST /tokenize` is llama.cpp's own tokeniser over its own vocabulary, so
+/// the answer is not an improved estimate — it is the number the server will
+/// count when the request arrives.
+///
+/// `None` when the server does not offer it (vLLM, an OpenAI-compatible proxy).
+/// The caller keeps its estimate in that case; it does not invent a count.
+pub async fn count_tokens(base_url: &str, text: &str) -> Option<u32> {
+    if check_loopback(base_url).is_err() {
+        return None;
+    }
+    let client = shared_client().ok()?;
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+    let response = client
+        .post(format!("{root}/tokenize"))
+        .json(&serde_json::json!({ "content": text }))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct Tokenized {
+        #[serde(default)]
+        tokens: Vec<serde_json::Value>,
+    }
+    let body = response.json::<Tokenized>().await.ok()?;
+    u32::try_from(body.tokens.len()).ok()
+}
+
 /// Turns a transport error into something an operator can act on.
 fn describe_transport_error(error: &reqwest::Error) -> String {
     if error.is_timeout() {

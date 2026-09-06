@@ -107,12 +107,22 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "agent_pin_context": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
     "agent_steer_run": {
       "owner": "agent",
       "consumer": "frontend",
       "note": "Called from src/."
     },
     "agent_task": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
+    "agent_task_context": {
       "owner": "agent",
       "consumer": "frontend",
       "note": "Called from src/."

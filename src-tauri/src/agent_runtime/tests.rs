@@ -27,7 +27,7 @@ fn signed_in_user() -> Arc<std::sync::RwLock<Option<Session>>> {
 /// The directory is returned rather than dropped because it holds both the
 /// knowledge index and the run's workspace; letting it fall out of scope deletes
 /// them under the test.
-fn deps_with(
+pub(super) fn deps_with(
     session: Arc<std::sync::RwLock<Option<Session>>>,
 ) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -107,6 +107,13 @@ fn deps_with(
         // Durable by default: these tests are about the gateway, and a
         // degraded installation has its own tests in `audit_health`.
         audit_health: Arc::new(crate::agent_runtime::audit_health::AuditHealth::durable()),
+        documents: Arc::new(
+            crate::agent_runtime::documents::DocumentStore::open(dir.path())
+                .expect("an extraction store"),
+        ),
+        run_to_conversation: Arc::new(
+            crate::agent_runtime::conversations::RunToConversation::new(),
+        ),
     });
     (deps, dir)
 }
@@ -706,6 +713,7 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "artifact.verify_docx",
             "calculation.evaluate_with_units",
             "capability.search",
+            "document.read_pages",
             "knowledge.load_evidence_region",
             "knowledge.multimodal_retrieve",
             "knowledge.search_authorized",

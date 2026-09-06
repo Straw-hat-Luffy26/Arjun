@@ -89,6 +89,15 @@ impl Chunk {
     }
 }
 
+/// One page on its way through the cut.
+///
+/// A borrowed view rather than an owned type: chunking a forty-page scan
+/// should not begin by copying it.
+struct Page<'a> {
+    page: u32,
+    text: &'a str,
+}
+
 /// A heading, and how deep it sits.
 struct Heading {
     level: usize,
@@ -212,13 +221,40 @@ fn chunk_id(document_sha256: &str, ordinal: u32) -> String {
 
 /// Cuts a document into chunks that carry their structure.
 pub fn chunk_document(document_sha256: &str, extracted: &ExtractedDocument) -> Vec<Chunk> {
+    let pages: Vec<(u32, &str)> = extracted
+        .pages
+        .iter()
+        .map(|page| (page.page, page.text.as_str()))
+        .collect();
+    chunk_pages(document_sha256, &pages)
+}
+
+/// The same cut, over pages that did not come from the document sidecar.
+///
+/// Split out from [`chunk_document`] so a chat attachment gets **this** logic
+/// rather than a second, worse copy of it. The two callers hold their pages in
+/// different structures — the collection pipeline has a
+/// [`crate::documents::ExtractedDocument`] with confidences and regions, and
+/// [`crate::agent_runtime::documents`] has page text and provenance — but the
+/// cut is the same cut, and the reason to share it is at the top of this file:
+/// structure-aware chunking is what makes a table-dependent question
+/// answerable, and arriving by paperclip is not a reason to get the worse
+/// pipeline.
+///
+/// Pages are `(page number, text)` in reading order. The number is the
+/// document's own, so a chunk cut from page 31 says 31 whether or not pages
+/// 1-30 produced any text at all.
+pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut ordinal = 0u32;
     // The heading stack, deepest last. Popped when a heading of equal or
     // shallower depth arrives.
     let mut section: Vec<Heading> = Vec::new();
 
-    for page in &extracted.pages {
+    for page in pages.iter().map(|(number, text)| Page {
+        page: *number,
+        text: *text,
+    }) {
         if page.text.trim().is_empty() {
             continue;
         }

@@ -78,6 +78,13 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         // Durable by default: these tests are about the gateway, and a
         // degraded installation has its own tests in `audit_health`.
         audit_health: Arc::new(crate::agent_runtime::audit_health::AuditHealth::durable()),
+        documents: Arc::new(
+            crate::agent_runtime::documents::DocumentStore::open(dir.path())
+                .expect("an extraction store"),
+        ),
+        run_to_conversation: Arc::new(
+            crate::agent_runtime::conversations::RunToConversation::new(),
+        ),
     });
     (deps, dir)
 }

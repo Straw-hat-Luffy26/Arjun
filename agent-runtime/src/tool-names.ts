@@ -58,6 +58,7 @@ export const CANONICAL_TOOL_NAMES = [
   "capability.search",
   "agent.delegate_readonly",
   "sovereignty.get_evidence",
+  "document.read_pages",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];

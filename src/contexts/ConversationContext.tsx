@@ -305,6 +305,41 @@ export class RunReducer {
     this.pushProgress(input);
   }
 
+  /**
+   * Records the server's run id, and tells the rest of the app about it.
+   *
+   * ## Why publishing it matters more than holding it
+   *
+   * Two ids name a turn. The caller mints a correlation id before the request
+   * goes out, because it needs *something* to route events by while the run is
+   * being created; the server then mints the run's real id, which is what the
+   * task record, the audit trail, the event stream and the runtime's own table
+   * of live runs are all keyed by.
+   *
+   * This reducer has always learned the real one and always kept it to itself.
+   * Everything outside went on holding the correlation id, and three things
+   * that address a run by id were therefore addressing one that did not exist:
+   *
+   * - **Stop.** The composer sent the correlation id to `agent_abort_run`. The
+   *   core found no such run, the runtime found no such run, and the call
+   *   returned `false` — a stop that did nothing at all, silently, while the
+   *   model carried on using the machine.
+   * - **The context meter.** It subscribes to `context_ledger` events filtered
+   *   by run id. None ever matched, so the meter read "No context yet" for the
+   *   whole of every run and only filled in once the run had finished.
+   * - **Reattachment.** A window following the active run followed an id
+   *   nothing would ever emit under.
+   *
+   * Called from both places that can learn the id — `plan_ready`, and the first
+   * message event from a model fast enough to beat it — so there is one path
+   * that records it and one path that announces it.
+   */
+  private learnRunId(runId: string): void {
+    if (this.actualRunId === runId) return;
+    this.actualRunId = runId;
+    this.registry.publishRunId(this.messageId, runId);
+  }
+
   /** Folds one progress event in and publishes the new list. */
   private pushProgress(input: ProgressInput): void {
     const next = applyProgress(this.progress, input, Date.now());
@@ -401,7 +436,7 @@ export class RunReducer {
     // server's run id, by echoing back the correlation id the caller sent.
     if (event.type === 'plan_ready') {
       if (event.correlationId === this.runId) {
-        this.actualRunId = envelope.runId;
+        this.learnRunId(envelope.runId);
         return true;
       }
       return this.actualRunId !== null && envelope.runId === this.actualRunId;
@@ -437,7 +472,7 @@ export class RunReducer {
       matchesMessage &&
       envelope.runId !== this.runId
     ) {
-      this.actualRunId = envelope.runId;
+      this.learnRunId(envelope.runId);
     }
 
     if (isProgressEvent(event)) {
@@ -601,6 +636,16 @@ export class RunReducerRegistry {
       onReasoning?: (messageId: string, reasoning: LiveReasoning) => void;
       onProgress: (messageId: string, steps: ProgressStep[]) => void;
       onConversation: (next: Conversation) => void;
+      /**
+       * The server's own id for the run streaming into `messageId`.
+       *
+       * Optional for the same reason `onReasoning` is: a consumer that renders
+       * finished conversations has no live run to address. Everything that
+       * *does* address one — Stop, the context meter, reattachment — needs
+       * this, because the id it otherwise holds is the caller's correlation id
+       * and nothing on the other side has heard of it.
+       */
+      onRunId?: (messageId: string, runId: string) => void;
       onRunDone: (reducer: RunReducer) => void;
     },
   ) {}
@@ -672,6 +717,10 @@ export class RunReducerRegistry {
 
   publishReasoning(messageId: string, reasoning: LiveReasoning): void {
     this.publish.onReasoning?.(messageId, reasoning);
+  }
+
+  publishRunId(messageId: string, runId: string): void {
+    this.publish.onRunId?.(messageId, runId);
   }
 
   publishProgress(messageId: string, steps: ProgressStep[]): void {
@@ -890,6 +939,25 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
    */
   const sendingRef = useRef(false);
 
+  /**
+   * The assistant cell currently streaming, readable synchronously.
+   *
+   * `activeMessageId` lives in React state and is a render behind, and the
+   * registry callback below has to answer "is this the run the surface is
+   * showing?" the moment an event arrives. Two runs can be registered at once —
+   * the composer's lock stops a second *send*, not a run adopted from
+   * elsewhere — so without this check the second run's id would land in
+   * `activeRunId` and Stop would abort the wrong turn.
+   *
+   * Written through {@link setActiveCell}, which sets both halves at once so
+   * they cannot drift.
+   */
+  const activeMessageIdRef = useRef<string | null>(null);
+  const setActiveCell = useCallback((messageId: string | null) => {
+    activeMessageIdRef.current = messageId;
+    setActiveMessageId(messageId);
+  }, []);
+
   // The registry holds the per-run reducers and the shared event
   // subscription. The set of callbacks it calls is stable for the
   // lifetime of the provider.
@@ -920,11 +988,22 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
       onConversation: (next) => {
         setConversation(next);
       },
+      // The correlation id gives way to the run's own, the moment there is one.
+      //
+      // Only for the cell the surface is actually showing: a second run in
+      // flight has its own id and its own cell, and letting it overwrite this
+      // would point Stop at the wrong turn. Read from a ref rather than from
+      // state because this fires between renders.
+      onRunId: (messageId, runId) => {
+        if (activeMessageIdRef.current !== messageId) return;
+        setActiveRunId(runId);
+      },
       onRunDone: () => {
         // The reducer handles its own teardown. We just mark the run
         // as no longer streaming if no other runs are active.
         if (registryRef.current && registryRef.current.values().next().done) {
           setIsStreaming(false);
+          activeMessageIdRef.current = null;
           setActiveMessageId(null);
           setActiveRunId(null);
         }
@@ -1094,7 +1173,7 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
         await refresh().catch(() => undefined);
 
         setIsStreaming(true);
-        setActiveMessageId(cellId);
+        setActiveCell(cellId);
         setActiveRunId(runId);
 
         // Each run gets its OWN reducer. Two concurrent runs would each
@@ -1141,7 +1220,7 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
         // now. Null when the failure happened before it was registered.
         unregister?.();
         setIsStreaming(false);
-        setActiveMessageId(null);
+        setActiveCell(null);
         setActiveRunId(null);
 
         if (failure && conv && runId && messageId) {
@@ -1250,7 +1329,7 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
       if (next) setConversation(next);
       await refresh();
       setIsStreaming(false);
-      setActiveMessageId(null);
+      setActiveCell(null);
       setActiveRunId(null);
     },
     [conversation, activeMessageId, activeRunId, refresh],

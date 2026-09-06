@@ -36,6 +36,16 @@ import styles from './ChatSurface.module.css';
  */
 const MAX_COMPOSER_HEIGHT = 220;
 
+/**
+ * How long a Stop waits to be acknowledged before it says it cannot be.
+ *
+ * The same fifteen seconds the run inspector allows, and for the same reason:
+ * a turn stopped mid-tool finishes the tool first, and that is legitimately
+ * slow. Past this the button gives up waiting and says so, rather than sitting
+ * disabled for ever on a turn that never reported an ending.
+ */
+const STOP_ACKNOWLEDGEMENT_TIMEOUT_MS = 15_000;
+
 export interface ChatComposerProps {
   /** True while a run is in flight; the send button becomes stop. */
   streaming?: boolean;
@@ -170,17 +180,69 @@ export function ChatComposer({
     }
   }, [canSubmit, prompt, attachments, onSubmit]);
 
+  /**
+   * Ask the turn to stop, and wait for it to actually stop.
+   *
+   * ## Requested is not terminated
+   *
+   * `agent_abort_run` resolving means the request reached something, not that
+   * the turn has ended. A turn stopped mid-tool finishes the tool first; a
+   * turn stopped during OCR unwinds through several awaits. Clearing the
+   * button the instant the call returned therefore reported a stop while the
+   * machine was still working — the same lie, one layer up, as an abort that
+   * never reached anything.
+   *
+   * So the button stays in its stopping state until the turn's *own* state
+   * says it is over. The first effect below is that acknowledgement; the
+   * second bounds the wait so it cannot sit there for ever.
+   */
   const stop = useCallback(async () => {
     if (!activeRunId || stopping) return;
     setStopping(true);
+    setRefusal(null);
     try {
-      await agentService.abort(activeRunId);
+      const outcome = await agentService.abort(activeRunId);
+      if (!outcome.requested) {
+        // The id named nothing: the turn ended between the render and the
+        // click. An ordinary race — nothing left to wait for, and nothing
+        // worth reporting.
+        setStopping(false);
+      }
     } catch (err) {
-      setRefusal(err instanceof Error ? err.message : String(err));
-    } finally {
       setStopping(false);
+      setRefusal(
+        `The stop could not be sent: ${
+          err instanceof Error ? err.message : String(err)
+        }. The run is still going.`,
+      );
     }
   }, [activeRunId, stopping]);
+
+  // The acknowledgement: the turn itself reporting that it is over.
+  //
+  // `streaming` goes false when the run reaches a terminal state, which is the
+  // only thing that can honestly clear a Stop. Watched rather than assumed.
+  useEffect(() => {
+    if (!streaming) setStopping(false);
+  }, [streaming]);
+
+  // A stop that is never acknowledged is reported, not waited on for ever.
+  //
+  // Otherwise the button sits disabled reading 'Stopping' with no way back,
+  // which tells a person less than saying plainly that the request went out
+  // and nothing came back.
+  useEffect(() => {
+    if (!stopping) return;
+    const timer = window.setTimeout(() => {
+      setStopping(false);
+      setRefusal(
+        'Stop was sent, but the turn has not reported that it ended. It may ' +
+          'still be finishing the step it was on. Nothing here can confirm it ' +
+          'has stopped.',
+      );
+    }, STOP_ACKNOWLEDGEMENT_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [stopping]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -322,23 +384,32 @@ export function ChatComposer({
             />
             <div className={styles.composerRight}>
               <ContextChip />
-              {/* Mid-run the button is a stop — until the user types, at
-                * which point it becomes the way to queue what they wrote.
-                * Without this, a queued message would be reachable only by
-                * pressing Enter. */}
-              {streaming && !hasContent ? (
+              {/* Stop is shown for the whole of a run, draft or no draft.
+                *
+                * It used to be `streaming && !hasContent`, so typing a
+                * follow-up *replaced* Stop with Send — and typing a follow-up
+                * is exactly what somebody does while waiting for a turn they
+                * are about to give up on. The only way back to Stop was to
+                * delete what they had written.
+                *
+                * Both are shown now: Stop ends the turn in flight, Send
+                * queues the draft for when it is over. Two buttons for two
+                * actions, rather than one button that silently changes which
+                * of them it is. */}
+              {streaming && (
                 <button
                   type="button"
                   className={styles.stopBtn}
                   onClick={() => void stop()}
                   disabled={stopping}
-                  aria-label="Stop generating"
-                  title="Stop generating"
+                  aria-label={stopping ? 'Stopping' : 'Stop generating'}
+                  title={stopping ? 'Stopping…' : 'Stop generating'}
                 >
                   <Square size={12} />
-                  <span>Stop</span>
+                  <span>{stopping ? 'Stopping…' : 'Stop'}</span>
                 </button>
-              ) : (
+              )}
+              {(!streaming || hasContent) && (
                 <button
                   type="button"
                   className={styles.sendBtn}

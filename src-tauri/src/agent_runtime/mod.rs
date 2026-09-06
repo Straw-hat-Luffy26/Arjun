@@ -32,8 +32,10 @@
 pub mod approval;
 pub mod artifacts;
 pub mod audit_health;
+pub mod cancellation;
 pub mod completion;
 pub mod conversations;
+pub mod documents;
 pub mod events;
 pub mod grants;
 pub mod memory;
@@ -47,6 +49,7 @@ pub mod retrieval;
 pub mod stages;
 pub mod tasks;
 pub mod tool_policy;
+pub mod turn_context;
 pub mod workspace;
 
 use std::collections::HashMap;
@@ -225,6 +228,21 @@ pub struct RuntimeDeps {
     ///
     /// See [`audit_health`].
     pub audit_health: Arc<audit_health::AuditHealth>,
+    /// Everything the OCR models have read, kept past the turn that read it.
+    ///
+    /// Backs `document.read_pages`. Held here rather than reached for because a
+    /// read is scoped by the signed-in owner and the conversation the document
+    /// was attached to, and `LocalToolRunner` — which is rebuilt per call — knows
+    /// neither. See [`documents`].
+    pub documents: Arc<documents::DocumentStore>,
+    /// Which conversation each live run belongs to.
+    ///
+    /// The second half of the scope above. A run knows its own id; the
+    /// document store answers questions about a *conversation*, and this is
+    /// what turns one into the other. A run that is not in the table can read
+    /// nothing, which is the safe direction: without a conversation there is no
+    /// scope to check a document against.
+    pub run_to_conversation: Arc<conversations::RunToConversation>,
 }
 
 impl RuntimeDeps {
@@ -1684,6 +1702,10 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         ToolName::ValidateArtifact => {
             validate(deps, &call.run_id, resolved_path.as_deref(), &session, &tool_call).await
         }
+        // Served here rather than by `LocalToolRunner` for the same reason
+        // memory is: the answer depends on who is asking and which conversation
+        // they are in, and the runner is rebuilt per call holding neither.
+        ToolName::ReadAttachedPages => read_attached_pages(deps, &call, &session, &tool_call),
         _ => {
             // Built with everything the run has, rather than with the index
             // alone.
@@ -2037,6 +2059,123 @@ fn render_capabilities(value: &Value) -> String {
     out
 }
 
+/// Reads pages of a document attached to this run's conversation.
+///
+/// ## What this is for
+///
+/// The OCR budget decides how much of an attachment fits the window, and a
+/// large document enters in part or not at all. Every page is stored as it is
+/// read — see [`documents`] — and this is the only way back to the rest. Before
+/// it existed, the pages the budget dropped were gone the moment the prompt
+/// was composed, and the conversation could not recover them either: an
+/// assistant's earlier answers contain what the model chose to write about the
+/// pages it was shown, which by construction excludes the pages it was not.
+///
+/// ## The two things that scope it
+///
+/// **Who** comes from the session, never from the arguments. A model that could
+/// name an owner could read another person's attachment by asking for it.
+///
+/// **Which conversation** comes from the run-to-conversation index, keyed by
+/// this run's own id. A run whose conversation is not in the table reads
+/// nothing, which is the safe direction: with no conversation there is no scope
+/// to check a document against, and an unscoped read of a content-addressed
+/// store is a read of every document on the machine.
+///
+/// Both are enforced inside [`documents::DocumentStore`], which returns the same
+/// sentence for "no such document" as for "not yours" — so a refusal cannot be
+/// used to discover what somebody else has attached.
+fn read_attached_pages(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let sha256 = tool_call.text("documentSha256").unwrap_or_default();
+    if sha256.is_empty() {
+        return Err(
+            "documentSha256 is required. It is the id on the <attachment> tag of the document you \
+             want to read."
+                .to_string(),
+        );
+    }
+    let from_page = tool_call.integer("fromPage").unwrap_or(1);
+    // A single page is the common case, and asking for it should not require
+    // saying the same number twice.
+    let to_page = tool_call.integer("toPage").unwrap_or(from_page);
+
+    let Some(conversation_id) = deps.run_to_conversation.lookup(&call.run_id) else {
+        return Err(
+            "This run is not attached to a conversation, so it cannot read a conversation's \
+             documents."
+                .to_string(),
+        );
+    };
+
+    let read = deps.documents.pages(
+        &sha256,
+        &session.user.id,
+        Some(&conversation_id),
+        from_page,
+        to_page,
+    )?;
+
+    Ok(render_pages(&read))
+}
+
+/// Turns a page read into the prose the model reads.
+///
+/// Says what was found *and* what was not, on separate lines. A range that
+/// silently returns four pages when five were asked for tells the model nothing
+/// about the fifth — and "this page is blank" and "nobody could read this page"
+/// lead to opposite conclusions about whether a clause exists.
+fn render_pages(read: &documents::PageRead) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{} — pages {}-{} of {}",
+        read.name, read.from_page, read.to_page, read.pages
+    );
+    for page in &read.found {
+        let _ = write!(out, "\n--- page {} of {} ---\n{}\n", page.page, read.pages, page.text);
+    }
+    if read.found.is_empty() {
+        out.push_str("\nNo text was stored for any page in this range.\n");
+    }
+    if !read.unread.is_empty() {
+        let listed = read
+            .unread
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = write!(
+            out,
+            "\nNot returned: page(s) {listed}. These pages have no stored text, or this call \
+             reached its size limit before them. Do not describe or quote a page that was not \
+             returned; ask for it in a narrower range, or say it could not be read.\n"
+        );
+    }
+    // Two different truncations, with two different remedies, so they are two
+    // different sentences. Telling a model that a complete document was cut
+    // short at extraction time — because *this call* hit its own size ceiling —
+    // is false, and it withholds the one recovery that would have worked.
+    if read.truncated {
+        out.push_str(
+            "\nThis call reached its size limit before the end of the range. Ask for a narrower \
+             range to see the rest.\n",
+        );
+    }
+    if read.source_truncated {
+        out.push_str(
+            "\nThis document was cut short when it was first read, so pages beyond that point may \
+             not exist in the store at all. No narrower range will find them.\n",
+        );
+    }
+    out
+}
+
 /// Turns a memory result into the prose the model reads.
 ///
 /// Written here rather than in [`memory_api`] because that module answers an
@@ -2086,6 +2225,9 @@ pub fn catalogue() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod conversations_tests;
+
+#[cfg(test)]
+mod journey_tests;
 #[cfg(test)]
 mod memory_boundary_tests;
 #[cfg(test)]

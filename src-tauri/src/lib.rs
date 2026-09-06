@@ -414,6 +414,49 @@ pub fn run() {
             app.manage(commands::conversations::ConversationsState(conversation_store));
             app.manage(commands::conversations::RunToConversationState(run_to_conversation));
 
+            // What the OCR models read, kept past the turn that read it.
+            //
+            // Opened beside the conversations because it is scoped the same way
+            // — by owner, and by the conversation a document was attached to —
+            // and because a chat turn writes to both.
+            //
+            // A store that will not open falls back to a session-unique scratch
+            // directory, for the same reason the conversation store does: the
+            // failure it prevents is a run refusing to answer at all because a
+            // cache directory is unwritable. What is lost is retrieval of pages
+            // *after* this session; the truncation markers in the prompt still
+            // say what did and did not enter the turn, so nothing is claimed
+            // that is not true.
+            let extraction_store = match agent_runtime::documents::DocumentStore::open(&data_dir) {
+                Ok(store) => store,
+                Err(error) => {
+                    log::error!(
+                        "[DOCUMENTS] the extraction store could not be opened, so pages left out \
+                         of a turn cannot be retrieved after this session: {error}"
+                    );
+                    let scratch = std::env::temp_dir().join(format!(
+                        "arjun-extractions-ephemeral-{}-{}",
+                        std::process::id(),
+                        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+                    ));
+                    agent_runtime::documents::DocumentStore::open(&scratch)
+                        .expect("a scratch extraction store must open")
+                }
+            };
+            app.manage(commands::agent::DocumentsState(std::sync::Arc::new(
+                extraction_store,
+            )));
+
+            // Every turn that can currently be stopped.
+            //
+            // Managed rather than built per command because Stop arrives on a
+            // different command from the one doing the work: `agent_abort_run`
+            // has to reach the token `agent_start_run` registered. See
+            // `agent_runtime::cancellation`.
+            app.manage(commands::agent::CancellationsState(std::sync::Arc::new(
+                agent_runtime::cancellation::RunCancellations::new(),
+            )));
+
             // The durable half of all of the above. Everything managed just
             // now dies with this process; this is what a run leaves behind
             // while it is still going, and it is opened before any command can
@@ -916,6 +959,8 @@ pub fn run() {
             commands::knowledge::knowledge_search,
             commands::knowledge::knowledge_health,
             commands::agent::agent_steer_run,
+            commands::agent::agent_pin_context,
+            commands::agent::agent_task_context,
             commands::agent::agent_runtime_health,
             // What those runs left behind: the plan, the evidence, the working
             // and the files.

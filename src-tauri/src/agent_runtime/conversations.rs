@@ -189,6 +189,28 @@ pub struct Conversation {
     /// Number of compactions across all runs in this conversation, summed.
     /// Surfaced in the context chip.
     pub compactions: u32,
+    /// Context entries the owner has asked to keep, by ledger entity id.
+    ///
+    /// ## Why a pin belongs to the conversation and not to the run
+    ///
+    /// A pin is a person saying "the rest of this task depends on that". Tasks
+    /// span turns, and a run is one turn — so a pin held only by the run in
+    /// flight is forgotten the moment that run ends, and the next question
+    /// about the same drawing starts unprotected. Somebody who pinned once and
+    /// asked five follow-ups would have been protected for the first and
+    /// nothing after it, with the panel showing the pin the whole time.
+    ///
+    /// Held here, it is loaded at the start of every turn and sent to the
+    /// runtime with the run, so the compactor honours it from the first model
+    /// call rather than from whenever a note happens to arrive.
+    ///
+    /// Owner-scoped by the store, like everything else in this file: the read
+    /// that returns this applies the same filter, so one person cannot see or
+    /// set another's pins.
+    ///
+    /// Absent in files written before this existed, which read as no pins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_context: Vec<String>,
 }
 
 /// The on-disk envelope. Carries a schema version so an older client can
@@ -239,6 +261,13 @@ const SCHEMA_VERSION: u32 = 2;
 /// pre-TODO-2 files; new conversations always get the real
 /// session user id.
 pub const LEGACY_OWNER_ID: &str = "modeladmin";
+
+/// The most context entries one conversation may hold pinned.
+///
+/// A person cannot press a hundred pins; a loop in a caller could, and the list
+/// is read back and sent across the wire on every turn for the life of the
+/// thread. Sixty-four is comfortably more rows than the meter ever draws.
+pub const MAX_PINNED_CONTEXT: usize = 64;
 
 /// Where the conversations live on disk.
 pub struct ConversationStore {
@@ -355,6 +384,9 @@ impl ConversationStore {
                         messages: v1.conversation.messages,
                         runs: v1.conversation.runs,
                         compactions: v1.conversation.compactions,
+                        // No file old enough to be v1 can carry pins: the
+                        // control did not reach the runtime until long after.
+                        pinned_context: Vec::new(),
                     },
                 })
             }
@@ -501,6 +533,9 @@ impl ConversationStore {
             messages: vec![welcome],
             runs: Vec::new(),
             compactions: 0,
+            // A new thread protects nothing, because nothing has been said in
+            // it yet. Pins are added by the person, one row at a time.
+            pinned_context: Vec::new(),
         };
         self.save(&conversation)?;
         Ok(conversation)
@@ -602,6 +637,148 @@ impl ConversationStore {
             msg.content = content.to_string();
         }
         conversation.last_activity_at = chrono::Utc::now().to_rfc3339();
+        self.save(&conversation)?;
+        Ok(Some(conversation))
+    }
+
+    /// Records which context entries this conversation's owner wants kept.
+    ///
+    /// The whole set replaces what was held, because unpinning matters as much
+    /// as pinning: a call that could only add would make this a decision nobody
+    /// could take back.
+    ///
+    /// Owner-filtered like every other write here — a request from anybody else
+    /// returns `Ok(None)`, indistinguishable from an unknown conversation.
+    ///
+    /// Bounded, and the bound is enforced here rather than only at the command,
+    /// because this is the boundary that owns the file: a list nothing caps is
+    /// how a conversation grows a megabyte of pins that every later turn reads
+    /// back and sends across the wire.
+    pub fn set_pinned_context(
+        &self,
+        id: &str,
+        pinned: &[String],
+        owner_user_id: &str,
+    ) -> std::io::Result<Option<Conversation>> {
+        let Some(mut conversation) = self.get(id, Some(owner_user_id))? else {
+            return Ok(None);
+        };
+        let mut next: Vec<String> = Vec::new();
+        for entry in pinned {
+            let trimmed = entry.trim();
+            // An empty id would match every message in `pruneStaleToolResults`,
+            // which is how one blank string silently protects a whole run's
+            // context and fills the window. Dropped here so nothing downstream
+            // has to know that.
+            if trimmed.is_empty() || next.iter().any(|held| held == trimmed) {
+                continue;
+            }
+            if next.len() >= MAX_PINNED_CONTEXT {
+                break;
+            }
+            next.push(trimmed.to_string());
+        }
+        if conversation.pinned_context == next {
+            // Nothing changed, and a rewrite that changes nothing still
+            // rewrites the file. Pins are toggled by hand, so this is the
+            // common case for a second press that lands on the same state.
+            return Ok(Some(conversation));
+        }
+        conversation.pinned_context = next;
+        // Deliberately not touching `last_activity_at`: pinning is a decision
+        // about a conversation, not activity in it, and reordering somebody's
+        // sidebar because they pressed a pin would be a surprise.
+        self.save(&conversation)?;
+        Ok(Some(conversation))
+    }
+
+    /// The entries this conversation's owner has asked to keep.
+    ///
+    /// An unknown conversation, or one belonging to somebody else, holds no
+    /// pins as far as the caller is concerned — the same answer, so a caller
+    /// cannot learn that a conversation exists by asking what is pinned in it.
+    pub fn pinned_context(
+        &self,
+        id: &str,
+        owner_user_id: &str,
+    ) -> std::io::Result<Vec<String>> {
+        Ok(self
+            .get(id, Some(owner_user_id))?
+            .map(|conversation| conversation.pinned_context)
+            .unwrap_or_default())
+    }
+
+    /// Corrects a reserved turn's run id to the one the runtime actually minted.
+    ///
+    /// ## Why this happens at the start of a run and not only at the end
+    ///
+    /// The chat surface reserves the cell before the run exists, so it has to
+    /// invent an id for it — a correlation id, which is all it can know at that
+    /// point. `append_user_turn` files the [`RunMeta`] under that invented id.
+    /// The runtime then mints its own, and *that* is the id the task record, the
+    /// audit trail, the event stream and the context ledger are all filed under.
+    ///
+    /// [`Self::record_message_completion`] already corrected this — but only
+    /// when the run *finished*, which is the one moment the correction is worth
+    /// nothing. Everything that reads the id reads it while the run is going:
+    ///
+    ///  - the context meter subscribes to `context_ledger` events filtered by
+    ///    run id, so it matched nothing and read "No context yet" for the whole
+    ///    of every run;
+    ///  - the composer's Stop button sends the id it finds here, so the abort
+    ///    named a run neither the core nor the runtime had ever heard of and
+    ///    returned "not running" — a stop that silently did nothing;
+    ///  - a window that reloads mid-run resolves the live run from this list,
+    ///    and reattached to an id that addresses no run.
+    ///
+    /// So it is written the moment the run has an id. The completion-time
+    /// correction stays, because a run that dies before reaching this still has
+    /// to end up reconciled.
+    ///
+    /// Matched on `message_id`, which is the one identifier both sides agree on
+    /// from the beginning: the surface reserves it, the runtime is handed it,
+    /// and every streaming event carries it. Returns `Ok(None)` for an unknown
+    /// conversation or a non-owner, the same shape as everything else here.
+    pub fn bind_run(
+        &self,
+        id: &str,
+        message_id: &str,
+        run_id: &str,
+        owner_user_id: &str,
+    ) -> std::io::Result<Option<Conversation>> {
+        let Some(mut conversation) = self.get(id, Some(owner_user_id))? else {
+            return Ok(None);
+        };
+        let mut changed = false;
+        if let Some(run) = conversation
+            .runs
+            .iter_mut()
+            .find(|r| r.message_id == message_id)
+        {
+            if run.run_id != run_id {
+                run.run_id = run_id.to_string();
+                changed = true;
+            }
+        }
+        // The assistant row carries the run id too, and the inspector opens from
+        // it. Left alone it would name the correlation id for the life of the
+        // conversation, so "View details" on a finished turn would open nothing.
+        if let Some(msg) = conversation
+            .messages
+            .iter_mut()
+            .find(|m| m.id == message_id && m.role == MessageRole::Assistant)
+        {
+            if msg.run_id.as_deref() != Some(run_id) {
+                msg.run_id = Some(run_id.to_string());
+                changed = true;
+            }
+        }
+        // A rewrite that changes nothing is still a rewrite of the file, and
+        // this runs on the hot path of every turn. Nothing to correct is the
+        // ordinary case for every caller that did not reserve its own cell.
+        if !changed {
+            return Ok(Some(conversation));
+        }
         self.save(&conversation)?;
         Ok(Some(conversation))
     }

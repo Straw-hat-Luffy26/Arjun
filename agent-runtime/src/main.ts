@@ -104,6 +104,18 @@ function main(): void {
         { code: ErrorCode.BadParams },
       );
     }
+    // `history` is optional — a first turn has none — but if it is sent it has
+    // to be a list. A caller that sent an object, or a string, would otherwise
+    // reach `seedMessages`, produce nothing, and start a conversation with no
+    // memory while reporting success. That is the exact failure this field
+    // exists to remove, so it is refused loudly here rather than degraded
+    // quietly there. The *contents* are validated per entry in `seedMessages`,
+    // which drops what it does not understand.
+    if (request.history !== undefined && !Array.isArray(request.history)) {
+      throw Object.assign(new Error("run.start history must be an array when present"), {
+        code: ErrorCode.BadParams,
+      });
+    }
     try {
       return await startRun(peer, request, (run) => active.set(request.runId, run));
     } finally {

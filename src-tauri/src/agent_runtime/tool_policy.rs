@@ -172,7 +172,10 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::ValidateArtifact
         | ToolName::CapabilitySearch
         | ToolName::SovereigntyGetEvidence
-        | ToolName::KnowledgeMultimodalRetrieve => ToolClass::ReadOnly,
+        | ToolName::KnowledgeMultimodalRetrieve
+        // Reads back a file the asker attached to this conversation, from a
+        // store this machine wrote. It changes nothing and reaches nothing.
+        | ToolName::ReadAttachedPages => ToolClass::ReadOnly,
 
         // Deterministic arithmetic recorded in the run's own calculation table.
         // It changes state this process owns and can discard, and it reaches

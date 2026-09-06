@@ -196,6 +196,42 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
 
   {
+    name: "document.read_pages",
+    label: "Read more of an attached document",
+    readOnly: true,
+    description:
+      "Reads a page range of a document attached to THIS conversation, by the id on its " +
+      "<attachment> tag. " +
+      "Use it whenever an attachment says only part of it was included, or that none of it was, " +
+      "or when you need a page you have not been shown — including pages of a document attached " +
+      "in an earlier turn. Every page of every attachment was read and stored before this turn " +
+      "started, so a page missing from the prompt is not a page that is unavailable. " +
+      "Do not use it for documents from the knowledge base: those are reached with " +
+      "knowledge.load_evidence_region. This one reads only what the person attached to this " +
+      "conversation. " +
+      "Effects: none. It reads a store on this machine, uses no model, and touches no network. " +
+      "Limits: at most 10 pages per call; a wider range is refused rather than quietly trimmed, " +
+      "so you always know what you did and did not get. A long range may also stop early on size, " +
+      "and says which pages it did not return. " +
+      "If it reports a page as not returned: ask for it in a narrower range, or say plainly that " +
+      "it could not be read. Never describe or quote a page that was not returned to you.",
+    parameters: closed({
+      documentSha256: Type.String({
+        description:
+          "The id on the document's <attachment> tag in this conversation. Not a file name.",
+        minLength: 1,
+      }),
+      fromPage: Type.Integer({ minimum: 1, description: "First page to read, inclusive." }),
+      toPage: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "Last page to read, inclusive. Defaults to fromPage. At most 10 pages.",
+        }),
+      ),
+    }),
+  },
+
+  {
     name: "knowledge.multimodal_retrieve",
     label: "Search text, image regions, and tables",
     readOnly: true,

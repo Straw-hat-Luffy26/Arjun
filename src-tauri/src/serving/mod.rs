@@ -110,6 +110,23 @@ pub struct Endpoint {
     pub managed: bool,
     /// Which runtime is behind it, for the trace and the UI.
     pub runtime: Runtime,
+    /// The context window this server was **actually started with**, in tokens.
+    ///
+    /// Not the model's trained window, and the difference is not academic: a
+    /// registry entry declaring 32 768 is routinely served at 8 192, because
+    /// [`crate::ai_engine::vram_planner`] buys GPU layers by walking the
+    /// context ladder down. Every budget in the product was computed against
+    /// the declared figure, so a turn could be assembled to 8 590 tokens, sent
+    /// to a server holding 8 192, and refused with
+    /// `400 ... exceeds the available context size`.
+    ///
+    /// `None` means nobody here knows — an external server ARJUN did not start
+    /// and could not ask. A caller must read that as "unknown", never as
+    /// "unlimited": see [`crate::serving::probe::served_context_tokens`], which
+    /// asks the server directly, and `commands::agent`, which falls back to the
+    /// declared window only when both are silent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -378,11 +395,18 @@ impl ModelServers {
                         base_url,
                     });
                 }
+                // Asked, not assumed. An operator's vLLM or llama-server may
+                // have been started with any window at all, and this is the
+                // only moment ARJUN can find out which. A server that does not
+                // answer leaves this `None`, which downstream reads as
+                // "unknown" rather than as the declared figure.
+                let context_tokens = probe::served_context_tokens(&base_url).await;
                 Ok(Endpoint {
                     base_url,
                     served_model_id: entry.id.clone(),
                     managed: false,
                     runtime: entry.runtime,
+                    context_tokens,
                 })
             }
             ServingSpec::Managed => self.managed_endpoint(entry, models_dir, gpu).await,
@@ -600,6 +624,12 @@ impl ModelServers {
             served_model_id: plan.served_model_id,
             managed: true,
             runtime: entry.runtime,
+            // The same number that is on the command line two dozen lines up.
+            // Taken from the plan rather than from the entry for the reason
+            // `GpuOffloadPlan::context_length` gives: these are one decision,
+            // and letting them disagree is what produced a turn budgeted for a
+            // window the server was never given.
+            context_tokens: Some(gpu.context_length),
         };
 
         let ready = Arc::new(AtomicBool::new(false));

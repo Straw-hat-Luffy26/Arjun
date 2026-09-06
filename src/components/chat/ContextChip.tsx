@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Database, Pin, X } from 'lucide-react';
 import { useContextLedger } from '../run/runAdopt';
 import { useConversation } from '../run/useConversation';
@@ -14,7 +14,7 @@ import {
   hasUnmeasuredTurns,
   type EntityRow,
 } from '../run/context-entities';
-import type { CompactionRecord } from '../../services/agent.service';
+import { agentService, type CompactionRecord } from '../../services/agent.service';
 import styles from './ChatSurface.module.css';
 
 /**
@@ -45,23 +45,64 @@ function tokenLabel(row: EntityRow): string {
  *  - **critical** (≥ 90%) — red
  */
 export function ContextChip() {
-  const { conversation, activeRunId } = useConversation();
+  const { conversation, activeRunId, activeMessageId } = useConversation();
   const latestRunId = useMemo(() => {
     if (activeRunId) return activeRunId;
     if (!conversation || conversation.runs.length === 0) return null;
     return conversation.runs[conversation.runs.length - 1].runId;
   }, [activeRunId, conversation]);
 
-  const { ledger, compactions, attachments } = useContextLedger(latestRunId);
+  // Two identities, because a turn has two. `latestRunId` moves from the
+  // composer's correlation id to the run's own the moment `plan_ready` lands;
+  // `activeMessageId` is reserved before the turn starts and never changes. The
+  // ledger belongs to the run and the attachment costs belong to the turn — see
+  // `useContextLedger`, where the split is explained.
+  const { ledger, compactions, attachments, status, error } = useContextLedger(
+    latestRunId,
+    activeMessageId,
+  );
   const [open, setOpen] = useState(false);
   /**
    * Rows the person has protected from eviction.
    *
-   * Held here rather than on the ledger because the ledger is rebuilt from the
-   * runtime on every turn, and a pin has to outlive that. The set is passed
-   * down into the rows below so the "what goes first" line accounts for it.
+   * Mirrors what the conversation holds: the pins are persisted by
+   * `agent_pin_context` and read back below, and this is the copy the panel
+   * draws from so a press is answered immediately rather than after a round
+   * trip.
    */
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
+
+  /**
+   * The stored pins, re-read whenever the conversation changes.
+   *
+   * Without this a pin survived only as long as the tab stayed open: it was
+   * written to the conversation and never read back, so reopening the thread
+   * showed every row unpinned while the backend went on protecting them. The
+   * panel and the compactor would then disagree about what was being kept, and
+   * the panel is the half a person believes.
+   */
+  const conversationId = conversation?.id ?? null;
+  /**
+   * The stored set as a *value*, not as an array reference.
+   *
+   * `conversation` is replaced on every streaming persist — several times a
+   * second while a turn is running — and each replacement brings a new
+   * `pinnedContext` array with identical contents. An effect depending on that
+   * reference therefore re-ran constantly, and each run called `setPinned` with
+   * the stored set.
+   *
+   * That is not merely wasteful: it fights the person. A pin press is optimistic
+   * — the panel fills the icon immediately and the write goes out — so a reset
+   * landing in the round trip pops the pin back off under their cursor, and
+   * then it fills again when the write returns. Keying on the contents means
+   * the effect fires when the pins actually change and at no other time.
+   */
+  const storedPinKey = JSON.stringify(conversation?.pinnedContext ?? []);
+  useEffect(() => {
+    setPinned(new Set(JSON.parse(storedPinKey) as string[]));
+    // Keyed on the conversation as well, so switching threads resets the set
+    // rather than carrying one conversation's pins into another's panel.
+  }, [conversationId, storedPinKey]);
 
   const rows = useMemo(() => {
     const merged = entityRows(ledger, attachments);
@@ -72,13 +113,76 @@ export function ContextChip() {
   const drift = useMemo(() => driftSummary(ledger), [ledger]);
   const unmeasured = useMemo(() => hasUnmeasuredTurns(ledger), [ledger]);
 
-  const togglePin = (id: string) =>
-    setPinned(current => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  /** Said out loud when a pin was pressed and nothing took it. */
+  const [pinProblem, setPinProblem] = useState<string | null>(null);
+
+  /**
+   * Protect a row from eviction, or stop protecting it.
+   *
+   * ## Why this leaves the component
+   *
+   * It used to be four lines that toggled a `Set` in this file's own state, and
+   * nothing else. The icon darkened, the "what goes first" line moved on to the
+   * next row, and the compactor — which is in another process and had never
+   * heard of any of this — cleared the pinned document on its next pass exactly
+   * as if the button had never been pressed.
+   *
+   * That is the worst shape a control can have. Somebody who pinned the drawing
+   * they were working from, watched the meter fill, and carried on had every
+   * reason to believe the drawing was safe. A control that did nothing at all
+   * would at least have left them looking for another way.
+   *
+   * The local state stays, because the panel has to answer the press
+   * immediately and the round trip is not instant. What is new is that the set
+   * is *sent*, and that a pin the runtime did not take says so rather than
+   * looking exactly like one it did.
+   *
+   * The whole set goes every time, not a delta: unpinning matters as much as
+   * pinning, and a call that could only add would make this a decision nobody
+   * could take back.
+   */
+  const togglePin = (id: string) => {
+    const next = new Set(pinned);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPinned(next);
+    setPinProblem(null);
+
+    // A pin belongs to the conversation, not to whatever run happens to be in
+    // flight, so it is stored even when nothing is running — that is what makes
+    // it survive the turn it was pressed in. The run id is passed too, and is
+    // what decides whether it also takes effect *now*.
+    if (!conversationId) {
+      setPinProblem('There is no conversation open to keep anything in.');
+      return;
+    }
+    void agentService
+      .pinContext(conversationId, activeRunId, [...next])
+      .then(outcome => {
+        if (!outcome.stored) {
+          // The write is the half that matters, so a failure here means the pin
+          // did not happen at all. Rolled back rather than left drawn: a filled
+          // pin over an unprotected row is the lie this control exists to stop
+          // telling.
+          setPinned(pinned);
+          setPinProblem(
+            'That could not be kept — this conversation is not available to ' +
+              'write to. Nothing is being protected.',
+          );
+        }
+        // `appliedToRun === false` is not reported. It means no run was in
+        // flight, which is the ordinary case for a pin pressed between turns,
+        // and the pin is stored and will be honoured by the next one.
+      })
+      .catch((cause: unknown) => {
+        setPinned(pinned);
+        setPinProblem(
+          `That could not be kept: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }. Nothing is being protected.`,
+        );
+      });
+  };
 
   const lastCompaction: CompactionRecord | null =
     compactions.length > 0 ? compactions[compactions.length - 1] : null;
@@ -102,9 +206,21 @@ export function ContextChip() {
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
           title="Context usage"
+          data-state={status === 'failed' ? 'critical' : 'ok'}
         >
           <Database size={11} />
-          <span>No context yet</span>
+          {/* Three states, three labels. They used to be one — "No context
+              yet" — which read the same whether the reading was on its way,
+              genuinely absent, or unreadable. Those call for waiting, sending a
+              message, and reporting a fault respectively, and a person could
+              not tell which they were looking at. */}
+          <span>
+            {status === 'loading'
+              ? 'Reading context…'
+              : status === 'failed'
+                ? 'Context unavailable'
+                : 'No context yet'}
+          </span>
         </button>
         {open && (
           <div className={styles.contextCard} role="dialog" aria-label="Context breakdown">
@@ -119,11 +235,23 @@ export function ContextChip() {
                 <X size={13} />
               </button>
             </div>
-            <p className={styles.contextEmptyNote}>
-              Nothing has been measured yet. The window is itemised from the
-              first model call of a turn, so this fills in once you send a
-              message — and stays filled for the rest of the conversation.
-            </p>
+            {status === 'failed' ? (
+              <p className={styles.contextWillNotFit}>
+                The stored reading for this run could not be read
+                {error ? `: ${error}` : '.'} The run itself is unaffected; this
+                panel cannot say what its window holds.
+              </p>
+            ) : status === 'loading' ? (
+              <p className={styles.contextEmptyNote}>
+                Looking for this run&rsquo;s reading&hellip;
+              </p>
+            ) : (
+              <p className={styles.contextEmptyNote}>
+                Nothing has been measured yet. The window is itemised from the
+                first model call of a turn, so this fills in once you send a
+                message — and stays filled for the rest of the conversation.
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -211,6 +339,10 @@ export function ContextChip() {
             ))}
           {/* The estimate-against-actual line. Absent when no call has reported
               usage, because "drift unknown" is not worth a line. */}
+          {/* A pin that did not land. Loud, because the whole point of the
+              control is that a person can rely on it — and a pin they believe
+              took effect and did not is worse than no pin at all. */}
+          {pinProblem && <p className={styles.contextWillNotFit}>{pinProblem}</p>}
           {drift && <p className={styles.contextCompactionLine}>{drift}</p>}
           {unmeasured && (
             <p className={styles.contextCompactionLine}>

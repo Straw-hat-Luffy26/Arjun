@@ -8,8 +8,9 @@
 //! run is worse than no slider: it reports a configuration nobody is using.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use crate::agent_runtime::cancellation::CancelToken;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -174,6 +175,27 @@ pub struct AttachmentRead {
     pub ocr_model_id: Option<String>,
     /// The slider stop the read actually ran at.
     pub ocr_detent: Option<OcrDetent>,
+    /// The same text, still split by page.
+    ///
+    /// `text` above is the assembled blob the prompt is composed from, and the
+    /// assembly is lossy in the one way that matters here: the page numbers
+    /// survive only as `--- page 7 of 40 ---` headings inside a string, which is
+    /// not something anything downstream can index by.
+    ///
+    /// This is what [`crate::agent_runtime::documents`] stores, so a page the
+    /// budget left out of the prompt can be asked for later by its number. A
+    /// reader with no pages of its own — a spreadsheet, a deck, a text file —
+    /// records its whole output as page 1, which is what its page count says it
+    /// is. Skipped in the wire form: it is a second copy of `text`, it is large,
+    /// and nothing across the boundary reads it.
+    #[serde(skip)]
+    pub page_text: std::collections::BTreeMap<u32, String>,
+    /// True when the reader itself stopped early — a workbook past its row cap.
+    ///
+    /// Distinct from the context budget's truncation, which happens later and
+    /// for a different reason. A document cut by its *reader* is not made whole
+    /// by reading its pages back, and the store carries the difference.
+    pub truncated: bool,
 }
 
 fn attachment_extension(mime: &str) -> Option<&'static str> {
@@ -610,7 +632,20 @@ async fn ocr_one_image(
     name: &str,
     page: u32,
     pages: u32,
+    // The turn's stop signal.
+    //
+    // This used to be a fresh `Arc::new(AtomicBool::new(false))` built at
+    // the call below — a flag nothing else held a reference to and nothing
+    // could ever set. The read loop dutifully tested it on every chunk and
+    // it was false every time, so the code read as though a page could be
+    // stopped while in fact no page ever could.
+    cancel: &crate::agent_runtime::cancellation::CancelToken,
 ) -> Result<String, String> {
+    // Cheap, and first: a turn stopped while an earlier page was decoding
+    // must not start this one. `stream_ocr` checks again, but this also
+    // skips the VRAM admission and the server start below, which are the
+    // slow parts of getting a page read.
+    cancel.check()?;
     let profile = detent.profile();
     let model_id = ocr_model_id(detent);
     let entry = registry
@@ -650,7 +685,7 @@ async fn ocr_one_image(
         &endpoint.served_model_id,
         image,
         &profile,
-        Arc::new(AtomicBool::new(false)),
+        cancel,
         move |event| match event {
             OcrEvent::Text { index, delta } => {
                 if let Ok(mut t) = sink.lock() {
@@ -784,7 +819,12 @@ pub async fn read_attachment(
     attachment: &ChatAttachment,
     detent: OcrDetent,
     tag: &StageTag,
+    cancel: &crate::agent_runtime::cancellation::CancelToken,
 ) -> Result<AttachmentRead, String> {
+    // Before the file is even decoded. Reading a 24 MB base64 blob and hashing
+    // it is not free, and a turn stopped before this one started should spend
+    // none of it.
+    cancel.check()?;
     let bytes = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         &attachment.data_base64,
@@ -817,6 +857,15 @@ pub async fn read_attachment(
     let read_kind: String;
     let mut read_pages: u32 = 1;
     let mut ocr_model: Option<String> = None;
+    // The pages, kept apart from the blob the prompt is composed from.
+    //
+    // Every branch below already has them — a PDF as `by_page`, everything else
+    // as a single blob that is its own page 1. They were being merged into one
+    // string and the numbers thrown away, which is why nothing could ask for
+    // page 31 afterwards. See `AttachmentRead::page_text`.
+    let mut page_text: std::collections::BTreeMap<u32, String> =
+        std::collections::BTreeMap::new();
+    let mut reader_truncated = false;
 
     let text = match kind {
         AttachmentKind::Image(ext) => {
@@ -836,7 +885,7 @@ pub async fn read_attachment(
             );
             read_kind = "image".into();
             ocr_model = Some(ocr_model_id(detent).to_string());
-            ocr_one_image(
+            let read = ocr_one_image(
                 app,
                 registry,
                 servers,
@@ -845,8 +894,14 @@ pub async fn read_attachment(
                 &attachment.name,
                 1,
                 1,
+                cancel,
             )
-            .await?
+            .await?;
+            // An image is one page, and it is page 1. Recorded even when the
+            // model read nothing: the store drops empty pages itself, in one
+            // place, rather than each branch here deciding separately.
+            page_text.insert(1, read.trim().to_string());
+            read
         }
         AttachmentKind::Document(ext) => {
             let stored = base.join(format!("source.{ext}"));
@@ -874,6 +929,12 @@ pub async fn read_attachment(
                     Some(extracted.kind.clone()),
                 );
                 let mut blob = extracted.text;
+                // One blob, so one page — and page 1 is what `pages` reports it
+                // as. Stored before the truncation note is appended, so what is
+                // kept is the reader's output rather than the reader's output
+                // plus a sentence about the reader.
+                page_text.insert(1, blob.trim().to_string());
+                reader_truncated = extracted.truncated;
                 if extracted.truncated {
                     // The spreadsheet and deck readers have always reported
                     // this, and nothing here has ever repeated it: a workbook
@@ -920,6 +981,24 @@ pub async fn read_attachment(
                     // below carry the document's own numbering.
                     let queued = to_read.len() as u32;
                     for (index, detail) in to_read.iter().enumerate() {
+                        // No further page after a Stop.
+                        //
+                        // A forty-page drawing set is forty of these, each
+                        // minutes long, so this is the check that decides
+                        // whether Stop means "in a moment" or "when the whole
+                        // document has been read". The pages already done are
+                        // kept and the rest are listed as unread, which is what
+                        // they are — not blank, which would be a claim about
+                        // the document nobody verified.
+                        if cancel.is_cancelled() {
+                            for remaining in to_read.iter().skip(index) {
+                                unread.push((
+                                    remaining.page,
+                                    "the turn was stopped before this page was read".to_string(),
+                                ));
+                            }
+                            break;
+                        }
                         let Some(image) = detail.image.as_ref() else {
                             unread.push((
                                 detail.page,
@@ -945,6 +1024,7 @@ pub async fn read_attachment(
                             &attachment.name,
                             detail.page,
                             pages,
+                            cancel,
                         )
                         .await?;
                         match settle_ocr_page(&page_text, &detail.layer_text) {
@@ -956,6 +1036,11 @@ pub async fn read_attachment(
                     }
                 }
 
+                // Taken before `assemble_pdf_text` consumes the map. The
+                // assembled blob keeps the page numbers only as headings inside
+                // a string; this keeps them as numbers.
+                reader_truncated = extracted.truncated;
+                page_text.extend(by_page.iter().map(|(page, text)| (*page, text.clone())));
                 assemble_pdf_text(by_page, unread, pages)
             }
         }
@@ -970,6 +1055,8 @@ pub async fn read_attachment(
         pages: read_pages,
         ocr_detent: ocr_model.as_ref().map(|_| detent),
         ocr_model_id: ocr_model,
+        page_text,
+        truncated: reader_truncated,
     })
 }
 
@@ -984,9 +1071,19 @@ pub const fn ocr_model_id(detent: OcrDetent) -> &'static str {
     }
 }
 
-/// Set while a page is being read, so a second call can stop it.
+/// The stop signal for the page the scan view is reading.
+///
+/// Holds a [`CancelToken`] rather than a bare flag, so the wait for the
+/// first byte of a page is interruptible rather than merely pollable — the
+/// same reason the chat path carries one. A boolean can only be *checked*,
+/// and the read spends most of its time blocked on a socket where nothing
+/// checks anything.
+///
+/// Replaced rather than reset at the start of each scan: a token that has
+/// been cancelled stays cancelled, which is the honest shape for a signal,
+/// so a fresh page gets a fresh one.
 #[derive(Default)]
-pub struct ScanCancel(pub Arc<AtomicBool>);
+pub struct ScanCancel(pub Mutex<CancelToken>);
 
 /// What the UI receives on `ocr:span`.
 ///
@@ -1065,10 +1162,18 @@ pub async fn scan_page(
     page: u32,
     detent: OcrDetent,
 ) -> Result<(), String> {
-    let flag = cancel.0.clone();
-    // Cleared here rather than at the end of the previous run: a run that
-    // failed or was dropped must not leave the next one pre-cancelled.
-    flag.store(false, Ordering::Relaxed);
+    // A fresh token here rather than at the end of the previous run: a run
+    // that failed or was dropped must not leave the next one pre-cancelled.
+    let token = CancelToken::never();
+    match cancel.0.lock() {
+        Ok(mut held) => *held = token.clone(),
+        // A poisoned lock costs this scan its Stop button and nothing else.
+        // Refusing to scan at all because an unrelated thread panicked
+        // while holding a token would be the worse trade.
+        Err(_) => log::error!(
+            "[ocr] the scan cancellation slot is poisoned; this page cannot be stopped"
+        ),
+    }
 
     let profile = detent.profile();
     let model_id = match profile.tier {
@@ -1140,7 +1245,7 @@ pub async fn scan_page(
         &endpoint.served_model_id,
         &image,
         &profile,
-        flag.clone(),
+        &token,
         move |event| {
             let payload = match event {
                 OcrEvent::Region { index, label, bbox } => SpanPayload::Region {
@@ -1239,7 +1344,9 @@ pub async fn scan_page(
 /// Stops the page currently being read. Safe to call when nothing is running.
 #[tauri::command]
 pub fn cancel_scan(cancel: State<'_, ScanCancel>) {
-    cancel.0.store(true, Ordering::Relaxed);
+    if let Ok(held) = cancel.0.lock() {
+        held.cancel();
+    }
 }
 
 #[cfg(test)]
@@ -1359,10 +1466,47 @@ mod tests {
 
     #[test]
     fn cancelling_is_sticky_until_the_next_scan_clears_it() {
-        let flag = ScanCancel::default();
-        assert!(!flag.0.load(Ordering::Relaxed));
-        flag.0.store(true, Ordering::Relaxed);
-        assert!(flag.0.load(Ordering::Relaxed));
+        let slot = ScanCancel::default();
+        assert!(!slot.0.lock().unwrap().is_cancelled());
+        slot.0.lock().unwrap().cancel();
+        assert!(slot.0.lock().unwrap().is_cancelled());
+
+        // A fresh scan installs a fresh token, which is what un-cancels the
+        // view — the token itself never goes back to uncancelled.
+        *slot.0.lock().unwrap() = CancelToken::never();
+        assert!(!slot.0.lock().unwrap().is_cancelled());
+    }
+
+    /// A document stopped part-way through says which pages nobody read.
+    ///
+    /// The page loop breaks on cancellation and pushes every remaining page
+    /// onto the unread list, which is what this assembles. The distinction is
+    /// load-bearing: a page nobody looked at is not a blank page, and a model
+    /// shown a document that simply stops answers as though it had read the
+    /// whole thing.
+    #[test]
+    fn a_scan_stopped_midway_names_the_pages_it_did_not_read() {
+        let mut by_page = std::collections::BTreeMap::new();
+        by_page.insert(1, "page one".to_string());
+        by_page.insert(2, "page two".to_string());
+        // Pages 3-5 were never started, as the loop leaves them on a Stop.
+        let unread = vec![
+            (3, "the turn was stopped before this page was read".to_string()),
+            (4, "the turn was stopped before this page was read".to_string()),
+            (5, "the turn was stopped before this page was read".to_string()),
+        ];
+
+        let merged = assemble_pdf_text(by_page, unread, 5);
+
+        assert!(merged.contains("page one"), "what was read is kept: {merged}");
+        assert!(merged.contains("page two"));
+        // And what was not is named, rather than silently absent.
+        assert!(merged.contains("3"), "{merged}");
+        assert!(merged.contains("stopped"), "{merged}");
+        assert!(
+            !merged.contains("page three"),
+            "a page nobody read must not appear as content"
+        );
     }
 
     #[test]
