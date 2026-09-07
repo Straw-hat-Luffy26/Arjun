@@ -130,6 +130,16 @@ async fn through_the_gateway(call: Value, deps: &Arc<RuntimeDeps>) -> Result<Str
     Ok(result["text"].as_str().unwrap_or_default().to_string())
 }
 
+/// The other tool call a model makes: find a passage without knowing its page.
+fn search(query: &str) -> Value {
+    json!({
+        "runId": RUN,
+        "toolCallId": "tc-document-search",
+        "tool": "document.search",
+        "args": { "query": query },
+    })
+}
+
 /// The headline. A fact that reached no answer is still retrievable, by a later
 /// turn, with nothing re-attached.
 #[tokio::test]
@@ -355,4 +365,110 @@ fn the_fact_is_absent_from_everything_a_replay_could_reach() {
     // …and the history is genuinely non-empty, or the assertion above is
     // trivially true.
     assert!(replayable.contains("revision C"));
+}
+
+/// The case a page range cannot serve: the model does not know the page.
+///
+/// This is the normal state after a turn that could only afford part of a
+/// document. The prompt says which pages are not shown; it does not say which
+/// of them holds the answer, and `read_pages` can only walk them ten at a time.
+/// Searching answers the question the model actually has.
+#[tokio::test]
+async fn a_passage_is_found_by_what_it_says_without_knowing_its_page() {
+    let (deps, _dir) = journey(OWNER_ID, OWNER_ID, CONVERSATION);
+
+    let found = through_the_gateway(search("flange gasket torque"), &deps)
+        .await
+        .expect("a run may search its own conversation's documents");
+
+    assert!(
+        found.contains(FACT_ON_PAGE_31),
+        "the passage was not found by its content: {found}"
+    );
+    // Citable, or it is not evidence.
+    assert!(
+        found.contains("page 31"),
+        "the passage arrived without the page it came from: {found}"
+    );
+    assert!(
+        found.contains("pump-skid-rev-c.pdf"),
+        "the passage arrived without the document it came from: {found}"
+    );
+}
+
+/// Finding nothing is reported as finding nothing, with the size of what was
+/// looked at — so a model can tell "not in this document" from "no documents".
+#[tokio::test]
+async fn a_search_that_matches_nothing_says_how_much_it_looked_at() {
+    let (deps, _dir) = journey(OWNER_ID, OWNER_ID, CONVERSATION);
+
+    let found = through_the_gateway(search("zirconium centrifuge calibration"), &deps)
+        .await
+        .expect("a search that matches nothing is still a successful call");
+
+    assert!(found.contains("No passage matched"), "{found}");
+    assert!(
+        found.contains("section(s)"),
+        "the model was not told how much was searched: {found}"
+    );
+    assert!(
+        !found.contains(FACT_ON_PAGE_31),
+        "a non-matching search returned the document anyway: {found}"
+    );
+}
+
+/// The isolation boundary, on the new door as well as the old one.
+///
+/// Content-addressed storage means the same bytes may be somebody else's
+/// document. A query is a fine way to find out what one says, so search is
+/// scoped exactly as `read_pages` is: this owner, this conversation.
+#[tokio::test]
+async fn searching_reaches_no_document_this_person_did_not_attach() {
+    // Stored by somebody else, in the same conversation id.
+    let (deps, _dir) = journey(OWNER_ID, OTHER_ID, CONVERSATION);
+
+    let found = through_the_gateway(search("flange gasket torque"), &deps)
+        .await
+        .expect("the call is answered rather than erroring");
+
+    assert!(
+        !found.contains(FACT_ON_PAGE_31),
+        "another person's document was searchable: {found}"
+    );
+    assert!(
+        found.contains("0 document(s)"),
+        "the count leaked that a document exists: {found}"
+    );
+}
+
+/// A document the same person attached to a *different* thread is not part of
+/// this one, and searching must not be a way around that.
+#[tokio::test]
+async fn searching_reaches_no_document_from_another_conversation() {
+    let (deps, _dir) = journey(OWNER_ID, OWNER_ID, "c-somewhere-else");
+
+    let found = through_the_gateway(search("flange gasket torque"), &deps)
+        .await
+        .expect("the call is answered rather than erroring");
+
+    assert!(
+        !found.contains(FACT_ON_PAGE_31),
+        "a document from another conversation was searchable: {found}"
+    );
+}
+
+/// An empty query is refused with a sentence that says what to send instead,
+/// rather than returning everything or nothing.
+#[tokio::test]
+async fn an_empty_query_is_refused_with_something_actionable() {
+    let (deps, _dir) = journey(OWNER_ID, OWNER_ID, CONVERSATION);
+
+    let refusal = through_the_gateway(search("   "), &deps)
+        .await
+        .expect_err("an empty query is refused");
+
+    assert!(
+        refusal.contains("query is required"),
+        "the refusal did not say what was missing: {refusal}"
+    );
 }

@@ -533,7 +533,25 @@ export async function processCompletionsStream(
       const lastVisibleTextIndex = contentDeltas.findLastIndex((delta) => delta.kind === "text");
       const hasSameChunkVisibleText = reasoningBatch.hasVisibleText || lastVisibleTextIndex !== -1;
       if (hasReasoningThinking) {
-        beginReasoning(hasSameChunkVisibleText, true);
+        // Not forced strict any more.
+        //
+        // `markStrict()` makes the partitioner hold every subsequent visible
+        // token until `flush()`, which runs once, at the end of the turn. That
+        // is the correct thing when reasoning is written *inline* as tags,
+        // because a token cannot be shown before the scanner knows whether it
+        // is inside one. It is the wrong thing when the provider sends
+        // reasoning in its own field, because then the content stream carries
+        // no tags to be uncertain about - and forcing it there cost every
+        // thinking model its answer streaming. Measured on a local server:
+        // thirty-one `content` frames in, one `text_delta` out.
+        //
+        // Passing `false` does not disable the protection, it stops
+        // *pre-empting* it: `beginReasoning` still calls `markStrict()` when
+        // the partitioner has something pending, and inline tags still route
+        // through `push()` and the tag scanner, which hide them exactly as
+        // before. The tests in `openai-completions-stream.reasoning-streaming`
+        // pin all four leak cases against this line.
+        beginReasoning(hasSameChunkVisibleText);
         appendReasoningDeltas(reasoningDeltas);
       }
       for (const [contentDeltaIndex, contentDelta] of contentDeltas.entries()) {

@@ -30,6 +30,8 @@ export type ProgressKind =
   | 'submitted'
   | 'understanding'
   | 'reading'
+  | 'indexing'
+  | 'selecting'
   | 'routing'
   | 'loading'
   | 'planning'
@@ -211,7 +213,18 @@ export function applyProgress(
       // Page numbers only when the reader actually reported them. A one-page
       // file, or a reader that does not paginate, gets the plain line.
       if (input.page !== null && input.pages !== null && input.pages > 1) {
-        return annotate(steps, `page ${input.page} of ${input.pages}`);
+        // Which phase it is in, because they are different work at very
+        // different speeds: 'understanding' is a vision model on the GPU at
+        // seconds per page, 'extracting' is a text layer being lifted off at
+        // hundreds. A person watching a forty-page scan crawl is owed the
+        // difference between the two.
+        const verb = input.phase === 'understanding' ? 'Reading' : 'Extracting';
+        return annotate(steps, `${verb.toLowerCase()} page ${input.page} of ${input.pages}`);
+      }
+      // The page count without a page number is still worth saying: it is the
+      // first moment anyone knows how long this will take.
+      if (input.page === null && input.pages !== null && input.pages > 1) {
+        return annotate(steps, `${input.pages} pages`);
       }
       return steps;
     }
@@ -249,6 +262,66 @@ function applyStage(
         `${group(characters)} characters`,
       ];
       return settle(steps, at, 'reading', 'Read the attachments', parts.join(' · '));
+    }
+
+    case 'indexingDocument': {
+      // Real work with a real duration: the pages are being cut into passages
+      // that can be retrieved later. Named for what it is rather than for a
+      // spinner, and the counts are the ones the cut actually produced.
+      const chunks = num(detail, 'chunks');
+      const pages = num(detail, 'pagesRead');
+      const total = num(detail, 'pages');
+      const parts: string[] = [];
+      if (chunks !== undefined) {
+        parts.push(`${group(chunks)} section${chunks === 1 ? '' : 's'}`);
+      }
+      if (pages !== undefined && total !== undefined) {
+        // "41 of 42 pages" rather than "42 pages" whenever a page produced
+        // nothing. The difference is the completeness claim, and rounding it up
+        // here would be the same lie the prompt refuses to tell.
+        parts.push(pages === total ? `${group(total)} pages` : `${group(pages)} of ${group(total)} pages`);
+      }
+      return advance(
+        steps,
+        at,
+        'indexing',
+        'Indexing the document',
+        parts.length > 0 ? parts.join(' · ') : undefined,
+      );
+    }
+
+    case 'selectingContext': {
+      // What this turn could actually afford, against what exists. Both
+      // numbers, always: "18 sections" alone reads as the whole document.
+      const included = num(detail, 'chunksIncluded');
+      const total = num(detail, 'chunksTotal');
+      const measured = num(detail, 'measuredTokens');
+      const window = num(detail, 'servedWindow');
+      const parts: string[] = [];
+      if (included !== undefined && total !== undefined) {
+        parts.push(`${group(included)} of ${group(total)} sections`);
+      }
+      // Only when the server actually counted. An estimate must not be shown in
+      // the place a measurement goes — see `measuredTokens`, which is null
+      // whenever nobody counted.
+      if (measured !== undefined && window !== undefined) {
+        parts.push(`${group(measured)} of ${group(window)} tokens`);
+      }
+      const refits = num(detail, 'refits');
+      if (refits !== undefined && refits > 0) {
+        parts.push(`refitted ${group(refits)}×`);
+      }
+      // Its own row rather than a relabelling of the indexing one: indexing
+      // happens the moment the pages are read, and this happens after the
+      // model has loaded, which on a cold start is a minute later. Collapsing
+      // them would put one duration on two pieces of work.
+      return advance(
+        steps,
+        at,
+        'selecting',
+        'Preparing the relevant sections',
+        parts.length > 0 ? parts.join(' · ') : undefined,
+      );
     }
 
     case 'routing':

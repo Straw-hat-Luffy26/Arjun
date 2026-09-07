@@ -131,6 +131,12 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         run_to_conversation: Arc::new(
             sarathi_lib::agent_runtime::conversations::RunToConversation::new(),
         ),
+        // Opened in the test's own temp directory. `in_memory` is `#[cfg(test)]`
+        // and so invisible from an integration test, which is the right
+        // boundary: this exercises the store the way the application does.
+        notebooks: Arc::new(
+            sarathi_lib::knowledge::NotebookStore::open(dir.path()).expect("notebook store opens"),
+        ),
         }),
         // Returned so the directory outlives the test; dropping it early would
         // delete the SQLite file out from under the runtime.

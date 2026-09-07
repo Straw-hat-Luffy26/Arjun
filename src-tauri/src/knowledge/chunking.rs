@@ -60,7 +60,11 @@ pub enum ChunkKind {
 }
 
 /// One retrievable piece of a document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `PartialEq` because a chunk is now part of a stored record
+/// ([`crate::agent_runtime::documents::ExtractedDocument`]) that is compared in
+/// tests; every field is a plain value, so the derive is the whole story.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chunk {
     /// Stable across re-chunking of the same document, so a citation made today
@@ -102,6 +106,21 @@ struct Page<'a> {
 struct Heading {
     level: usize,
     title: String,
+    /// Whether any chunk was emitted while this heading was on the stack.
+    ///
+    /// A heading is consumed into the trail rather than into a chunk's text,
+    /// which is right when there is text beneath it to label. When there is
+    /// not, the line disappears from the cut entirely — and since the cut is
+    /// what search and a turn's passages are built from, "disappears" means
+    /// unreachable, not merely unlabelled.
+    ///
+    /// Not hypothetical. An OCR'd parts list reads "001   2    FLANGE  ASSY"
+    /// then "002   8    STUD  M20", and `001` parses as a numbered section
+    /// titled "2 FLANGE ASSY". The next line is another heading at the same
+    /// depth, so the first is popped having labelled nothing, and FLANGE is
+    /// gone from a document that plainly contains it. Caught by
+    /// `large_document_tests::every_word_of_every_page_survives_the_cut`.
+    used: bool,
 }
 
 /// Recognises a heading, and how deep it is.
@@ -122,6 +141,7 @@ fn heading_of(line: &str) -> Option<Heading> {
             return Some(Heading {
                 level,
                 title: title.to_string(),
+                used: false,
             });
         }
     }
@@ -144,6 +164,7 @@ fn heading_of(line: &str) -> Option<Heading> {
             return Some(Heading {
                 level: stripped.split('.').count(),
                 title: trimmed.to_string(),
+                used: false,
             });
         }
     }
@@ -250,6 +271,8 @@ pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
     // The heading stack, deepest last. Popped when a heading of equal or
     // shallower depth arrives.
     let mut section: Vec<Heading> = Vec::new();
+    // The page a trailing heading belongs to. See the rescue after the loop.
+    let mut last_page = 0u32;
 
     for page in pages.iter().map(|(number, text)| Page {
         page: *number,
@@ -280,6 +303,12 @@ pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
                         });
                         ordinal += 1;
                     }
+                    // Every heading above this chunk has now labelled something,
+                    // so none of them needs rescuing when it is popped. See
+                    // `Heading::used`.
+                    for heading in section.iter_mut() {
+                        heading.used = true;
+                    }
                 }
                 buffer.clear();
             };
@@ -301,6 +330,9 @@ pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
                         kind: ChunkKind::Table,
                     });
                     ordinal += 1;
+                    for heading in section.iter_mut() {
+                        heading.used = true;
+                    }
                 }
                 table_buffer.clear();
             };
@@ -322,7 +354,23 @@ pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
                 flush_prose!();
                 // Everything at this depth or deeper is now closed.
                 while section.last().is_some_and(|h| h.level >= heading.level) {
-                    section.pop();
+                    let closed = section.pop().expect("checked by the condition above");
+                    // A heading that labelled nothing is text with nowhere to
+                    // live, so it becomes a passage in its own right rather
+                    // than vanishing. Its trail is the headings still above it.
+                    if !closed.used {
+                        chunks.push(Chunk {
+                            id: chunk_id(document_sha256, ordinal),
+                            document_sha256: document_sha256.to_string(),
+                            ordinal,
+                            char_count: closed.title.len() as u32,
+                            text: closed.title,
+                            page: page.page,
+                            section_path: section.iter().map(|h| h.title.clone()).collect(),
+                            kind: ChunkKind::Prose,
+                        });
+                        ordinal += 1;
+                    }
                 }
                 section.push(heading);
                 continue;
@@ -334,6 +382,38 @@ pub fn chunk_pages(document_sha256: &str, pages: &[(u32, &str)]) -> Vec<Chunk> {
 
         flush_table!();
         flush_prose!();
+        last_page = page.page;
+    }
+
+    // Headings still open at the end of the document get the same rescue. The
+    // stack persists across pages, so this is the trailing heading of the last
+    // page that had one — commonly a section title on a final page whose body
+    // the reader could not make out.
+    while let Some(closed) = section.pop() {
+        if closed.used {
+            continue;
+        }
+        chunks.push(Chunk {
+            id: chunk_id(document_sha256, ordinal),
+            document_sha256: document_sha256.to_string(),
+            ordinal,
+            char_count: closed.title.len() as u32,
+            text: closed.title,
+            page: last_page,
+            section_path: section.iter().map(|h| h.title.clone()).collect(),
+            kind: ChunkKind::Prose,
+        });
+        ordinal += 1;
+    }
+
+    // Reading order, which the rescue above can disturb: a heading popped when
+    // the *next* heading arrives is emitted after passages that came before it
+    // on the page. Ordinals are reassigned so they stay a reading sequence,
+    // which is what `doc_pipeline` sorts selected passages by.
+    chunks.sort_by(|a, b| a.page.cmp(&b.page));
+    for (index, chunk) in chunks.iter_mut().enumerate() {
+        chunk.ordinal = index as u32;
+        chunk.id = chunk_id(document_sha256, chunk.ordinal);
     }
 
     chunks

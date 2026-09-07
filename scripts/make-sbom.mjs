@@ -155,6 +155,20 @@ notes.push(
   "The document sidecar's Python dependencies are installed by the deployment rather than by " +
     'this repository, so they are not listed here. They belong in the deployment record.',
 );
+notes.push(
+  'The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because ' +
+    'the dependency is far heavier: it pins torch and transformers in its own ' +
+    'requirements.txt. An air-gapped install must vendor those wheels; nothing in this ' +
+    'repository fetches them.',
+);
+// The licence is a deployment blocker, not a footnote, so it is in the document
+// rather than only on the registry entry.
+notes.push(
+  'The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - ' +
+    'non-commercial. It is not redistributed here and is not in the installer; a deployment ' +
+    'downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial ' +
+    'distribution of ARJUN cannot ship or rely on it.',
+);
 
 // --- Write -----------------------------------------------------------------
 mkdirSync(OUT_DIR, { recursive: true });

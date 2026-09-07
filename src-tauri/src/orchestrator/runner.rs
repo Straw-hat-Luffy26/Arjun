@@ -945,7 +945,21 @@ impl ToolRunner for LocalToolRunner<'_> {
             // attached to, and this runner is rebuilt per call and holds
             // neither. Answering here would mean answering a question about who
             // may read a document with no idea who is asking.
-            ToolName::ReadAttachedPages => Err(format!(
+            //
+            // `BuildDocumentGraph` is here for the same reason again: the graph
+            // is stored per notebook and every query in `NotebookStore` takes an
+            // owner id, so answering here would mean answering a question about
+            // who may read a graph with no idea who is asking.
+            ToolName::ReadAttachedPages
+            | ToolName::SearchAttachedDocuments
+            | ToolName::BuildDocumentGraph
+            | ToolName::NotebookList
+            | ToolName::NotebookCreate
+            | ToolName::NotebookRename
+            | ToolName::NotebookDelete
+            | ToolName::NotebookSources
+            | ToolName::NotebookAddSource
+            | ToolName::NotebookRemoveSource => Err(format!(
                 "{} is served on the agent path, not by this runner.",
                 tool.as_str()
             )),

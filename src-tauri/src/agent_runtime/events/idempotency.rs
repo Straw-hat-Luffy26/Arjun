@@ -72,6 +72,17 @@ pub const fn is_side_effecting(tool: ToolName) -> bool {
             // stop the resumption producing a second.
             | ToolName::CreatePptx
             | ToolName::ExecuteCode
+            // Deleting a notebook takes its graph with it, and the graph cannot
+            // be recovered without running the extraction passes again. So the
+            // intent is written before the call: a run interrupted mid-delete
+            // must not have the resumption delete a second notebook the person
+            // recreated in between.
+            //
+            // The other notebook writes are absent deliberately. Creating,
+            // renaming and moving a source in or out are reversible, and
+            // recording an intent for each would make every notebook edit a
+            // two-write operation for no recovery it enables.
+            | ToolName::NotebookDelete
     )
 }
 

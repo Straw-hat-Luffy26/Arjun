@@ -175,7 +175,23 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::KnowledgeMultimodalRetrieve
         // Reads back a file the asker attached to this conversation, from a
         // store this machine wrote. It changes nothing and reaches nothing.
-        | ToolName::ReadAttachedPages => ToolClass::ReadOnly,
+        | ToolName::ReadAttachedPages
+        | ToolName::SearchAttachedDocuments
+        | ToolName::BuildDocumentGraph
+        | ToolName::NotebookList
+        | ToolName::NotebookSources => ToolClass::ReadOnly,
+        // Reversible: a notebook created by mistake can be deleted, a
+        // rename can be renamed back, and a source taken out can be put
+        // back - the document itself is never touched by any of them.
+        ToolName::NotebookCreate
+        | ToolName::NotebookRename
+        | ToolName::NotebookAddSource
+        | ToolName::NotebookRemoveSource => ToolClass::Reversible,
+        // Irreversible: the notebook, its membership rows and the whole
+        // graph built over it go together, and nothing here can put the
+        // graph back - rebuilding it means running the extraction passes
+        // again over every document.
+        ToolName::NotebookDelete => ToolClass::Irreversible,
 
         // Deterministic arithmetic recorded in the run's own calculation table.
         // It changes state this process owns and can discard, and it reaches

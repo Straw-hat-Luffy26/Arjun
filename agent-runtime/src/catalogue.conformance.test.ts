@@ -50,6 +50,15 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "agent.delegate_readonly",
   "sovereignty.get_evidence",
   "document.read_pages",
+  "document.search",
+  "knowledge.build_graph",
+  "notebook.list",
+  "notebook.create",
+  "notebook.rename",
+  "notebook.delete",
+  "notebook.list_sources",
+  "notebook.add_source",
+  "notebook.remove_source",
 ]);
 
 /**
@@ -100,6 +109,15 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["agent.delegate_readonly", true],
   ["sovereignty.get_evidence", true],
   ["document.read_pages", true],
+  ["document.search", true],
+  ["knowledge.build_graph", true],
+  ["notebook.list", true],
+  ["notebook.create", false],
+  ["notebook.rename", false],
+  ["notebook.delete", false],
+  ["notebook.list_sources", true],
+  ["notebook.add_source", false],
+  ["notebook.remove_source", false],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

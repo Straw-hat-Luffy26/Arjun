@@ -21,6 +21,7 @@ pub mod chunking;
 pub mod collections;
 pub mod connector;
 pub mod evidence;
+pub mod graph;
 pub mod hybrid;
 pub mod index;
 pub mod ingest;
@@ -32,6 +33,7 @@ pub use hybrid::{reciprocal_rank_fusion, Embedder, Hybrid, HybridResults};
 pub use index::{KnowledgeIndex, Retrieval, SearchResult};
 pub use evidence::{present, EvidenceBlock, PresentedPassage};
 pub use collections::CollectionStore;
+pub use graph::{Notebook, NotebookDocument, NotebookStore};
 pub use ingest::{ingest_collection, DocumentReader, IngestOutcome};
 pub use multimodal::{
     BBox, DocumentMeta, ImageRegion, Method as MultimodalMethod, MultimodalIndex,

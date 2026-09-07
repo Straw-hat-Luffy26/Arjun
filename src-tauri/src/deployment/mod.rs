@@ -203,6 +203,21 @@ pub const DEPENDENCIES: &[Dependency] = &[
         remedy: "Reinstall ARJUN; the attachment extractor ships inside the installer.",
     },
     Dependency {
+        id: "graph-sidecar",
+        label: "Knowledge graph sidecar",
+        needed_for: "naming the relations between things a document mentions",
+        packaging: Packaging::Bundled,
+        // A Feature, not Core. Without it the graph still builds: the
+        // statistical pass finds the nodes and the co-occurrence edges, and the
+        // edges simply stay unnamed. A missing relation extractor costs labels,
+        // not the graph.
+        criticality: Criticality::Feature,
+        env_override: Some("ARJUN_GRAPH_SIDECAR"),
+        bundle_path: Some("sidecars/graph_sidecar/main.py"),
+        program: None,
+        remedy: "Reinstall ARJUN; the graph sidecar ships inside the installer.",
+    },
+    Dependency {
         id: "memory-sidecar",
         label: "Memory engine sidecar",
         needed_for: "long-term memory recall",

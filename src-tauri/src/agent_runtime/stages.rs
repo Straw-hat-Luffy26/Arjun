@@ -56,6 +56,20 @@ pub enum Stage {
     ReadingAttachment,
     /// Every attachment has been read and folded into the prompt.
     AttachmentsRead,
+    /// The pages that were read are being cut into retrievable passages.
+    ///
+    /// Real work with a real duration, and the step that makes a document
+    /// larger than the window survivable — so it gets a line of its own rather
+    /// than disappearing into the gap between "read the attachment" and
+    /// "choosing a model". Carries the pages and passages actually produced.
+    IndexingDocument,
+    /// Passages are being chosen to fit the window the server actually holds.
+    ///
+    /// Emitted once, after the model is known, carrying how many passages the
+    /// documents hold and how many this turn could afford. The difference
+    /// between those two numbers is the thing a person is owed and used to be
+    /// told nothing about.
+    SelectingContext,
     /// Hardware is being inspected and a model chosen for this prompt.
     Routing,
     /// A model was chosen. Carries its name and role.
@@ -84,6 +98,8 @@ impl Stage {
             Stage::Accepted => "accepted",
             Stage::ReadingAttachment => "readingAttachment",
             Stage::AttachmentsRead => "attachmentsRead",
+            Stage::IndexingDocument => "indexingDocument",
+            Stage::SelectingContext => "selectingContext",
             Stage::Routing => "routing",
             Stage::Routed => "routed",
             Stage::LoadingModel => "loadingModel",
@@ -96,10 +112,12 @@ impl Stage {
     }
 
     /// Every stage, for tests and for anything that needs to enumerate them.
-    pub const ALL: [Stage; 11] = [
+    pub const ALL: [Stage; 13] = [
         Stage::Accepted,
         Stage::ReadingAttachment,
         Stage::AttachmentsRead,
+        Stage::IndexingDocument,
+        Stage::SelectingContext,
         Stage::Routing,
         Stage::Routed,
         Stage::LoadingModel,

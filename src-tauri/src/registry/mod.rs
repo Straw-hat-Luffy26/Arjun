@@ -102,6 +102,16 @@ pub enum ModelRole {
     Embedding,
     /// Reordering retrieved passages.
     Rerank,
+    /// Reading a passage and returning the relations between the things named
+    /// in it, as (subject, relation, object) triplets.
+    ///
+    /// Its own role rather than a use of [`Self::Reasoning`], because the
+    /// models that do it well are sequence-to-sequence extractors trained on
+    /// the task — a few hundred million parameters, no chat template, no tool
+    /// calling. Routing one to a conversation would produce nonsense, and
+    /// routing a chat model here wastes a warm endpoint on work a small model
+    /// does better.
+    RelationExtraction,
 }
 
 impl ModelRole {
@@ -112,6 +122,7 @@ impl ModelRole {
         ModelRole::DocumentOcr,
         ModelRole::Embedding,
         ModelRole::Rerank,
+        ModelRole::RelationExtraction,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -122,6 +133,7 @@ impl ModelRole {
             ModelRole::DocumentOcr => "document OCR",
             ModelRole::Embedding => "embedding",
             ModelRole::Rerank => "reranking",
+            ModelRole::RelationExtraction => "relation extraction",
         }
     }
 
@@ -144,7 +156,10 @@ impl ModelRole {
             // A 300M embedding model and a 1.2B document VLM are both correct
             // choices at their size. Judging them on parameter count would rule
             // out the best available option.
-            ModelRole::DocumentOcr | ModelRole::Embedding | ModelRole::Rerank => 0.0,
+            ModelRole::DocumentOcr
+            | ModelRole::Embedding
+            | ModelRole::Rerank
+            | ModelRole::RelationExtraction => 0.0,
         }
     }
 }

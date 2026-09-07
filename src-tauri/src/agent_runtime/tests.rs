@@ -114,6 +114,11 @@ pub(super) fn deps_with(
         run_to_conversation: Arc::new(
             crate::agent_runtime::conversations::RunToConversation::new(),
         ),
+        // In memory: these tests are about the runtime boundary, not about
+        // notebooks, and a store on disk would make them share state.
+        notebooks: Arc::new(
+            crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
+        ),
     });
     (deps, dir)
 }
@@ -714,12 +719,21 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "calculation.evaluate_with_units",
             "capability.search",
             "document.read_pages",
+            "document.search",
+            "knowledge.build_graph",
             "knowledge.load_evidence_region",
             "knowledge.multimodal_retrieve",
             "knowledge.search_authorized",
             "media.extract_findings",
             "memory.promote_approved",
             "memory.recall_authorized",
+            "notebook.add_source",
+            "notebook.create",
+            "notebook.delete",
+            "notebook.list",
+            "notebook.list_sources",
+            "notebook.remove_source",
+            "notebook.rename",
             "sandbox.run_code",
             "sovereignty.get_evidence",
             "workspace.read_text",

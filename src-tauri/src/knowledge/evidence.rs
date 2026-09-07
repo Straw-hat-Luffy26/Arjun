@@ -75,7 +75,14 @@ impl EvidenceBlock {
 /// evidence block, and whatever followed would read as though the user had
 /// written it. Replaced rather than dropped, so a reviewer comparing the prompt
 /// against the source document can still see the passage was there.
-fn neutralise(text: &str) -> (String, bool) {
+///
+/// `pub(crate)` because this is not the only place document-derived text is
+/// composed into a prompt: [`crate::knowledge::graph::render`] builds a
+/// subgraph out of labels taken from the same untrusted documents, and it must
+/// strip the same markers. One implementation, so the two cannot drift — a
+/// second copy of a sanitiser is a second thing that can disagree with the
+/// first.
+pub(crate) fn neutralise(text: &str) -> (String, bool) {
     if !text.contains(OPEN) && !text.contains(CLOSE) {
         return (text.to_string(), false);
     }

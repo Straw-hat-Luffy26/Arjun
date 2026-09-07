@@ -171,7 +171,10 @@ describe('applyProgress: attachments report what the reader actually knew', () =
       stage('readingAttachment', { name: 'scan.pdf', index: 1, of: 1 }),
       { kind: 'attachmentPage', name: 'scan.pdf', page: 3, pages: 6, phase: 'understanding' },
     ]);
-    expect(withPages[withPages.length - 1].detail).toBe('page 3 of 6');
+    // The verb is part of the detail now: 'understanding' is a vision model on
+    // the GPU and 'extracting' is a text layer being lifted off, and they run at
+    // very different speeds. See the large-document steps below.
+    expect(withPages[withPages.length - 1].detail).toBe('reading page 3 of 6');
 
     const withoutPages = fold([
       { kind: 'submitted' },
@@ -259,6 +262,116 @@ describe('summariseProgress', () => {
 
   it('says so plainly when there are no steps', () => {
     expect(summariseProgress([], false, 0)).toBe('No steps recorded');
+  });
+});
+
+describe('the large-document steps say what actually happened', () => {
+  it('names the indexing step with the passages the cut really produced', () => {
+    const steps = fold([
+      { kind: 'submitted' },
+      stage('accepted'),
+      stage('readingAttachment', { name: 'drawing.pdf', index: 1, of: 1 }),
+      stage('attachmentsRead', { files: 1, pages: 42, characters: 120_000 }),
+      stage('indexingDocument', { documents: 1, pages: 42, pagesRead: 42, chunks: 128 }),
+    ]);
+    const indexing = steps.find(step => step.kind === 'indexing');
+    expect(indexing?.label).toBe('Indexing the document');
+    expect(indexing?.detail).toContain('128 sections');
+    expect(indexing?.detail).toContain('42 pages');
+  });
+
+  /**
+   * The completeness claim, in the one place a person actually reads. A scan
+   * whose page 17 produced nothing is not a scan that was read, and rounding
+   * "41 of 42" up to "42" here would be the same lie the prompt refuses to
+   * tell.
+   */
+  it('does not round an unread page up into a fully read document', () => {
+    const steps = fold([
+      stage('indexingDocument', { documents: 1, pages: 42, pagesRead: 41, chunks: 120 }),
+    ]);
+    expect(steps.find(step => step.kind === 'indexing')?.detail).toContain('41 of 42 pages');
+  });
+
+  it('reports what the turn could afford against what exists', () => {
+    const steps = fold([
+      stage('indexingDocument', { documents: 1, pages: 42, pagesRead: 42, chunks: 128 }),
+      stage('modelReady', { warm: true }),
+      stage('selectingContext', {
+        documents: 1,
+        chunksTotal: 128,
+        chunksIncluded: 18,
+        chunksOmitted: 110,
+        servedWindow: 8192,
+        measuredTokens: 6052,
+        refits: 0,
+        complete: false,
+      }),
+    ]);
+    const selecting = steps.find(step => step.kind === 'selecting');
+    expect(selecting?.label).toBe('Preparing the relevant sections');
+    expect(selecting?.detail).toContain('18 of 128 sections');
+    expect(selecting?.detail).toContain('6,052 of 8,192 tokens');
+  });
+
+  /**
+   * A token figure in this row is a count from the server's own tokeniser. A
+   * server that does not offer one sends null, and the row must then say
+   * nothing about tokens rather than showing an estimate in a measurement's
+   * place.
+   */
+  it('shows no token figure when nobody counted one', () => {
+    const steps = fold([
+      stage('selectingContext', {
+        documents: 1,
+        chunksTotal: 40,
+        chunksIncluded: 12,
+        servedWindow: 8192,
+        measuredTokens: null,
+        refits: 0,
+      }),
+    ]);
+    const selecting = steps.find(step => step.kind === 'selecting');
+    expect(selecting?.detail).toContain('12 of 40 sections');
+    expect(selecting?.detail).not.toContain('tokens');
+  });
+
+  /**
+   * Indexing and selection are minutes apart on a cold start — the model has to
+   * load in between. One row with one duration would put that whole wait on
+   * whichever of them it was attached to.
+   */
+  it('keeps indexing and selection as two steps with two durations', () => {
+    const steps = fold([
+      stage('indexingDocument', { documents: 1, pages: 42, pagesRead: 42, chunks: 128 }),
+      stage('loadingModel', { modelName: 'Qwen3.5 9B' }),
+      stage('modelReady', { warm: false }),
+      stage('selectingContext', { chunksTotal: 128, chunksIncluded: 18 }),
+    ]);
+    expect(steps.filter(step => step.kind === 'indexing')).toHaveLength(1);
+    expect(steps.filter(step => step.kind === 'selecting')).toHaveLength(1);
+    expect(steps.find(step => step.kind === 'indexing')?.endedAt).toBeDefined();
+  });
+
+  /**
+   * Reading a page with a vision model and lifting a text layer off one are
+   * different work at very different speeds. A person watching a forty-page
+   * scan crawl is owed the difference.
+   */
+  it('distinguishes reading a page from extracting one', () => {
+    const reading = fold([
+      stage('readingAttachment', { name: 'scan.pdf', index: 1, of: 1 }),
+      { kind: 'attachmentPage', name: 'scan.pdf', page: 17, pages: 42, phase: 'understanding' },
+    ]);
+    expect(reading.find(step => step.kind === 'reading')?.detail).toBe('reading page 17 of 42');
+
+    const extracting = fold([
+      stage('readingAttachment', { name: 'report.pdf', index: 1, of: 1 }),
+      { kind: 'attachmentPage', name: 'report.pdf', page: 3, pages: 12, phase: 'extracting' },
+    ]);
+    expect(extracting.find(step => step.kind === 'reading')?.detail).toBe(
+      'extracting page 3 of 12',
+    );
   });
 });
 

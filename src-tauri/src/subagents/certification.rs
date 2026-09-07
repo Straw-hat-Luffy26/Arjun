@@ -121,6 +121,10 @@ fn score_for(role: ModelRole, certification: &PackageCertification) -> Option<f6
         ModelRole::Coding => scores.coding_ability,
         ModelRole::Vision => return None,
         ModelRole::Rerank => scores.instruction_following,
+        // A relation extractor's only failure mode that matters is asserting a
+        // link the passage does not support. Format compliance is enforced by
+        // the decoder, not by the model choosing to comply.
+        ModelRole::RelationExtraction => scores.hallucination_rate,
     })
 }
 

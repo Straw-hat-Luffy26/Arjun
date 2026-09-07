@@ -232,6 +232,243 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
 
   {
+    name: "document.search",
+    label: "Find a passage in an attached document",
+    readOnly: true,
+    description:
+      "Finds passages by what they say, across every document attached to THIS conversation. " +
+      "Use it whenever an attachment says only part of it is shown, or when you need something " +
+      "you have not been given and do not know which page holds it — which is the usual case. " +
+      "Every page of every attachment was read and stored before this turn started, so a " +
+      "passage missing from the prompt is not a passage that is unavailable. Prefer it over " +
+      "document.read_pages unless you already know the page number: guessing page ranges costs " +
+      "several calls and this costs one. " +
+      "Do not use it for the knowledge base: those documents are reached with " +
+      "knowledge.search_authorized. This one searches only what the person attached here. " +
+      "Effects: none. It reads a store on this machine, uses no model, and touches no network. " +
+      "Limits: at most 6 passages per call, and a large result may stop early on size and say " +
+      "so. Each passage comes back with its document, page and heading trail — quote those " +
+      "when you use it. " +
+      "If it finds nothing, it says how many sections it looked at: try different words, or " +
+      "read a page range with document.read_pages. Never describe a passage you were not shown.",
+    parameters: closed({
+      query: Type.String({
+        description:
+          "The words you expect to find — a tag number, a clause title, a part name, a unit.",
+        minLength: 1,
+      }),
+    }),
+  },
+  {
+    name: "notebook.list",
+    label: "List the notebooks",
+    readOnly: true,
+    description:
+      "Names every notebook the signed-in person has, with how many documents each holds. " +
+      "Use it when they ask what notebooks exist, or when you need the exact name of one " +
+      "before acting on it. " +
+      "Do not use it to read what is inside a notebook - that is notebook.list_sources for " +
+      "the file names, and document.search for what they say. " +
+      "Effects: none, a single read of a local database. " +
+      "Limits: names and counts only; it never returns document contents. " +
+      "If it says there are none, say so and offer to create one.",
+    parameters: closed({}),
+  },
+  {
+    name: "notebook.create",
+    label: "Create a notebook",
+    readOnly: false,
+    description:
+      "Makes a new, empty notebook with the name given. " +
+      "Use it when the person asks for a notebook to be created. " +
+      "Do not use it to add documents - a new notebook is empty, and notebook.add_source " +
+      "puts an attached file into it afterwards. Do not create one to hold an answer or a " +
+      "note; a notebook groups source documents, it is not a scratchpad, and " +
+      "workspace.write_text is the tool for writing a file. " +
+      "Effects: one row in a local database. Nothing is downloaded and no file is written. " +
+      "Limits: names are at most 120 characters, and a name already in use is refused rather " +
+      "than duplicated. " +
+      "If it says the name is taken, use the existing notebook instead of inventing a variant.",
+    parameters: closed({
+      name: Type.String({
+        description: "What to call it, in the person's own words.",
+        minLength: 1,
+      }),
+    }),
+  },
+  {
+    name: "notebook.rename",
+    label: "Rename a notebook",
+    readOnly: false,
+    description:
+      "Changes a notebook's name, keeping its documents and its graph. " +
+      "Use it when the person asks for one to be renamed or called something else. " +
+      "Do not use it to make a copy - there is one notebook before and after, under a new " +
+      "name. " +
+      "Effects: one row updated in a local database. " +
+      "Limits: the same 120-character limit as creating one. " +
+      "If it cannot tell which notebook is meant, it says which exist; ask rather than guess.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description:
+            "Which notebook, by name or part of one. Omit it only when they have a single " +
+            "notebook.",
+        }),
+      ),
+      name: Type.String({ description: "The new name.", minLength: 1 }),
+    }),
+  },
+  {
+    name: "notebook.delete",
+    label: "Delete a notebook",
+    readOnly: false,
+    description:
+      "Deletes a notebook, its list of sources, and the whole knowledge graph built over it. " +
+      "Use it only when the person has clearly asked for that notebook to be deleted. " +
+      "Do not use it to clear a notebook out so it can be refilled - notebook.remove_source " +
+      "takes single sources out and keeps the notebook. Do not use it to tidy up on your own " +
+      "initiative. " +
+      "Effects: rows removed from five local tables, and the graph cannot be recovered without " +
+      "running the extraction passes again. The documents themselves are NOT deleted and stay " +
+      "attached wherever they were. This asks the person before it runs. " +
+      "Limits: one notebook per call, and only one belonging to the signed-in person. " +
+      "If it cannot tell which notebook is meant, it lists them rather than choosing; ask. " +
+      "If the person has not clearly said to delete it, do not call this - confirm first.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description: "Which notebook, by name. Omit only when they have a single notebook.",
+        }),
+      ),
+    }),
+  },
+  {
+    name: "notebook.list_sources",
+    label: "List the sources in a notebook",
+    readOnly: true,
+    description:
+      "Names the documents in a notebook, with the content hash of each. " +
+      "Use it when the person asks what is in a notebook, and before removing a source so " +
+      "you know what is there. The hash it returns is what document.read_pages takes. " +
+      "Do not use it to read the documents - it returns names, never text. " +
+      "Effects: none, a single read of a local database. " +
+      "Limits: file names and hashes only. " +
+      "If it says the notebook is empty, say so rather than describing what might be in it.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description: "Which notebook, by name. Omit only when they have a single notebook.",
+        }),
+      ),
+    }),
+  },
+  {
+    name: "notebook.add_source",
+    label: "Add an attached document to a notebook",
+    readOnly: false,
+    description:
+      "Puts a document attached to THIS conversation into a notebook. " +
+      "Use it when the person attaches a file and asks for it to go into one of their " +
+      "notebooks. " +
+      "Do not use it for a file that is not attached here - it can only reach this " +
+      "conversation's own attachments, and naming anything else is refused. Adding a document " +
+      "does not put it in the graph; Build graph on the Notebooks screen does that. " +
+      "Effects: one row in a local database. The document is not copied or moved. " +
+      "Limits: one document per call, named exactly enough to be unambiguous. " +
+      "If it says nothing of that name is attached, list what is rather than guessing.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description: "Which notebook, by name. Omit only when they have a single notebook.",
+        }),
+      ),
+      document: Type.String({
+        description: "The attached document's file name, as shown in this conversation.",
+        minLength: 1,
+      }),
+    }),
+  },
+  {
+    name: "notebook.remove_source",
+    label: "Take a source out of a notebook",
+    readOnly: false,
+    description:
+      "Removes one document from a notebook, along with the graph evidence that came from it. " +
+      "Use it when the person asks for a source to be taken out. " +
+      "Do not use it to delete the document - the file itself is untouched and stays attached " +
+      "where it was; this only takes it out of this notebook. " +
+      "Effects: rows removed from the notebook's membership and evidence tables. The terms " +
+      "that came only from this document stop being cited. " +
+      "Limits: one document per call. " +
+      "If it says the name matches more than one source, name it exactly rather than " +
+      "picking one.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description: "Which notebook, by name. Omit only when they have a single notebook.",
+        }),
+      ),
+      document: Type.String({
+        description: "The source's file name, as notebook.list_sources shows it.",
+        minLength: 1,
+      }),
+    }),
+  },
+  {
+    name: "knowledge.build_graph",
+    label: "Draw the knowledge graph of a notebook",
+    readOnly: true,
+    description:
+      "Returns the knowledge graph of a notebook as a Mermaid diagram: the things its " +
+      "documents name, and the links between them. Use it whenever the person asks to see " +
+      "how something connects - a diagram, a map, a chart of suppliers and equipment, " +
+      "'how does X relate to Y', 'show me the structure'. Prefer it over describing a " +
+      "structure in prose: a list of pairs is the worst way to answer a question about shape. " +
+      "Pass documentSha256 to draw one file rather than the whole notebook, and focus to " +
+      "centre the picture on one term. " +
+      "Do not use it to find out what a document says - that is document.search. This " +
+      "draws the shape of what was already found, and it cannot quote or explain a " +
+      "passage. " +
+      "You do not need a notebook id: pass the name the person used, or nothing at all. " +
+      "The notebooks available are listed in your context. " +
+      "It READS a graph that was already built; it does not build one. If it says the " +
+      "notebook has no graph yet, say so and tell the person to run Build graph on the " +
+      "Notebooks screen - do not retry, and do not draw a diagram from your own reading of " +
+      "the documents. " +
+      "Effects: none. Three reads of a local database; no model is started and no network " +
+      "is touched. " +
+      "Limits: at most 60 links are drawn and the diagram says when more were left out. " +
+      "A solid arrow is a relation actually read out of the documents. A dashed line means " +
+      "only that two terms appear in the same passage - report those as co-occurrence, " +
+      "never as a relationship the documents stated.",
+    parameters: closed({
+      notebook: Type.Optional(
+        Type.String({
+          description:
+            "Which notebook, in the person's own words - its name, or part of it. " +
+            "Omit it when they did not name one: if they have a single notebook it is " +
+            "used, and if they have several the tool answers with their names so you " +
+            "can ask. Never invent an id.",
+        }),
+      ),
+      documentSha256: Type.Optional(
+        Type.String({
+          description:
+            "Narrow the whole graph, counts included, to one document of that notebook.",
+        }),
+      ),
+      focus: Type.Optional(
+        Type.String({
+          description:
+            "A node id to centre on. The picture then shows its neighbourhood rather than " +
+            "the whole graph.",
+        }),
+      ),
+    }),
+  },
+
+  {
     name: "knowledge.multimodal_retrieve",
     label: "Search text, image regions, and tables",
     readOnly: true,

@@ -35,6 +35,7 @@ pub mod audit_health;
 pub mod cancellation;
 pub mod completion;
 pub mod conversations;
+pub mod doc_pipeline;
 pub mod documents;
 pub mod events;
 pub mod grants;
@@ -243,6 +244,14 @@ pub struct RuntimeDeps {
     /// nothing, which is the safe direction: without a conversation there is no
     /// scope to check a document against.
     pub run_to_conversation: Arc<conversations::RunToConversation>,
+    /// The notebook graphs, for `knowledge.build_graph`.
+    ///
+    /// Held for the same reason `documents` is: every query in
+    /// [`crate::knowledge::graph::persist`] takes an owner id, and
+    /// `LocalToolRunner` is rebuilt per call knowing nothing about who is
+    /// asking. A graph is a summary of what a person documents say, so
+    /// reaching one is an entitlement question, not a lookup.
+    pub notebooks: Arc<crate::knowledge::NotebookStore>,
 }
 
 impl RuntimeDeps {
@@ -1706,6 +1715,17 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         // memory is: the answer depends on who is asking and which conversation
         // they are in, and the runner is rebuilt per call holding neither.
         ToolName::ReadAttachedPages => read_attached_pages(deps, &call, &session, &tool_call),
+        ToolName::SearchAttachedDocuments => {
+            search_attached_documents(deps, &call, &session, &tool_call)
+        }
+        ToolName::BuildDocumentGraph => build_document_graph(deps, &session, &tool_call),
+        ToolName::NotebookList => notebook_list(deps, &session),
+        ToolName::NotebookCreate => notebook_create(deps, &session, &tool_call),
+        ToolName::NotebookRename => notebook_rename(deps, &session, &tool_call),
+        ToolName::NotebookDelete => notebook_delete(deps, &session, &tool_call),
+        ToolName::NotebookSources => notebook_sources(deps, &session, &tool_call),
+        ToolName::NotebookAddSource => notebook_add_source(deps, &call, &session, &tool_call),
+        ToolName::NotebookRemoveSource => notebook_remove_source(deps, &session, &tool_call),
         _ => {
             // Built with everything the run has, rather than with the index
             // alone.
@@ -2123,6 +2143,606 @@ fn read_attached_pages(
     Ok(render_pages(&read))
 }
 
+/// Finds a passage in this conversation's documents by what it says.
+///
+/// ## Why a model needs this and not only page ranges
+///
+/// After a turn that could afford a third of a forty-page scan, the prompt says
+/// which pages were shown and which were not. `document.read_pages` can walk
+/// the rest ten pages at a time, which is three calls of guessing for one
+/// answer, and a model that guesses wrong twice tends to stop and apologise
+/// instead. This answers the question it actually has.
+///
+/// ## Scope
+///
+/// The conversation this run belongs to, and the person signed in. Both, from
+/// the same check every other read of the store makes — a document somebody
+/// else attached, or one this person attached to a different thread, is not
+/// searchable here and is not reported as existing.
+fn search_attached_documents(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let query = tool_call.text("query").unwrap_or_default();
+    if query.trim().is_empty() {
+        return Err(
+            "query is required. Give the words you expect to find in the document — a tag \
+             number, a clause title, a part name."
+                .to_string(),
+        );
+    }
+    let Some(conversation_id) = deps.run_to_conversation.lookup(&call.run_id) else {
+        return Err(
+            "This run is not attached to a conversation, so it cannot search a conversation's \
+             documents."
+                .to_string(),
+        );
+    };
+
+    let found = deps.documents.search(
+        &query,
+        &session.user.id,
+        &conversation_id,
+        documents::MAX_SEARCH_HITS,
+    )?;
+    Ok(render_search(&found))
+}
+
+/// Reads a notebook graph and returns it drawn.
+///
+/// ## It reads, it does not extract
+///
+/// The three passes that build a graph - statistical, typing, relations - run
+/// from the Notebooks screen, where a person can watch them and where spending
+/// four minutes on a model is a thing they asked for. A chat turn calling this
+/// gets whatever those passes have already produced. A graph built inside a turn
+/// would make the turn take minutes, and would produce edges nothing else could
+/// cite afterwards.
+///
+/// So an empty answer here is a real answer, and it says which pass has not run.
+/// "No graph yet" and "a graph with no named relations" are different states
+/// needing different actions, and a model told only "nothing found" would go
+/// looking for a different notebook.
+///
+/// ## What comes back
+///
+/// A fenced Mermaid diagram, and the counts behind it. Fenced because the chat
+/// surface draws a `mermaid` fence rather than printing it, and because a model
+/// handed bare diagram source tends to reformat it. The diagram is the point - the
+/// question this tool answers is "how do these connect", and prose is the worst
+/// form for that answer.
+/// Works out which notebook a turn is talking about.
+///
+/// Nobody says "draw notebook 9f2c4e". They say "the supplier contracts", or
+/// they say nothing at all because there is only one. Requiring an opaque id
+/// would mean the person has to go and find it, which is exactly the step a
+/// chat interface exists to remove.
+///
+/// The ladder, in order, and it never guesses:
+///
+/// 1. no name given and the person has one notebook - that one,
+/// 2. an exact id,
+/// 3. an exact name, ignoring case,
+/// 4. one name that contains the words given, or is contained by them, so
+///    "supplier" finds "Supplier Contracts" and "my refinery notebook" finds
+///    "Refinery",
+/// 5. anything ambiguous or unmatched - the candidates, named, as an error the
+///    model can act on in one more call.
+///
+/// Step 5 is the important one. Picking the first of three plausible matches
+/// would draw a real graph of the wrong documents, and a wrong answer that
+/// looks right is the worst outcome this tool can produce. Listing them costs
+/// one round trip and cannot mislead.
+fn resolve_notebook(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    query: Option<&str>,
+) -> Result<crate::knowledge::Notebook, String> {
+    let all = deps
+        .notebooks
+        .list(&session.user.id)
+        .map_err(|error| format!("the notebooks could not be listed: {error}"))?;
+    choose_notebook(&all, query)
+}
+
+/// The decision itself, with no store behind it.
+///
+/// Separated so the ladder can be tested directly. Which notebook somebody
+/// meant is the part worth getting right, and it should not need a runtime, a
+/// session and a SQLite file to exercise.
+fn choose_notebook(
+    all: &[crate::knowledge::Notebook],
+    query: Option<&str>,
+) -> Result<crate::knowledge::Notebook, String> {
+    if all.is_empty() {
+        return Err("There are no notebooks yet. Create one on the Notebooks screen, add \
+                    documents to it and run Build graph; then there is a graph to draw."
+            .to_string());
+    }
+
+    // Named so the same sentence can be produced from three different dead ends.
+    let choices = || {
+        all.iter()
+            .map(|notebook| {
+                format!(
+                    "\"{}\" ({} document(s))",
+                    notebook.name, notebook.document_count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let Some(query) = query.map(str::trim).filter(|text| !text.is_empty()) else {
+        // `list` returns most recently updated first, but that is not a strong
+        // enough signal to choose on: the notebook someone last added a file to
+        // is not necessarily the one they are asking about.
+        if all.len() == 1 {
+            return Ok(all[0].clone());
+        }
+        return Err(format!(
+            "There are {} notebooks, so say which: {}. Pass its name as `notebook`.",
+            all.len(),
+            choices()
+        ));
+    };
+
+    if let Some(found) = all.iter().find(|notebook| notebook.id == query) {
+        return Ok(found.clone());
+    }
+
+    let wanted = query.to_lowercase();
+    if let Some(found) = all
+        .iter()
+        .find(|notebook| notebook.name.to_lowercase() == wanted)
+    {
+        return Ok(found.clone());
+    }
+
+    let mut loose = all.iter().filter(|notebook| {
+        let name = notebook.name.to_lowercase();
+        name.contains(&wanted) || wanted.contains(&name)
+    });
+    match (loose.next(), loose.next()) {
+        (Some(only), None) => Ok(only.clone()),
+        (Some(_), Some(_)) => Err(format!(
+            "\"{query}\" matches more than one notebook: {}. Say which one.",
+            choices()
+        )),
+        _ => Err(format!(
+            "No notebook is called \"{query}\". There is: {}.",
+            choices()
+        )),
+    }
+}
+
+/// The notebooks, as a turn can see them.
+///
+/// The same names the system prompt already carries, returned as a tool result
+/// so a turn that needs them mid-conversation - after creating one, say - does
+/// not have to rely on a prompt composed before that happened.
+fn notebook_list(deps: &Arc<RuntimeDeps>, session: &Session) -> Result<String, String> {
+    let all = deps
+        .notebooks
+        .list(&session.user.id)
+        .map_err(|error| format!("the notebooks could not be listed: {error}"))?;
+
+    if all.is_empty() {
+        return Ok("There are no notebooks yet.".to_string());
+    }
+
+    let mut answer = format!("{} notebook(s):\n", all.len());
+    for notebook in &all {
+        answer.push_str(&format!(
+            "- \"{}\" - {} document(s), updated {}\n",
+            notebook.name, notebook.document_count, notebook.updated_at
+        ));
+    }
+    Ok(answer)
+}
+
+fn notebook_create(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let name = tool_call.text("name").unwrap_or_default().trim();
+    if name.is_empty() {
+        return Err("a notebook needs a name; say what to call it".to_string());
+    }
+
+    // Refused rather than silently making a second one. Two notebooks with one
+    // name is a state every later "which notebook did you mean" has to live
+    // with, and it is created here or nowhere.
+    let existing = deps
+        .notebooks
+        .list(&session.user.id)
+        .map_err(|error| format!("the notebooks could not be listed: {error}"))?;
+    if let Some(clash) = existing
+        .iter()
+        .find(|notebook| notebook.name.to_lowercase() == name.to_lowercase())
+    {
+        return Err(format!(
+            "There is already a notebook called \"{}\". Use it, or choose another name.",
+            clash.name
+        ));
+    }
+
+    let made = deps
+        .notebooks
+        .create(&session.user.id, name)
+        .map_err(|error| format!("the notebook could not be created: {error}"))?;
+    Ok(format!(
+        "Created the notebook \"{}\". It has no documents yet - add them from the Notebooks \
+         screen, or attach a file to this conversation and ask for it to be put in.",
+        made.name
+    ))
+}
+
+fn notebook_rename(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let notebook = resolve_notebook(deps, session, tool_call.text("notebook"))?;
+    let name = tool_call.text("name").unwrap_or_default().trim();
+    if name.is_empty() {
+        return Err("say what the notebook should be called".to_string());
+    }
+
+    let was = notebook.name.clone();
+    let renamed = deps
+        .notebooks
+        .rename(&notebook.id, &session.user.id, name)
+        .map_err(|error| format!("the notebook could not be renamed: {error}"))?;
+    Ok(format!("Renamed \"{was}\" to \"{}\".", renamed.name))
+}
+
+fn notebook_delete(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let notebook = resolve_notebook(deps, session, tool_call.text("notebook"))?;
+
+    deps.notebooks
+        .delete(&notebook.id, &session.user.id)
+        .map_err(|error| format!("the notebook could not be deleted: {error}"))?;
+    Ok(format!(
+        "Deleted the notebook \"{}\" and the graph built over it. Its {} document(s) are \
+         untouched and still attached where they were.",
+        notebook.name, notebook.document_count
+    ))
+}
+
+fn notebook_sources(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let notebook = resolve_notebook(deps, session, tool_call.text("notebook"))?;
+    let documents = deps
+        .notebooks
+        .documents(&notebook.id, &session.user.id)
+        .map_err(|error| format!("the sources could not be listed: {error}"))?;
+
+    if documents.is_empty() {
+        return Ok(format!("\"{}\" has no documents in it.", notebook.name));
+    }
+
+    let mut answer = format!(
+        "\"{}\" holds {} document(s):\n",
+        notebook.name,
+        documents.len()
+    );
+    for document in &documents {
+        // The sha is what `document.read_pages` and `notebook.remove_source`
+        // both take, so it is named here rather than made a second lookup.
+        answer.push_str(&format!(
+            "- {} ({})\n",
+            document.document_name, document.document_sha256
+        ));
+    }
+    Ok(answer)
+}
+
+/// Puts a document already attached to this conversation into a notebook.
+///
+/// Scoped to the conversation's own attachments on purpose. The alternative -
+/// letting a turn name any sha it likes - would make a tool that can pull a
+/// document out of one conversation and into a notebook by guessing a hash,
+/// which is not a capability a chat turn should have even for its own owner.
+fn notebook_add_source(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let notebook = resolve_notebook(deps, session, tool_call.text("notebook"))?;
+    let wanted = tool_call
+        .text("document")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if wanted.is_empty() {
+        return Err("say which attached document to add, by its name".to_string());
+    }
+
+    // The run's conversation, looked up the way `search_attached_documents`
+    // does: `CallParams` carries the run id, and the mapping to a conversation
+    // lives in the runtime rather than on the call.
+    let Some(conversation_id) = deps.run_to_conversation.lookup(&call.run_id) else {
+        return Err(
+            "This run is not attached to a conversation, so it has no attached documents to add."
+                .to_string(),
+        );
+    };
+    let attached = deps
+        .documents
+        .for_conversation(&session.user.id, &conversation_id)
+        .map_err(|error| format!("this conversation's documents could not be read: {error}"))?;
+    if attached.is_empty() {
+        return Err(
+            "nothing is attached to this conversation, so there is nothing to add".to_string(),
+        );
+    }
+
+    let lowered = wanted.to_lowercase();
+    let mut matches = attached.iter().filter(|document| {
+        document.sha256 == wanted
+            || document.name.to_lowercase() == lowered
+            || document.name.to_lowercase().contains(&lowered)
+    });
+    let found = match (matches.next(), matches.next()) {
+        (Some(only), None) => only,
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "\"{wanted}\" matches more than one attached document. Name it exactly."
+            ))
+        }
+        _ => {
+            let names: Vec<&str> = attached
+                .iter()
+                .map(|document| document.name.as_str())
+                .collect();
+            return Err(format!(
+                "Nothing attached here is called \"{wanted}\". Attached: {}.",
+                names.join(", ")
+            ));
+        }
+    };
+
+    deps.notebooks
+        .add_document(&notebook.id, &session.user.id, &found.sha256, &found.name)
+        .map_err(|error| format!("the document could not be added: {error}"))?;
+    Ok(format!(
+        "Added \"{}\" to the notebook \"{}\". Run Build graph on the Notebooks screen to \
+         include it in the graph.",
+        found.name, notebook.name
+    ))
+}
+
+fn notebook_remove_source(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let notebook = resolve_notebook(deps, session, tool_call.text("notebook"))?;
+    let wanted = tool_call
+        .text("document")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if wanted.is_empty() {
+        return Err("say which source to take out, by its name".to_string());
+    }
+
+    let documents = deps
+        .notebooks
+        .documents(&notebook.id, &session.user.id)
+        .map_err(|error| format!("the sources could not be listed: {error}"))?;
+
+    let lowered = wanted.to_lowercase();
+    let mut matches = documents.iter().filter(|document| {
+        document.document_sha256 == wanted
+            || document.document_name.to_lowercase() == lowered
+            || document.document_name.to_lowercase().contains(&lowered)
+    });
+    let found = match (matches.next(), matches.next()) {
+        (Some(only), None) => only,
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "\"{wanted}\" matches more than one source in \"{}\". Name it exactly.",
+                notebook.name
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "\"{}\" has no source called \"{wanted}\".",
+                notebook.name
+            ))
+        }
+    };
+
+    let name = found.document_name.clone();
+    let sha = found.document_sha256.clone();
+    deps.notebooks
+        .remove_document(&notebook.id, &session.user.id, &sha)
+        .map_err(|error| format!("the source could not be removed: {error}"))?;
+    Ok(format!(
+        "Took \"{name}\" out of \"{}\", along with the graph evidence that came from it. \
+         The document itself is untouched.",
+        notebook.name
+    ))
+}
+
+fn build_document_graph(
+    deps: &Arc<RuntimeDeps>,
+    session: &Session,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    // `notebook` is what the catalogue asks for - a name in the person's own
+    // words. `notebookId` is still read because a model that has seen one in an
+    // earlier turn will pass it, and refusing a correct id to insist on a name
+    // would be pedantry.
+    let asked = tool_call
+        .text("notebook")
+        .or_else(|| tool_call.text("notebookId"))
+        .unwrap_or_default();
+    let notebook = resolve_notebook(deps, session, Some(asked))?;
+    let notebook_id = notebook.id.clone();
+
+    let document = tool_call.text("documentSha256").unwrap_or_default();
+    let document = if document.trim().is_empty() {
+        None
+    } else {
+        Some(document)
+    };
+    let focus = tool_call.text("focus").unwrap_or_default();
+    let focus = if focus.trim().is_empty() {
+        None
+    } else {
+        Some(focus)
+    };
+
+    let view = deps
+        .notebooks
+        .graph(
+            notebook_id.trim(),
+            &session.user.id,
+            document.as_deref(),
+            focus.as_deref(),
+            2,
+            1,
+            true,
+        )
+        .map_err(|error| format!("the graph could not be read: {error}"))?;
+
+    if view.nodes.is_empty() {
+        return Ok(format!(
+            "Notebook \"{}\" has no graph yet. Open the Notebooks screen and run Build graph \
+             over its {} document(s) first; nothing is drawn from an unbuilt notebook.",
+            notebook.name, notebook.document_count
+        ));
+    }
+
+    let nodes: Vec<crate::knowledge::graph::render::RenderNode> = view
+        .nodes
+        .iter()
+        .map(|node| (node.label.clone(), node.node_type.clone(), node.occurrences))
+        .collect();
+    let label_of = |id: &str| {
+        view.nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.label.clone())
+    };
+    let edges: Vec<crate::knowledge::graph::render::RenderEdge> = view
+        .edges
+        .iter()
+        .filter_map(|edge| {
+            Some((
+                label_of(&edge.source)?,
+                label_of(&edge.target)?,
+                edge.weight,
+                edge.relation.clone(),
+            ))
+        })
+        .collect();
+
+    let named = view
+        .edges
+        .iter()
+        .filter(|edge| edge.relation.is_some())
+        .count();
+    let diagram = crate::knowledge::graph::render::render_mermaid(&nodes, &edges);
+
+    // The counts are stated because the diagram cannot state them. A picture of
+    // forty nodes drawn from a graph of nine hundred looks like the whole
+    // library unless something says otherwise.
+    Ok(format!(
+        "```mermaid\n{diagram}```\n\nShowing {} of {} terms and {} of {} links. {}",
+        nodes.len(),
+        view.total_terms,
+        edges.len(),
+        view.total_edges,
+        if named == 0 {
+            "No link is named: the relation pass has not run over this notebook, so a line \
+             means only that two terms appear in the same passage. Do not describe an \
+             unnamed link as a relationship."
+        } else {
+            "A solid arrow is a named relation read out of the documents; a dashed line \
+             means only that two terms share a passage."
+        }
+    ))
+}
+
+/// Turns a search into the prose the model reads.
+///
+/// Every passage carries its document, page and heading trail, because that is
+/// what makes it citable — and because a run that quotes a passage without
+/// saying where it came from produces an answer nobody can check.
+///
+/// Finding nothing says so, and says how much was looked at. "No passage
+/// matched across 128 sections of 2 documents" and "there were no documents to
+/// search" are different facts, and a model told only the first will keep
+/// rephrasing the query against a conversation that has no documents in it.
+fn render_search(found: &documents::SearchOutcome) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if found.hits.is_empty() {
+        let _ = writeln!(
+            out,
+            "No passage matched \"{}\" across {} section(s) of {} document(s) attached to this \
+             conversation.",
+            found.query, found.chunks_searched, found.documents_searched
+        );
+        if found.documents_searched == 0 {
+            out.push_str(
+                "There are no documents attached to this conversation. Do not answer as though \
+                 there were.\n",
+            );
+        } else {
+            out.push_str(
+                "Try different words, or read a page range with document.read_pages. Do not \
+                 describe a passage you have not been shown.\n",
+            );
+        }
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "{} passage(s) matching \"{}\", from {} section(s) of {} document(s):",
+        found.hits.len(),
+        found.query,
+        found.chunks_searched,
+        found.documents_searched
+    );
+    for hit in &found.hits {
+        let where_from = if hit.section_path.is_empty() {
+            format!("{} — page {}", hit.name, hit.page)
+        } else {
+            format!(
+                "{} — {}, page {}",
+                hit.name,
+                hit.section_path.join(" › "),
+                hit.page
+            )
+        };
+        let _ = write!(out, "\n--- {where_from} ---\n{}\n", hit.text);
+    }
+    if found.truncated {
+        out.push_str(
+            "\nThis result reached its size limit before every match was included. Narrow the \
+             query to see the rest.\n",
+        );
+    }
+    out
+}
+
 /// Turns a page read into the prose the model reads.
 ///
 /// Says what was found *and* what was not, on separate lines. A range that
@@ -2229,6 +2849,104 @@ mod conversations_tests;
 #[cfg(test)]
 mod journey_tests;
 #[cfg(test)]
+mod large_document_tests;
+#[cfg(test)]
 mod memory_boundary_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod notebook_choice_tests {
+    use super::choose_notebook;
+    use crate::knowledge::Notebook;
+
+    fn notebook(id: &str, name: &str) -> Notebook {
+        Notebook {
+            id: id.to_string(),
+            name: name.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            document_count: 3,
+        }
+    }
+
+    /// The whole point of the change: one notebook, no name given, no id to
+    /// copy. "Draw the graph" has to work.
+    #[test]
+    fn one_notebook_needs_no_name_at_all() {
+        let all = vec![notebook("nb-1", "Unit Four")];
+        assert_eq!(choose_notebook(&all, None).unwrap().id, "nb-1");
+        assert_eq!(choose_notebook(&all, Some("")).unwrap().id, "nb-1");
+        assert_eq!(choose_notebook(&all, Some("   ")).unwrap().id, "nb-1");
+    }
+
+    #[test]
+    fn a_name_is_matched_however_it_is_cased() {
+        let all = vec![notebook("nb-1", "Supplier Contracts")];
+        assert_eq!(
+            choose_notebook(&all, Some("supplier contracts")).unwrap().id,
+            "nb-1"
+        );
+    }
+
+    /// What a person actually says. "the supplier one" and "my refinery
+    /// notebook" both have to land, from either direction.
+    #[test]
+    fn a_partial_name_matches_from_either_direction() {
+        let all = vec![
+            notebook("nb-1", "Supplier Contracts"),
+            notebook("nb-2", "Refinery"),
+        ];
+
+        assert_eq!(choose_notebook(&all, Some("supplier")).unwrap().id, "nb-1");
+        assert_eq!(
+            choose_notebook(&all, Some("my refinery notebook")).unwrap().id,
+            "nb-2"
+        );
+    }
+
+    #[test]
+    fn an_id_still_works_for_a_model_that_has_one() {
+        let all = vec![notebook("nb-1", "Unit Four"), notebook("nb-2", "Refinery")];
+        assert_eq!(choose_notebook(&all, Some("nb-2")).unwrap().id, "nb-2");
+    }
+
+    /// The refusal that matters. Two plausible matches and a guess would draw a
+    /// real graph of the wrong documents - a wrong answer that looks right.
+    #[test]
+    fn an_ambiguous_name_is_refused_and_names_the_candidates() {
+        let all = vec![
+            notebook("nb-1", "Supplier Contracts 2025"),
+            notebook("nb-2", "Supplier Contracts 2026"),
+        ];
+
+        let problem = choose_notebook(&all, Some("supplier contracts")).unwrap_err();
+        assert!(problem.contains("2025"), "{problem}");
+        assert!(problem.contains("2026"), "{problem}");
+    }
+
+    #[test]
+    fn several_notebooks_and_no_name_asks_rather_than_picking() {
+        let all = vec![notebook("nb-1", "Unit Four"), notebook("nb-2", "Refinery")];
+
+        let problem = choose_notebook(&all, None).unwrap_err();
+        assert!(problem.contains("Unit Four"), "{problem}");
+        assert!(problem.contains("Refinery"), "{problem}");
+        // Never a bare id: the person has no way to use one.
+        assert!(!problem.contains("nb-1"), "{problem}");
+    }
+
+    #[test]
+    fn an_unknown_name_says_what_there_is() {
+        let all = vec![notebook("nb-1", "Unit Four")];
+        let problem = choose_notebook(&all, Some("payroll")).unwrap_err();
+        assert!(problem.contains("Unit Four"), "{problem}");
+    }
+
+    #[test]
+    fn no_notebooks_says_so_rather_than_failing_obscurely() {
+        let problem = choose_notebook(&[], Some("anything")).unwrap_err();
+        assert!(problem.contains("no notebooks"), "{problem}");
+        assert!(problem.contains("Build graph"), "{problem}");
+    }
+}

@@ -72,6 +72,11 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "agent_pin_context": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
     "agent_reconcile_effect": {
       "owner": "agent",
       "consumer": "frontend",
@@ -107,11 +112,6 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "agent_pin_context": {
-      "owner": "agent",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
     "agent_steer_run": {
       "owner": "agent",
       "consumer": "frontend",
@@ -122,12 +122,12 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "agent_task_context": {
+    "agent_task_artifacts": {
       "owner": "agent",
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "agent_task_artifacts": {
+    "agent_task_context": {
       "owner": "agent",
       "consumer": "frontend",
       "note": "Called from src/."
@@ -411,6 +411,71 @@
       "owner": "models",
       "consumer": "frontend",
       "note": "Called from src/."
+    },
+    "notebook_add_documents": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Reads files through the same attachment pipeline a chat turn uses and puts them in a notebook."
+    },
+    "notebook_build_graph": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Runs the statistical extraction pass over a notebook's documents; resumable, skips documents already built at this extractor version."
+    },
+    "notebook_create": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
+    "notebook_rename": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Renames a notebook the signed-in person owns."
+    },
+    "notebook_delete": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Deletes a notebook and the graph built over it; the documents are untouched."
+    },
+    "notebook_remove_document": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Takes one document out of a notebook, with the graph evidence that came from it."
+    },
+    "notebook_documents": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
+    "notebook_graph": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Returns a local or global view of a notebook's graph, with the notebook's files as nodes joined to the terms found in them unless withDocuments is false."
+    },
+    "notebook_list": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/."
+    },
+    "notebook_node_evidence": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The passages behind one node, so the interface can answer 'why do you think that?'."
+    },
+    "notebook_render_subgraph": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Renders a chosen subgraph as Markdown; the frontend attaches it to a chat turn through the ordinary attachment path, which gives it a content address, a budget and pinning."
+    },
+    "notebook_extract_relations": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Names a notebook's edges with Babelscape/rebel-large in a CPU sidecar. It may only name an edge the statistical pass already found, never add one, and a relation outside a curated Wikidata subset is dropped and counted."
+    },
+    "notebook_type_graph": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Asks an already-loaded local model to type a notebook's terms and name relations; every claim must cite a passage and quote it, and anything unverified is dropped and counted."
     },
     "observe_process_connections": {
       "owner": "sovereignty",

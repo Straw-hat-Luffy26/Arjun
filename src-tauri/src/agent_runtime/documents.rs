@@ -47,7 +47,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::doc_pipeline::{self, Completeness};
 use crate::ai_engine::ocr_profile::OcrDetent;
+use crate::knowledge::chunking::{chunk_pages, Chunk};
 
 /// The most pages one retrieval call may return.
 ///
@@ -69,7 +71,19 @@ pub const MAX_READ_BYTES: usize = 24 * 1024;
 /// arrivals are the ones a run is asking about.
 const MAX_SIGHTINGS: usize = 64;
 
-const SCHEMA_VERSION: u32 = 1;
+/// The most passages one search returns.
+///
+/// Small on purpose. Search exists so a model can reach a page the turn could
+/// not afford, and a search that returns twenty passages has re-created the
+/// problem it was called to solve.
+pub const MAX_SEARCH_HITS: usize = 6;
+
+/// Version 2 added [`ExtractedDocument::chunks`] and
+/// [`ExtractedDocument::completeness`].
+///
+/// A version 1 file still loads — both fields default — and is re-chunked on
+/// read rather than being left unsearchable. See [`DocumentStore::read_file`].
+const SCHEMA_VERSION: u32 = 2;
 
 /// One page of a document, as it was read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +144,25 @@ pub struct ExtractedDocument {
     pub extracted_at: String,
     /// Every page that produced text, in page order.
     pub page_text: Vec<PageText>,
+    /// The document cut into retrievable passages, in reading order.
+    ///
+    /// Derived from [`Self::page_text`] by [`crate::knowledge::chunking`] and
+    /// kept beside it rather than recomputed per turn: chunking a forty-page
+    /// scan is cheap but not free, and every turn of a conversation would pay
+    /// it. Rebuilt whenever the page text changes, so the two cannot disagree.
+    ///
+    /// This is the field that makes a document larger than the window
+    /// survivable. The window decides what one *turn* can afford; this decides
+    /// what exists, and it is not the same decision.
+    #[serde(default)]
+    pub chunks: Vec<Chunk>,
+    /// What was read, what was not, and how much of it there is.
+    ///
+    /// The completeness check. Written at extraction time from work that
+    /// actually ran, so "all 42 pages were processed" can be answered from the
+    /// record rather than assumed from the absence of an error.
+    #[serde(default)]
+    pub completeness: Completeness,
     /// Newest last. See [`Sighting`].
     pub seen: Vec<Sighting>,
 }
@@ -154,6 +187,39 @@ impl ExtractedDocument {
     /// The highest page number that produced text.
     pub fn last_page_with_text(&self) -> u32 {
         self.page_text.iter().map(|p| p.page).max().unwrap_or(0)
+    }
+
+    /// Re-cuts the document and re-counts it.
+    ///
+    /// Called after any change to [`Self::page_text`], and on read for a record
+    /// written before chunks existed. Deriving rather than storing what the
+    /// caller passed is deliberate: the chunks are a *function* of the page
+    /// text, and the one way they could ever be wrong is by being computed from
+    /// something else.
+    fn rebuild(&mut self) {
+        let pages: Vec<(u32, &str)> = self
+            .page_text
+            .iter()
+            .map(|page| (page.page, page.text.as_str()))
+            .collect();
+        self.chunks = chunk_pages(&self.sha256, &pages);
+        let owned: Vec<(u32, String)> = self
+            .page_text
+            .iter()
+            .map(|page| (page.page, page.text.clone()))
+            .collect();
+        // `stored` is the chunk count itself: these chunks are written in the
+        // same file, in the same atomic rename, as the page text they came
+        // from. There is no separate index that could fall behind, so any
+        // number other than "all of them" here would be a fiction.
+        let stored = self.chunks.len() as u32;
+        self.completeness = doc_pipeline::measure(
+            self.pages,
+            &owned,
+            &self.chunks,
+            stored,
+            self.truncated,
+        );
     }
 }
 
@@ -204,6 +270,38 @@ pub struct PageRead {
     /// A property of the document, not of this call. Pages beyond that point
     /// may not exist in the store at all, and no narrower range will find them.
     pub source_truncated: bool,
+}
+
+/// One passage a search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkHit {
+    pub sha256: String,
+    pub name: String,
+    pub chunk_id: String,
+    /// The page this passage starts on — what a citation points at.
+    pub page: u32,
+    /// The headings above it, outermost first. What turns a passage into
+    /// evidence rather than a sentence.
+    pub section_path: Vec<String>,
+    pub text: String,
+}
+
+/// What one search over a conversation's documents produced.
+///
+/// Carries what was searched as well as what was found, because "nothing
+/// matched" and "there was nothing to match against" are different answers and
+/// a model given only the first will apologise for the wrong thing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOutcome {
+    pub query: String,
+    pub hits: Vec<ChunkHit>,
+    pub documents_searched: u32,
+    pub chunks_searched: u32,
+    /// True when [`MAX_READ_BYTES`] cut the result short of
+    /// [`MAX_SEARCH_HITS`].
+    pub truncated: bool,
 }
 
 /// Where the extractions live on disk.
@@ -262,7 +360,21 @@ impl DocumentStore {
         // re-readable — the bytes are still in `documents/attachments/`.
         Ok(serde_json::from_slice::<DocumentFile>(&bytes)
             .ok()
-            .map(|file| file.document))
+            .map(|file| file.document)
+            .map(|mut document| {
+                // Migration, done on read rather than by a pass over the store.
+                //
+                // A schema-1 record has pages and no chunks, which would make
+                // it invisible to search — the failure mode being that a
+                // document read yesterday silently stops being retrievable
+                // today. Re-cutting costs microseconds and cannot be forgotten.
+                // Not written back here: this is a read path, and the next
+                // `record` persists it.
+                if document.chunks.is_empty() && !document.page_text.is_empty() {
+                    document.rebuild();
+                }
+                document
+            }))
     }
 
     fn write_file(&self, document: &ExtractedDocument) -> std::io::Result<()> {
@@ -309,6 +421,8 @@ impl DocumentStore {
                     truncated: extraction.truncated,
                     extracted_at: now.clone(),
                     page_text: Vec::new(),
+                    chunks: Vec::new(),
+                    completeness: Completeness::default(),
                     seen: Vec::new(),
                 });
 
@@ -346,6 +460,11 @@ impl DocumentStore {
                 document.seen.drain(0..excess);
             }
         }
+
+        // Cut and counted before it is written, so the chunks in the file and
+        // the page text in the file are always the same read of the same
+        // document. See [`ExtractedDocument::rebuild`].
+        document.rebuild();
 
         self.write_file(&document)?;
         Ok(document)
@@ -490,6 +609,95 @@ impl DocumentStore {
         };
         found.sort_by(|a, b| latest_in(b).cmp(&latest_in(a)));
         Ok(found)
+    }
+
+    /// Finds passages by content across the documents of one conversation.
+    ///
+    /// ## Why this exists alongside [`Self::pages`]
+    ///
+    /// A page range is the right tool when the model knows where to look. It is
+    /// useless when it does not, and after a turn that could only afford a
+    /// third of a forty-page document, not knowing is the normal case: the
+    /// prompt says "pages 4-31 are not shown", and `read_pages` can only walk
+    /// them ten at a time, hoping. Searching asks the question the model
+    /// actually has — *where does this document talk about gasket torque* — and
+    /// costs one call instead of three.
+    ///
+    /// ## Isolation
+    ///
+    /// Exactly [`Self::for_conversation`]'s: owner and conversation both, so a
+    /// search can only reach what this person attached to this thread. There is
+    /// no cross-conversation search and there is deliberately no way to ask for
+    /// one — content-addressed storage means the same bytes may be somebody
+    /// else's document, and a query is a fine way to find out what it says.
+    ///
+    /// ## Bounds
+    ///
+    /// [`MAX_SEARCH_HITS`] passages and [`MAX_READ_BYTES`] of text, the same
+    /// ceiling a page read has. Ranking is
+    /// [`crate::agent_runtime::doc_pipeline::rank_chunks`] — the scorer the turn
+    /// itself used, so a passage the turn ranked highly is the passage a search
+    /// for the same words returns.
+    pub fn search(
+        &self,
+        query: &str,
+        owner_user_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> Result<SearchOutcome, String> {
+        let documents = self
+            .for_conversation(owner_user_id, conversation_id)
+            .map_err(|error| format!("the documents could not be read back: {error}"))?;
+
+        let chunks_searched: u32 = documents.iter().map(|d| d.chunks.len() as u32).sum();
+        let documents_searched = documents.len() as u32;
+
+        // Ranked per document and then merged, rather than over one flat list.
+        // Term rarity is a property of a document, and pooling two unrelated
+        // documents makes a word common in one look rare because the other
+        // never uses it.
+        let mut scored: Vec<(f64, ChunkHit)> = Vec::new();
+        for document in &documents {
+            for (score, chunk) in doc_pipeline::rank_chunks(query, &document.chunks) {
+                scored.push((
+                    score,
+                    ChunkHit {
+                        sha256: document.sha256.clone(),
+                        name: document.name.clone(),
+                        chunk_id: chunk.id.clone(),
+                        page: chunk.page,
+                        section_path: chunk.section_path.clone(),
+                        text: chunk.text.clone(),
+                    },
+                ));
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.page.cmp(&b.1.page))
+        });
+
+        let wanted = limit.clamp(1, MAX_SEARCH_HITS);
+        let mut hits = Vec::new();
+        let mut bytes = 0usize;
+        let mut truncated = false;
+        for (_, hit) in scored.into_iter().take(wanted) {
+            if bytes + hit.text.len() > MAX_READ_BYTES {
+                truncated = true;
+                break;
+            }
+            bytes += hit.text.len();
+            hits.push(hit);
+        }
+
+        Ok(SearchOutcome {
+            query: query.to_string(),
+            hits,
+            documents_searched,
+            chunks_searched,
+            truncated,
+        })
     }
 }
 

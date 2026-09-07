@@ -170,6 +170,36 @@ pub enum ToolName {
     /// left out, including the ones it never saw and the ones an earlier turn
     /// in the same conversation attached.
     ReadAttachedPages,
+    /// Finds a passage in an attached document by what it says.
+    ///
+    /// The companion to [`Self::ReadAttachedPages`], and the one a model
+    /// usually needs first. A page range is the right tool when you know the
+    /// page. After a turn that could only afford a third of a forty-page scan,
+    /// you do not: the prompt says "pages 4-31 are not shown", and walking them
+    /// ten at a time is three calls of guessing. This asks the question the
+    /// model actually has — *where does this document talk about gasket
+    /// torque* — and answers it in one.
+    SearchAttachedDocuments,
+    /// Read the knowledge graph of a document, and return it drawn.
+    ///
+    /// The tool behind "show me how the suppliers in this spec connect". Asked
+    /// that question without it, a model can only describe what it read, and a
+    /// description of a graph is the one form a graph is worst in.
+    ///
+    /// It reads the graph the passes in [`crate::knowledge::graph`] already
+    /// built - the statistical pass for the nodes and edges, REBEL for the
+    /// relation names - and returns both the structure and a Mermaid rendering
+    /// of it. Nothing is extracted here: a chat turn is not the place to spend
+    /// four minutes on a model, and a graph built inside a turn could not be
+    /// cited afterwards.
+    BuildDocumentGraph,
+    NotebookList,
+    NotebookCreate,
+    NotebookRename,
+    NotebookDelete,
+    NotebookSources,
+    NotebookAddSource,
+    NotebookRemoveSource,
 }
 
 impl ToolName {
@@ -192,6 +222,15 @@ impl ToolName {
         ToolName::SovereigntyGetEvidence,
         ToolName::KnowledgeMultimodalRetrieve,
         ToolName::ReadAttachedPages,
+        ToolName::SearchAttachedDocuments,
+        ToolName::BuildDocumentGraph,
+        ToolName::NotebookList,
+        ToolName::NotebookCreate,
+        ToolName::NotebookRename,
+        ToolName::NotebookDelete,
+        ToolName::NotebookSources,
+        ToolName::NotebookAddSource,
+        ToolName::NotebookRemoveSource,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -215,6 +254,15 @@ impl ToolName {
             ToolName::SovereigntyGetEvidence => "sovereignty.get_evidence",
             ToolName::KnowledgeMultimodalRetrieve => "knowledge.multimodal_retrieve",
             ToolName::ReadAttachedPages => "document.read_pages",
+            ToolName::SearchAttachedDocuments => "document.search",
+            ToolName::BuildDocumentGraph => "knowledge.build_graph",
+            ToolName::NotebookList => "notebook.list",
+            ToolName::NotebookCreate => "notebook.create",
+            ToolName::NotebookRename => "notebook.rename",
+            ToolName::NotebookDelete => "notebook.delete",
+            ToolName::NotebookSources => "notebook.list_sources",
+            ToolName::NotebookAddSource => "notebook.add_source",
+            ToolName::NotebookRemoveSource => "notebook.remove_source",
         }
     }
 
@@ -244,7 +292,16 @@ impl ToolName {
             | ToolName::AgentDelegateReadonly
             | ToolName::SovereigntyGetEvidence
             | ToolName::KnowledgeMultimodalRetrieve
-            | ToolName::ReadAttachedPages => None,
+            | ToolName::ReadAttachedPages
+            | ToolName::SearchAttachedDocuments
+            | ToolName::BuildDocumentGraph
+            | ToolName::NotebookList
+            | ToolName::NotebookCreate
+            | ToolName::NotebookRename
+            | ToolName::NotebookDelete
+            | ToolName::NotebookSources
+            | ToolName::NotebookAddSource
+            | ToolName::NotebookRemoveSource => None,
         }
     }
 
@@ -277,6 +334,15 @@ impl ToolName {
                 | ToolName::MediaExtractFindings
                 | ToolName::KnowledgeMultimodalRetrieve
                 | ToolName::ReadAttachedPages
+                | ToolName::SearchAttachedDocuments
+                | ToolName::BuildDocumentGraph
+                | ToolName::NotebookList
+                | ToolName::NotebookCreate
+                | ToolName::NotebookRename
+                | ToolName::NotebookDelete
+                | ToolName::NotebookSources
+                | ToolName::NotebookAddSource
+                | ToolName::NotebookRemoveSource
         )
     }
 
@@ -293,7 +359,18 @@ impl ToolName {
             | ToolName::AgentDelegateReadonly
             | ToolName::SovereigntyGetEvidence
             | ToolName::KnowledgeMultimodalRetrieve
-            | ToolName::ReadAttachedPages => true,
+            | ToolName::ReadAttachedPages
+            | ToolName::SearchAttachedDocuments
+            | ToolName::BuildDocumentGraph
+            | ToolName::NotebookList
+            | ToolName::NotebookSources => true,
+            // These change what the notebook holds, so they are not
+            // read-only and the gateway treats them accordingly.
+            ToolName::NotebookCreate
+            | ToolName::NotebookRename
+            | ToolName::NotebookDelete
+            | ToolName::NotebookAddSource
+            | ToolName::NotebookRemoveSource => false,
             ToolName::MemoryPromoteApproved
             | ToolName::WriteScopedFile
             | ToolName::CreateDocx
@@ -324,6 +401,17 @@ impl ToolName {
             ToolName::SovereigntyGetEvidence => "read this machine's own network record",
             ToolName::KnowledgeMultimodalRetrieve => "search text, image regions, and tables together",
             ToolName::ReadAttachedPages => "read pages of a document attached to this conversation",
+            ToolName::SearchAttachedDocuments => {
+                "find a passage in a document attached to this conversation"
+            }
+            ToolName::BuildDocumentGraph => "draw the knowledge graph of a document",
+            ToolName::NotebookList => "list the notebooks on this machine",
+            ToolName::NotebookCreate => "create a notebook",
+            ToolName::NotebookRename => "rename a notebook",
+            ToolName::NotebookDelete => "delete a notebook and the graph built over it",
+            ToolName::NotebookSources => "list the sources in a notebook",
+            ToolName::NotebookAddSource => "put an attached document into a notebook",
+            ToolName::NotebookRemoveSource => "take a source out of a notebook",
         }
     }
 }
@@ -519,6 +607,82 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             // considered complete is never truncated a second time by the
             // gateway without anything saying so.
             max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        ToolName::SearchAttachedDocuments => ToolSpec {
+            // The same permission as `ReadAttachedPages`, for the same reason,
+            // and it is worth stating rather than inferring: this searches only
+            // what the signed-in person attached to the conversation they are
+            // in. It does not reach the organisation's shelf, so it must not
+            // require — or grant — clearance to read it. The owner and
+            // conversation check is inside the operation, in
+            // `agent_runtime::documents::DocumentStore::search`.
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "query", kind: Text }],
+            // Reads a file this machine already wrote. No model, no sidecar, no
+            // socket — the ranking is a lexical score in this process.
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            // Above the store's own `MAX_READ_BYTES`, which is the real bound
+            // and is applied first, so a result the store considered complete is
+            // never cut a second time by the gateway without anything saying so.
+            max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        // The notebook family. Every one of these is a handful of statements
+        // against a local SQLite file, owner-scoped inside the store, so they
+        // share a shape: no network, a short timeout, and a response small
+        // enough that a listing cannot crowd out the conversation it is part
+        // of. They differ only in whether they write.
+        ToolName::NotebookList
+        | ToolName::NotebookSources
+        | ToolName::NotebookCreate
+        | ToolName::NotebookRename
+        | ToolName::NotebookAddSource
+        | ToolName::NotebookRemoveSource => ToolSpec {
+            permission: UseModel,
+            arguments: &[],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        // Deleting is the one that cannot be undone from the chat that did it:
+        // it drops the notebook, its membership rows and the whole graph built
+        // over it. So it asks, rather than being something a turn can do on its
+        // own reading of an instruction.
+        ToolName::NotebookDelete => ToolSpec {
+            permission: UseModel,
+            // The one tool here that a person has to agree to. It drops the
+            // notebook, its membership rows and the whole graph built over it,
+            // and a chat turn acting on its own reading of an instruction is
+            // not a good enough reason for that.
+            needs_approval: true,
+            arguments: &[],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::BuildDocumentGraph => ToolSpec {
+            // Reads a graph this machine already built, over documents the
+            // signed-in person already has. The owner check is inside the
+            // operation, in `NotebookStore::graph`, which takes an owner id in
+            // every `WHERE` - the same rule the rest of that store follows.
+            permission: UseModel,
+            // No required argument. A person with one notebook should be able to
+            // say "draw the graph" and be understood; `resolve_notebook` asks
+            // for a name only when there is a real choice to make.
+            arguments: &[],
+            // Three SQLite reads. No model is started here and no socket is
+            // opened; the relation pass that needs REBEL runs from the Notebooks
+            // screen, deliberately, where the person can watch it.
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(15),
+            // A Mermaid diagram plus the node and edge lists. Large enough for a
+            // graph worth drawing, small enough that one call cannot fill a
+            // context window with a picture.
+            max_response_bytes: 24 * 1024,
             ..defaults(name)
         },
         ToolName::MemoryRecallAuthorized => ToolSpec {

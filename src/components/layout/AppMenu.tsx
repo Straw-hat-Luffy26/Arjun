@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ChevronDown, BookOpen, Boxes, ShieldCheck, Activity, HeartPulse, Cpu, Settings, UserRound, LogOut, MessageSquare, ListTodo, Plus,
+  ChevronDown, BookOpen, NotebookPen, Boxes, ShieldCheck, Activity, HeartPulse, Cpu, Settings, UserRound, LogOut, MessageSquare, ListTodo, Plus,
 } from 'lucide-react';
 import {
   governanceService,
@@ -46,6 +46,7 @@ const SECTIONS: Section[] = [
       { label: 'Tasks',            icon: <ListTodo size={15} />,      path: '/tasks',         shortcut: 'H' },
       { label: 'Conversations',    icon: <MessageSquare size={15} />, path: '/conversations', shortcut: 'Y' },
       { label: 'Knowledge',        icon: <BookOpen size={15} />,      path: '/knowledge',     shortcut: 'K' },
+      { label: 'Notebooks',        icon: <NotebookPen size={15} />,   path: '/notebooks',     shortcut: 'G' },
     ],
   },
   {

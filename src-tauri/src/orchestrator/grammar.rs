@@ -305,12 +305,19 @@ mod tests {
     /// and a plan permits a handful. Namespaced names cost roughly ten
     /// characters each over the old flat ones — paid back in the model reaching
     /// for the right tool, which is worth more than the tokens.
+    /// The ceiling was 600 when the catalogue held twenty tools, and is 800
+    /// now that the seven notebook tools bring it to twenty-seven. A looser
+    /// number but a tighter budget: 722 characters over 27 tools is 26.7
+    /// each, against 30 before. The measured figure is in the failure
+    /// message, so the next person to add a tool can see whether they spent
+    /// more than their share rather than guessing at a new ceiling.
     #[test]
     fn the_preamble_is_brief() {
         let grammar = build(ToolName::ALL).unwrap();
         assert!(
-            grammar.preamble().len() < 600,
-            "the preamble should not crowd out the task itself"
+            grammar.preamble().len() < 800,
+            "the preamble should not crowd out the task itself (it is {})",
+            grammar.preamble().len()
         );
     }
 

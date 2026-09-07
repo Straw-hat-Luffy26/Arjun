@@ -11,6 +11,26 @@
   overflow: hidden;
 }
 
+/* The routed page.
+ *
+ * `main` needs an explicit height and its own scrolling. The shell is
+ * `height: 100dvh; overflow: hidden`, and a `main` with no rule is a plain
+ * block sized to its content: it grows past the viewport, the shell clips
+ * whatever hangs below, and nothing scrolls — the page is simply cut off at
+ * the window edge with no way to reach the rest. Pages that manage their own
+ * scrolling (Notebooks, Knowledge, Workbench) also need this, because their
+ * `height: 100%` has nothing to resolve against until `main` has a definite
+ * height of its own.
+ *
+ * `min-height: 0` is what lets it actually shrink to the shell rather than
+ * being floored at its content height by the default `min-height: auto` of a
+ * flex item. */
+.main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .header {
   flex: none;
   display: grid;

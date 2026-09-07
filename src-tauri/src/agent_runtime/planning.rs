@@ -298,6 +298,36 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         // that turn's files are exactly what a plan derived from today's prompt
         // cannot see.
         ToolName::ReadAttachedPages,
+        ToolName::SearchAttachedDocuments,
+        // Drawing a graph the notebook passes already built.
+        //
+        // Always available for the same reason the two above are: it reads only
+        // what the asker's own documents produced, scoped by owner in every
+        // query, and it starts nothing. Withholding it would mean a run asked to
+        // show how a document's suppliers connect could only describe the graph
+        // in prose - which is the one form a graph is worst in, and the reason
+        // the tool exists.
+        ToolName::BuildDocumentGraph,
+        // The notebook tools, for the same reason.
+        //
+        // Every one of them is scoped to the signed-in owner inside the store,
+        // reads or writes a single local database, and starts nothing. Leaving
+        // them out is what produced the failure they were written for: asked to
+        // create a notebook, a turn with no tool for it reasoned that "there's
+        // no tool to create a notebook directly" and wrote a file called after
+        // the notebook instead - a plausible-looking artefact that is not a
+        // notebook and never appears in the list.
+        //
+        // `notebook.delete` is here too, but it is not thereby unattended: its
+        // ToolSpec carries `needs_approval`, so the plan permitting it and a
+        // person agreeing to it stay two separate things.
+        ToolName::NotebookList,
+        ToolName::NotebookCreate,
+        ToolName::NotebookRename,
+        ToolName::NotebookDelete,
+        ToolName::NotebookSources,
+        ToolName::NotebookAddSource,
+        ToolName::NotebookRemoveSource,
         // Reading memory is always available: a run that may not consult what
         // the project already agreed a term means will re-derive it, differently
         // each time. Promotion is not here — writing something later runs read

@@ -84,6 +84,7 @@ function PageTitle() {
     '/tasks': 'Tasks',
     '/conversations': 'Conversations',
     '/knowledge': 'Knowledge',
+    '/notebooks': 'Notebooks',
     '/approvals': 'Approvals',
     '/audit': 'Audit & Network',
     '/health': 'Health',

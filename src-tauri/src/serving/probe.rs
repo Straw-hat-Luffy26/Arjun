@@ -41,23 +41,36 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// failed request to discover.
 const PROBE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Builds a client for talking to a model server on this machine.
+///
+/// The single place in the application that constructs one, which is what the
+/// egress gate is checking for: a second builder elsewhere is a second thing
+/// that can forget `.no_proxy()`, and forgetting it is not cosmetic — an
+/// inherited `HTTP_PROXY` turns a loopback request into one that leaves the
+/// machine carrying whatever it was sending.
+///
+/// `timeout` is the caller's, because the callers differ by orders of
+/// magnitude: a probe should give up in seconds, while
+/// [`crate::knowledge::graph::typing`] sends a document's passages to a
+/// quantised model under a grammar constraint and minutes is normal.
+pub(crate) fn loopback_client(timeout: Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .pool_idle_timeout(PROBE_IDLE_TIMEOUT)
+        // A local server has no proxy, and honouring an inherited proxy
+        // variable would turn a loopback request into one that leaves the
+        // machine. arjun-egress-ok: the sole HTTP client builder for loopback
+        // model servers; `no_proxy` is what keeps it loopback.
+        .no_proxy()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 /// The one client every probe uses. See [`probe`] for why it is shared.
 fn shared_client() -> Result<reqwest::Client, String> {
     static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
         std::sync::OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(PROBE_TIMEOUT)
-                .pool_idle_timeout(PROBE_IDLE_TIMEOUT)
-                // A local server has no proxy, and honouring an inherited proxy
-                // variable would turn a loopback probe into a request that
-                // leaves the machine.
-                .no_proxy()
-                .build()
-                .map_err(|error| error.to_string())
-        })
-        .clone()
+    CLIENT.get_or_init(|| loopback_client(PROBE_TIMEOUT)).clone()
 }
 
 /// What a probe found.

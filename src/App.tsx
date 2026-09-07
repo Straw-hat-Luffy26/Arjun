@@ -14,6 +14,7 @@ import { DocumentScan } from './pages/DocumentScan';
 import { Tasks } from './pages/Tasks';
 import { Conversations } from './pages/Conversations';
 import { Knowledge } from './pages/Knowledge';
+import { Notebooks } from './pages/Notebooks';
 import { AuditNetwork } from './pages/AuditNetwork';
 import { SignIn } from './pages/SignIn';
 import { governanceService, type Session } from './services/governance.service';
@@ -86,6 +87,7 @@ function App() {
                     <Route path="conversations" element={<Conversations />} />
 
                     <Route path="knowledge" element={<Knowledge />} />
+                    <Route path="notebooks" element={<Notebooks />} />
                     {/* Diagnostic surface, deliberately not in the menu.
                       * Ordinary OCR happens in chat: attach a document to a
                       * message and the runtime reads it before answering.

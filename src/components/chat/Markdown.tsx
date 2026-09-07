@@ -1,5 +1,6 @@
 import React from 'react';
 import { CodeBlock } from './CodeBlock';
+import { MermaidGraph } from './MermaidGraph';
 import styles from './ChatSurface.module.css';
 
 /**
@@ -376,6 +377,12 @@ export function Markdown({ content }: { content: string }) {
               </p>
             );
           case 'code':
+            // A mermaid fence is a picture the model was handed, not source it
+            // wrote. Drawn rather than printed; `MermaidGraph` falls back to a
+            // code block for any diagram it cannot read.
+            if (block.lang === 'mermaid') {
+              return <MermaidGraph key={key} source={block.text} />;
+            }
             return <CodeBlock key={key} code={block.text} lang={block.lang} />;
           case 'table':
             return (

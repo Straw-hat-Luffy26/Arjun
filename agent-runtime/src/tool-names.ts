@@ -59,6 +59,15 @@ export const CANONICAL_TOOL_NAMES = [
   "agent.delegate_readonly",
   "sovereignty.get_evidence",
   "document.read_pages",
+  "document.search",
+  "knowledge.build_graph",
+  "notebook.add_source",
+  "notebook.create",
+  "notebook.delete",
+  "notebook.list",
+  "notebook.list_sources",
+  "notebook.remove_source",
+  "notebook.rename",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];

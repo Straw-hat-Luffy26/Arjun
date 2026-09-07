@@ -85,6 +85,11 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         run_to_conversation: Arc::new(
             crate::agent_runtime::conversations::RunToConversation::new(),
         ),
+        // In memory: these tests are about the runtime boundary, not about
+        // notebooks, and a store on disk would make them share state.
+        notebooks: Arc::new(
+            crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
+        ),
     });
     (deps, dir)
 }

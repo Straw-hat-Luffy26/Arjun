@@ -2344,3 +2344,27 @@
   line-height: 1.55;
   color: var(--text-tertiary);
 }
+
+/* A graph drawn from a mermaid fence in an assistant message. */
+.mdGraph {
+  margin: 12px 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mdGraph > * {
+  /* The canvas sizes to its container; without a height it collapses to zero
+     and the graph is present, laid out, and invisible. */
+  height: 320px;
+  width: 100%;
+}
+
+.mdGraphCaption {
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}

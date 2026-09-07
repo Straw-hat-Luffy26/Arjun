@@ -14,11 +14,13 @@ the day after it is written.
 
 Agent runtime bundle `agent-runtime/dist/arjun-agent-runtime.mjs`
 
-SHA-256 `1b74f8e79c6b1b868c885385cf730ad42e67294350dfb8d344dd92a75519e7f5`
+SHA-256 `5ad023609259aa529d17c3c0e16f540eace1338563a28184ed7bb151e1875a1c`
 
 ## Gaps, stated rather than hidden
 
 - The document sidecar's Python dependencies are installed by the deployment rather than by this repository, so they are not listed here. They belong in the deployment record.
+- The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because the dependency is far heavier: it pins torch and transformers in its own requirements.txt. An air-gapped install must vendor those wheels; nothing in this repository fetches them.
+- The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
 
 ## Related evidence
 

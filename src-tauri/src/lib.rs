@@ -279,6 +279,16 @@ pub fn run() {
                 }
             }
 
+            // Notebooks: the named document libraries the graph is built over.
+            // Same SQLite file again, its own tables, its own connection —
+            // the pattern the multimodal index above established.
+            match knowledge::NotebookStore::open(&data_dir) {
+                Ok(store) => {
+                    app.manage(Arc::new(store));
+                }
+                Err(e) => log::error!("[NOTEBOOK] the notebook store could not be opened: {e}"),
+            }
+
             let approval_queue = Arc::new(orchestrator::approvals::ApprovalQueue::new());
             app.manage(Arc::clone(&approval_queue));
             app.manage(commands::governance::CurrentSession::default());
@@ -1048,6 +1058,19 @@ pub fn run() {
             commands::approvals::decide_approval,
             commands::catalog::browse_model_cards,
             commands::catalog::list_model_categories,
+            commands::notebook::notebook_list,
+            commands::notebook::notebook_create,
+            commands::notebook::notebook_rename,
+            commands::notebook::notebook_delete,
+            commands::notebook::notebook_remove_document,
+            commands::notebook::notebook_documents,
+            commands::notebook::notebook_add_documents,
+            commands::notebook::notebook_build_graph,
+            commands::notebook::notebook_graph,
+            commands::notebook::notebook_node_evidence,
+            commands::notebook::notebook_render_subgraph,
+            commands::notebook::notebook_type_graph,
+            commands::notebook::notebook_extract_relations,
 
             // The ten `memory_engine::api::*` commands were removed. See
             // `memory_engine::api` for the reasoning; in short, every one of

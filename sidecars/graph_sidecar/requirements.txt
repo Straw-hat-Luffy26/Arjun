@@ -1,0 +1,16 @@
+# Graph sidecar dependencies.
+#
+# Pinned exactly, and installed from vendored wheels in an air-gapped
+# deployment. CLAUDE.md is explicit that nothing on this machine reaches the
+# network without a reviewed decision, and `pip install` from an offline
+# installer is exactly the kind of unreviewed fetch that rule exists to stop.
+#
+# The CPU build of torch is deliberate, not a fallback. REBEL is 400M
+# parameters and runs a background index; putting it on the GPU would make it
+# compete with the chat model for VRAM, which is the specific problem the
+# relation pass exists to avoid. Install with:
+#
+#   pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
+#
+torch==2.14.0
+transformers==5.15.1

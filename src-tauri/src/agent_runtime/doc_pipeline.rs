@@ -76,6 +76,19 @@ const CHARS_PER_TOKEN: usize = 4;
 /// document instead is both more useful and more honest about what it is doing.
 const COVERAGE_SHARE: f64 = 0.7;
 
+/// The share of the budget pinned documents divide between themselves.
+///
+/// A pin is a person saying "keep this one". Honouring it by merely visiting
+/// the document first is not honouring it at all: the budget is handed out in
+/// turn and whatever is left goes to the last document, so a pinned document
+/// visited first ended up with less of the turn than an unpinned one visited
+/// last. It gets a reserved majority instead.
+///
+/// Not all of it. A pin is "prefer this", not "and discard everything else" —
+/// a person who pins a drawing and then attaches an invoice still expects the
+/// invoice to be read.
+const PINNED_SHARE: f64 = 0.7;
+
 /// Tokens charged for the label above each chunk — the page and heading trail.
 ///
 /// Charged rather than ignored. A selection of forty chunks whose labels were
@@ -462,6 +475,44 @@ fn score(
     total_score
 }
 
+/// Ranks chunks against a question, best first, dropping non-matches.
+///
+/// The same scorer [`select`] uses, exposed because `document.search` must
+/// rank the way the turn ranked. Two scorers would mean a model told "this
+/// passage was not relevant enough to include" finding it by searching for the
+/// same words, or worse, not finding it.
+///
+/// Frequencies are computed over the chunks passed in, which is the right
+/// corpus for both callers: what makes a term distinctive is how it is spread
+/// across the material actually on offer.
+pub fn rank_chunks<'a>(question: &str, chunks: &'a [Chunk]) -> Vec<(f64, &'a Chunk)> {
+    let query = terms(question);
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut frequency: HashMap<String, u32> = HashMap::new();
+    for chunk in chunks {
+        let present: HashSet<String> = words_of(chunk).into_iter().collect();
+        for term in &query {
+            if present.contains(term) {
+                *frequency.entry(term.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let total = chunks.len() as u32;
+    let mut ranked: Vec<(f64, &Chunk)> = chunks
+        .iter()
+        .map(|chunk| (score(chunk, &query, &frequency, total), chunk))
+        .filter(|(value, _)| *value > 0.0)
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.ordinal.cmp(&b.1.ordinal))
+    });
+    ranked
+}
+
 /// How many chunks mention each query term, across everything on offer.
 fn document_frequencies(
     candidates: &[Candidate<'_>],
@@ -526,23 +577,57 @@ pub fn select(question: &str, candidates: &[Candidate<'_>], budget: u32) -> Sele
     let mut order: Vec<usize> = (0..candidates.len()).collect();
     order.sort_by_key(|i| !candidates[*i].pinned);
 
-    // Split evenly, then let earlier documents spend what later ones cannot. An
-    // even split alone wastes the budget when one document is a single page.
-    let mut remaining = budget;
-    let mut share_count = candidates.len() as u32;
+    // Two pools, so a pin is a reservation rather than a place in a queue. See
+    // [`PINNED_SHARE`]. Within a pool the budget is split evenly and earlier
+    // documents leave what they cannot spend to later ones — an even split
+    // alone wastes the budget whenever one document is a single page.
+    let mut pinned_left = candidates.iter().filter(|c| c.pinned).count() as u32;
+    let mut plain_left = candidates.len() as u32 - pinned_left;
+    let mut pinned_pool = if pinned_left == 0 {
+        0
+    } else if plain_left == 0 {
+        budget
+    } else {
+        (f64::from(budget) * PINNED_SHARE) as u32
+    };
+    let mut plain_pool = budget.saturating_sub(pinned_pool);
+    let mut handed_over = false;
 
     for index in order {
         let candidate = &candidates[index];
-        let share = if share_count <= 1 {
-            remaining
+        let share = if candidate.pinned {
+            let share = if pinned_left <= 1 {
+                pinned_pool
+            } else {
+                pinned_pool / pinned_left
+            };
+            pinned_left = pinned_left.saturating_sub(1);
+            share
         } else {
-            remaining / share_count
+            // Whatever the pinned documents did not need is not wasted; it
+            // joins the pool the rest are drawing from. Done once, on the first
+            // unpinned document, because by then every pinned one has spent.
+            if !handed_over {
+                plain_pool = plain_pool.saturating_add(pinned_pool);
+                pinned_pool = 0;
+                handed_over = true;
+            }
+            let share = if plain_left <= 1 {
+                plain_pool
+            } else {
+                plain_pool / plain_left
+            };
+            plain_left = plain_left.saturating_sub(1);
+            share
         };
-        share_count = share_count.saturating_sub(1);
 
         let picked = pick_within(candidate, &query, whole, share, &frequency, total_chunks);
         let spent: u32 = picked.iter().map(|c| c.tokens).sum();
-        remaining = remaining.saturating_sub(spent);
+        if candidate.pinned {
+            pinned_pool = pinned_pool.saturating_sub(spent);
+        } else {
+            plain_pool = plain_pool.saturating_sub(spent);
+        }
         omitted.push(omission(candidate, &picked));
         chosen.extend(picked);
     }
@@ -636,18 +721,38 @@ fn pick_within(
         taken.push(selected(candidate, chunk, SelectionReason::Relevance, price));
     }
 
-    // Nothing matched and nothing was sampled — a pointed question whose terms
-    // appear nowhere in this document. Rather than contributing nothing at all,
-    // spend the share on coverage, so the model can see this is the wrong
-    // document instead of being told only that one exists.
-    if taken.is_empty() {
-        for index in evenly_spaced(candidate.chunks, share) {
+    // Whatever relevance did not spend is spent on coverage.
+    //
+    // Ranking stops when it runs out of *matches*, not when it runs out of
+    // budget, and on a pointed question about a long document that is almost
+    // immediately: "what is the code on page 101" matches page 101 and nothing
+    // else, takes one passage, and returns a turn holding a tenth of what the
+    // window could carry. Measured on the validation set, three of eight
+    // documents were answered wrongly for exactly this reason — and on the
+    // 200-page one the single affordable passage was the *filler* half of page
+    // 101 rather than the half with the code on it.
+    //
+    // An unspent budget is a window the operator paid for and did not get. So
+    // the remainder is filled with passages spread across the document, which
+    // is also the right shape of guess: the neighbours of a match are where the
+    // rest of its clause lives, and a spread is what makes a second, unrelated
+    // part of the question answerable at all.
+    //
+    // This subsumes the old "nothing matched at all" case. A document whose
+    // terms appear nowhere still contributes a spread, so the model can see it
+    // is the wrong document rather than being told only that one exists.
+    if spent < share {
+        for index in evenly_spaced(candidate.chunks, share - spent) {
             let chunk = &candidate.chunks[index];
+            if used.contains(&chunk.ordinal) {
+                continue;
+            }
             let price = cost(chunk);
             if spent + price > share {
                 continue;
             }
             spent += price;
+            used.insert(chunk.ordinal);
             taken.push(selected(candidate, chunk, SelectionReason::Coverage, price));
         }
     }
@@ -987,6 +1092,35 @@ mod tests {
         assert!(
             names.contains("first.pdf") && names.contains("second.pdf"),
             "one document took the whole turn: {names:?}"
+        );
+    }
+
+    /// The defect the validation table exposed: relevance stops at the last
+    /// match, not at the last token, so a pointed question about a long
+    /// document used to return one passage and leave the window empty.
+    #[test]
+    fn a_pointed_question_still_spends_the_budget_it_was_given() {
+        // One passage mentions "torque"; the other ninety-nine do not. Ranking
+        // alone therefore takes exactly one and stops.
+        let mut chunks: Vec<Chunk> = (0..100)
+            .map(|i| chunk(i, i + 1, &format!("Routine paragraph {i}. ").repeat(12)))
+            .collect();
+        chunks[50] = chunk(50, 51, "The torque figure is 47 Nm.");
+
+        let picked = select("what is the torque figure", &[candidate(&chunks)], 3_000);
+        assert!(
+            picked.chosen.iter().any(|c| c.page == 51),
+            "the matching passage was dropped"
+        );
+        assert!(
+            picked.tokens > 3_000 / 2,
+            "only {} of a 3,000-token budget was used; the rest of the window was left empty",
+            picked.tokens
+        );
+        assert!(
+            picked.tokens <= 3_000,
+            "the fill pass overspent: {} of 3,000",
+            picked.tokens
         );
     }
 
