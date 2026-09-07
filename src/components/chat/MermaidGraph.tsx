@@ -32,7 +32,18 @@ export function MermaidGraph({ source }: { source: string }) {
 
   return (
     <figure className={styles.mdGraph}>
-      <GraphCanvas nodes={parsed.nodes} edges={parsed.edges} />
+      {/*
+        The canvas carries `height: 100%` inline, and an inline style beats a
+        class rule, so the height cannot be given to it from the stylesheet. It
+        needs a parent with a definite height instead: without one the
+        percentage resolves against nothing, the ResizeObserver measures the
+        canvas's own grown size, writes a larger backing store, and measures
+        that in turn. It ran to 2968px here before the browser stopped painting
+        an over-large surface altogether and drew a blank white rectangle.
+      */}
+      <div className={styles.mdGraphCanvas}>
+        <GraphCanvas nodes={parsed.nodes} edges={parsed.edges} />
+      </div>
       <figcaption className={styles.mdGraphCaption}>
         {parsed.nodes.length} {parsed.nodes.length === 1 ? 'term' : 'terms'}
         {named > 0 && `, ${named} named ${named === 1 ? 'relation' : 'relations'}`}

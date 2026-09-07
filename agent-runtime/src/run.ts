@@ -397,6 +397,31 @@ export interface ActiveRun {
  * model's to recover from -- a refused tool call is a tool result, not an
  * exception, because the model can read it and try something else.
  */
+/**
+ * A timer that only fires when nothing has happened.
+ *
+ * Separated from the run so the policy can be tested without a model, a loop or
+ * a child process: the question "does a run that keeps working stay alive, and
+ * does one that goes quiet get stopped?" needs neither.
+ */
+export function createStallGuard(windowMs: number, onStall: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    /** Something happened. Start the window again. */
+    progress() {
+      stop();
+      timer = setTimeout(onStall, windowMs);
+      // Never a reason on its own to hold the process open.
+      timer.unref?.();
+    },
+    stop,
+  };
+}
+
 export async function startRun(
   peer: RpcPeer,
   request: RunRequest,
@@ -623,6 +648,40 @@ export async function startRun(
     if (abortCause === null) abortCause = cause;
   };
 
+  /**
+   * How long the run may produce *nothing at all* before it is stopped.
+   *
+   * The deadline below is a ceiling on total time, and a ceiling on total time
+   * cannot tell a slow model from a stuck one. On this machine Nemotron3-Nano
+   * decodes at about five tokens a second, so a 2.3k-token answer takes over
+   * eight minutes of continuous, healthy work - and a ten-minute ceiling
+   * stopped it partway with nothing to show, for a question it had already
+   * answered correctly once.
+   *
+   * Stalling is the thing actually worth catching, and it has a signal: a run
+   * that is working emits reasoning deltas, text deltas or tool activity. This
+   * timer is rearmed by any of them, so a healthy slow run resets it every few
+   * hundred milliseconds and a wedged one never does.
+   *
+   * Four minutes rather than one, because the quiet period before the first
+   * token is real work too: a long prompt has to be prefilled before anything
+   * can be emitted, and on a small GPU that is not instant.
+   */
+  const STALL_MS = 4 * 60 * 1000;
+
+  const guard = createStallGuard(STALL_MS, () => {
+    causedBy({
+      kind: "budgetStopped",
+      detail:
+        "Stopped: it produced nothing for four minutes, so it was treated as stuck rather " +
+        "than slow.",
+    });
+    agent.abort("the task stopped producing output");
+  });
+  const noteProgress = () => guard.progress();
+  const clearStall = () => guard.stop();
+  noteProgress();
+
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   if (typeof request.deadlineMs === "number") {
     const remaining = request.deadlineMs - Date.now();
@@ -673,6 +732,10 @@ export async function startRun(
   };
 
   agent.subscribe((event: AgentEvent) => {
+    // Any event at all is a sign of life: a reasoning delta, a token of the
+    // answer, a tool starting or finishing. What matters is that something
+    // happened, not what it was.
+    noteProgress();
     if (event.type === "turn_end") turns += 1;
 
     // Reconciliation, on every model call rather than periodically.
@@ -752,6 +815,7 @@ export async function startRun(
     await agent.prompt(request.prompt);
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);
+    clearStall();
     // Exactly one terminal event per run, on every path out.
     //
     // `agent_end` covers the ordinary exits and has already closed the cell by

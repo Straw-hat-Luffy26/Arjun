@@ -93,7 +93,20 @@ impl Budget {
     pub fn standard(permitted_tools: Vec<ToolName>) -> Self {
         Self {
             max_steps: 12,
-            max_duration: Duration::from_secs(10 * 60),
+            // A backstop, not a prediction of how long good work takes.
+            //
+            // Ten minutes was chosen against a fast model. A local 4B at five
+            // tokens a second spends eight of those minutes on one answer, so
+            // the ceiling was stopping correct runs partway - the failure a
+            // person sees as "it ran past the time its plan allowed" after
+            // waiting ten minutes for nothing.
+            //
+            // What actually catches a wedged run is the stall timer in
+            // `agent-runtime/src/run.ts`, which stops a run that emits nothing
+            // for four minutes and is rearmed by every token. This number only
+            // has to bound the case where a run keeps producing output forever,
+            // and half an hour is past the point a person has walked away.
+            max_duration: Duration::from_secs(30 * 60),
             permitted_tools,
             repeat_limit: 3,
         }

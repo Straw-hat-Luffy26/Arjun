@@ -57,6 +57,16 @@ interface Box {
 /** Height of a file's box. Fixed; only the width follows the name. */
 const FILE_HEIGHT = 22;
 
+/**
+ * Below this many nodes, every node is labelled.
+ *
+ * Chosen against the canvas rather than by taste: at 320px tall, which is what
+ * a chat reply gives it, a label is 11px and needs roughly 14px of vertical
+ * room with its node. Two dozen of them spread over that area do not overlap;
+ * many more begin to.
+ */
+const LABEL_EVERY_NODE_BELOW = 24;
+
 /** A file name long enough to be a paragraph is trimmed to fit its box. */
 function fileLabel(label: string): string {
   return label.length > 24 ? `${label.slice(0, 23)}…` : label;
@@ -459,7 +469,18 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
       // Labels only where they can be read: on bigger nodes, the focus, the
       // selection, and whatever is under the cursor. A label on every node at
       // any zoom is an unreadable smear.
-      if (r > 7 || isFocus || isSelected || node.id === hovered) {
+      //
+      // Except when there is nothing to smear. `radiusFor` gives a degree-1
+      // node 6.2, so `r > 7` needs degree 2 or more - and a graph drawn in a
+      // chat reply is usually half a dozen terms in a line, every one of them
+      // degree 1. The rule that keeps a 300-node picture readable was leaving
+      // the small ones as unlabelled circles, which is not a graph at all: the
+      // reader cannot tell which term is which.
+      //
+      // The bound is on the node count rather than the radius because that is
+      // the thing that decides whether labels collide.
+      const roomForEveryLabel = nodes.length <= LABEL_EVERY_NODE_BELOW;
+      if (r > 7 || roomForEveryLabel || isFocus || isSelected || node.id === hovered) {
         context.fillStyle = ink;
         context.font = '11px system-ui, sans-serif';
         context.textAlign = 'center';

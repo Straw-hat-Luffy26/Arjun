@@ -2354,9 +2354,12 @@
   overflow: hidden;
 }
 
-.mdGraph > * {
-  /* The canvas sizes to its container; without a height it collapses to zero
-     and the graph is present, laid out, and invisible. */
+/* The canvas sizes to its container; without a height it collapses to zero and
+   the graph is present, laid out, and invisible.
+
+   On the wrapper rather than on `> *`, which also matched the figcaption and
+   made a one-line caption 320px tall. */
+.mdGraphCanvas {
   height: 320px;
   width: 100%;
 }
