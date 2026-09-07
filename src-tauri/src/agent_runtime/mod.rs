@@ -1767,6 +1767,41 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         deps.events.settle_effect(&call.run_id, key, &outcome);
     }
 
+    // Every tool call, named, with what it was given and how it ended.
+    //
+    // This is the only place that sees all of them: the runner path, the agent
+    // path and the refusals all funnel through here. Until it existed a tool
+    // that quietly did nothing looked exactly like a tool that was never
+    // called, and the difference could not be established from outside - which
+    // is precisely the position `notebook.create` left us in.
+    //
+    // Argument *names* and the size of the result, never their contents: this
+    // line goes to a log file, and the arguments carry document text, search
+    // queries and file paths.
+    {
+        let mut keys: Vec<&str> = tool_call
+            .arguments
+            .as_object()
+            .map(|fields| fields.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        keys.sort_unstable();
+        match &outcome {
+            Ok(answer) => log::info!(
+                "[tool] run={} {} args=[{}] ok bytes={}",
+                call.run_id,
+                tool.as_str(),
+                keys.join(","),
+                answer.len()
+            ),
+            Err(problem) => log::warn!(
+                "[tool] run={} {} args=[{}] failed: {problem}",
+                call.run_id,
+                tool.as_str(),
+                keys.join(",")
+            ),
+        }
+    }
+
     if outcome.is_ok() {
         remember_if_produced(deps, &call.run_id, tool, resolved_path.as_deref(), &tool_call);
     }

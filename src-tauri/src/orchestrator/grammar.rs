@@ -311,6 +311,47 @@ mod tests {
     /// each, against 30 before. The measured figure is in the failure
     /// message, so the next person to add a tool can see whether they spent
     /// more than their share rather than guessing at a new ceiling.
+    /// A tool that takes arguments must be able to receive them.
+    ///
+    /// `ToolSpec::arguments` reads like a list of *required* arguments, and it
+    /// is not: the grammar is generated from it and admits nothing else. A tool
+    /// declared `&[]` can only ever be called as `{"arguments":{}}`.
+    ///
+    /// That is not hypothetical. The whole notebook family shipped declared
+    /// empty. The model asked for `notebook.create` with a name, the grammar
+    /// forbade the name, the handler refused a call with no name, and the
+    /// person watching saw a run think for forty seconds and create nothing.
+    /// Nothing failed loudly: every layer did exactly what it was told.
+    #[test]
+    fn a_tool_that_takes_arguments_can_be_sent_them() {
+        for (tool, expected) in [
+            (ToolName::NotebookCreate, "name"),
+            (ToolName::NotebookRename, "notebook"),
+            (ToolName::NotebookDelete, "notebook"),
+            (ToolName::NotebookSources, "notebook"),
+            (ToolName::NotebookAddSource, "document"),
+            (ToolName::NotebookRemoveSource, "document"),
+            (ToolName::BuildDocumentGraph, "notebook"),
+        ] {
+            let grammar = build(&[tool]).unwrap();
+            let wanted = format!("\\\"{expected}\\\"");
+            assert!(
+                grammar.gbnf.contains(&wanted),
+                "{} cannot be sent its {expected} argument. Its grammar is:
+{}",
+                tool.as_str(),
+                grammar.gbnf
+            );
+        }
+    }
+
+    /// The other half: a tool that genuinely takes nothing still admits a call.
+    #[test]
+    fn a_tool_that_takes_nothing_is_still_callable() {
+        let grammar = build(&[ToolName::NotebookList]).unwrap();
+        assert!(grammar.gbnf.contains("notebook.list"), "{}", grammar.gbnf);
+    }
+
     #[test]
     fn the_preamble_is_brief() {
         let grammar = build(ToolName::ALL).unwrap();

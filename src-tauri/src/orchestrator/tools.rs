@@ -634,17 +634,122 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         // share a shape: no network, a short timeout, and a response small
         // enough that a listing cannot crowd out the conversation it is part
         // of. They differ only in whether they write.
-        ToolName::NotebookList
-        | ToolName::NotebookSources
-        | ToolName::NotebookCreate
-        | ToolName::NotebookRename
-        | ToolName::NotebookAddSource
-        | ToolName::NotebookRemoveSource => ToolSpec {
+        // Listing no arguments does not mean "no required arguments" - the
+        // grammar builds its rule from this list and admits nothing else, so a
+        // tool declared with `&[]` can only ever be called as
+        // `{"tool":"notebook.create","arguments":{}}`. Declared empty, this
+        // family was uncallable: the model asked for a notebook by name, the
+        // grammar forbade the name, and the handler refused a call with no name.
+        //
+        // `notebook` is declared on every tool that acts on one, even though a
+        // person with a single notebook need not name it. The grammar has no
+        // notion of an optional argument, so the model always sends the field
+        // and sends it empty when no name was given - which is exactly what
+        // `resolve_notebook` already treats as "not given".
+        ToolName::NotebookList => ToolSpec {
             permission: UseModel,
             arguments: &[],
             network: NetworkUse::None,
             timeout: Duration::from_secs(10),
             max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::NotebookSources => ToolSpec {
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "notebook", kind: Text }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::NotebookCreate => ToolSpec {
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "name", kind: Text }],
+            // Runs on the asking, not on a second confirmation.
+            //
+            // `defaults` gives every tool that is not read-only
+            // `PersonBeforeEffect`, which is right for writing a file or
+            // producing a deliverable and wrong here. "Create a notebook called
+            // Arjun test" is not a proposal a person needs to ratify - it is the
+            // instruction, already given, in their own words. Asking again
+            // answers a question nobody asked.
+            //
+            // It is not unguarded: the effect is one row in a local database
+            // owned by the person who asked, and undoing it is one click. The
+            // one operation here that cannot be undone that way,
+            // `notebook.delete`, keeps its approval below.
+            //
+            // This was not a preference. The gateway held every one of these
+            // calls waiting for an approval nothing surfaced, and the run sat
+            // there until the request timed out - fifteen minutes in the test
+            // that found it - and then reported that nothing had happened.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::NotebookRename => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "notebook", kind: Text },
+                ArgumentSpec { name: "name", kind: Text },
+            ],
+            // Runs on the asking, not on a second confirmation.
+            //
+            // `defaults` gives every tool that is not read-only
+            // `PersonBeforeEffect`, which is right for writing a file or
+            // producing a deliverable and wrong here. "Create a notebook called
+            // Arjun test" is not a proposal a person needs to ratify - it is the
+            // instruction, already given, in their own words. Asking again
+            // answers a question nobody asked.
+            //
+            // It is not unguarded: the effect is one row in a local database
+            // owned by the person who asked, and undoing it is one click. The
+            // one operation here that cannot be undone that way,
+            // `notebook.delete`, keeps its approval below.
+            //
+            // This was not a preference. The gateway held every one of these
+            // calls waiting for an approval nothing surfaced, and the run sat
+            // there until the request timed out - fifteen minutes in the test
+            // that found it - and then reported that nothing had happened.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::NotebookAddSource | ToolName::NotebookRemoveSource => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "notebook", kind: Text },
+                ArgumentSpec { name: "document", kind: Text },
+            ],
+            // Runs on the asking, not on a second confirmation.
+            //
+            // `defaults` gives every tool that is not read-only
+            // `PersonBeforeEffect`, which is right for writing a file or
+            // producing a deliverable and wrong here. "Create a notebook called
+            // Arjun test" is not a proposal a person needs to ratify - it is the
+            // instruction, already given, in their own words. Asking again
+            // answers a question nobody asked.
+            //
+            // It is not unguarded: the effect is one row in a local database
+            // owned by the person who asked, and undoing it is one click. The
+            // one operation here that cannot be undone that way,
+            // `notebook.delete`, keeps its approval below.
+            //
+            // This was not a preference. The gateway held every one of these
+            // calls waiting for an approval nothing surfaced, and the run sat
+            // there until the request timed out - fifteen minutes in the test
+            // that found it - and then reported that nothing had happened.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 4 * 1024,
             ..defaults(name)
         },
         // Deleting is the one that cannot be undone from the chat that did it:
@@ -653,12 +758,12 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         // own reading of an instruction.
         ToolName::NotebookDelete => ToolSpec {
             permission: UseModel,
+            arguments: &[ArgumentSpec { name: "notebook", kind: Text }],
             // The one tool here that a person has to agree to. It drops the
             // notebook, its membership rows and the whole graph built over it,
             // and a chat turn acting on its own reading of an instruction is
             // not a good enough reason for that.
             needs_approval: true,
-            arguments: &[],
             network: NetworkUse::None,
             timeout: Duration::from_secs(10),
             max_response_bytes: 4 * 1024,
@@ -670,10 +775,11 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             // operation, in `NotebookStore::graph`, which takes an owner id in
             // every `WHERE` - the same rule the rest of that store follows.
             permission: UseModel,
-            // No required argument. A person with one notebook should be able to
-            // say "draw the graph" and be understood; `resolve_notebook` asks
-            // for a name only when there is a real choice to make.
-            arguments: &[],
+            // Declared, not empty, for the reason above: an empty list is what
+            // the grammar admits, so `&[]` here meant the model could never say
+            // which notebook to draw. Sent empty when the person named none,
+            // which `resolve_notebook` reads as "not given".
+            arguments: &[ArgumentSpec { name: "notebook", kind: Text }],
             // Three SQLite reads. No model is started here and no socket is
             // opened; the relation pass that needs REBEL runs from the Notebooks
             // screen, deliberately, where the person can watch it.
@@ -1219,26 +1325,60 @@ mod tests {
     /// not read-only. The two are different questions with the same answer, and
     /// a tool where they disagreed would either interrupt a person for a read or
     /// let a write through unasked.
+    /// Restated against what a tool *does*, not against whether it reads.
+    ///
+    /// "Read-only or it asks" was the same question as "reversible or it asks"
+    /// for as long as every tool was one or the other. `ToolClass` draws a
+    /// third line - `Reversible`, a change the person who asked can undo from
+    /// the screen they asked on - and the notebook tools are the first to sit
+    /// on it. Holding them to the old rule made "create a notebook called X"
+    /// raise an approval on a page the person is not looking at while the chat
+    /// they typed it into waited, and then reported that nothing had happened.
+    ///
+    /// The principle is unchanged, and this is the finer policy the codebase
+    /// already expresses being applied rather than a hole: anything that leaves
+    /// a trace outside the task still asks. Today that widens exactly four
+    /// tools - create, rename, add_source, remove_source - and `notebook.delete`
+    /// stays `Irreversible` and still asks.
     #[test]
-    fn being_read_only_and_needing_nobody_are_the_same_set() {
+    fn only_what_cannot_be_undone_here_asks_a_person() {
+        use crate::agent_runtime::tool_policy::{class_of, ToolClass};
+
         for tool in ToolName::ALL {
             let spec = spec_for(*tool);
-            if tool.is_read_only() {
-                assert!(
-                    !spec.needs_approval,
-                    "{} reads but interrupts a person",
-                    tool.as_str()
-                );
-                assert_eq!(spec.approval_class, ApprovalClass::Automatic);
-            } else {
-                assert!(
-                    spec.approval_class != ApprovalClass::Automatic,
-                    "{} causes an effect without anyone approving it",
-                    tool.as_str()
-                );
+            match class_of(*tool) {
+                ToolClass::ReadOnly => {
+                    assert!(
+                        !spec.needs_approval,
+                        "{} reads but interrupts a person",
+                        tool.as_str()
+                    );
+                    assert_eq!(spec.approval_class, ApprovalClass::Automatic);
+                }
+                // Deliberately unasserted.
+                //
+                // Being undoable does not settle how a tool should be
+                // approved, and the two tools on this line want opposite
+                // things: creating a notebook should simply happen, while
+                // `calculation.evaluate_with_units` is `PreApprovedValue`
+                // because a person approved the expression in advance. A rule
+                // here would have to be wrong about one of them.
+                //
+                // What each notebook tool does is pinned one by one in
+                // `approval_shape_tests`, which is the right altitude for a
+                // decision made per tool.
+                ToolClass::Reversible => {}
+                ToolClass::SideEffecting | ToolClass::Irreversible => {
+                    assert!(
+                        spec.approval_class != ApprovalClass::Automatic,
+                        "{} causes an effect outside the task without anyone approving it",
+                        tool.as_str()
+                    );
+                }
             }
         }
     }
+
 
     /// Every tool bounds what it can hand back.
     #[test]
@@ -1262,5 +1402,62 @@ mod tests {
         // A wrong-typed argument reads as absent rather than panicking.
         let wrong = ToolCall::new("search_documents", serde_json::json!({ "query": 42 }));
         assert_eq!(wrong.text("query"), None);
+    }
+}
+
+#[cfg(test)]
+mod approval_shape_tests {
+    use super::*;
+
+    /// Which notebook operations stop and ask.
+    ///
+    /// `defaults` gives `PersonBeforeEffect` to everything that is not
+    /// read-only, and for the notebook family that was wrong in a way nothing
+    /// caught: the gateway held every create, rename and source change waiting
+    /// for an approval that nothing surfaced, the run sat there until the
+    /// request timed out, and the person saw a turn think for a while and
+    /// produce no notebook. The tool, the plan, the catalogue and the grammar
+    /// were all correct throughout.
+    ///
+    /// So the split is pinned. Asking again for something the person just asked
+    /// for in words is not caution, it is a dead end - and the one operation
+    /// that genuinely cannot be undone from the same screen keeps its prompt.
+    #[test]
+    fn only_deleting_a_notebook_asks_a_person_first() {
+        for tool in [
+            ToolName::NotebookCreate,
+            ToolName::NotebookRename,
+            ToolName::NotebookAddSource,
+            ToolName::NotebookRemoveSource,
+        ] {
+            let spec = spec_for(tool);
+            assert!(
+                !spec.needs_approval,
+                "{} waits for an approval, so a chat turn asking for it will hang",
+                tool.as_str()
+            );
+            assert_eq!(
+                spec.approval_class,
+                ApprovalClass::Automatic,
+                "{}",
+                tool.as_str()
+            );
+        }
+
+        let delete = spec_for(ToolName::NotebookDelete);
+        assert!(delete.needs_approval, "deleting a notebook must still ask");
+        assert_eq!(delete.approval_class, ApprovalClass::PersonBeforeEffect);
+    }
+
+    /// Reading never asks, which is what makes the list above meaningful.
+    #[test]
+    fn reading_a_notebook_never_asks() {
+        for tool in [
+            ToolName::NotebookList,
+            ToolName::NotebookSources,
+            ToolName::BuildDocumentGraph,
+        ] {
+            assert!(!spec_for(tool).needs_approval, "{}", tool.as_str());
+        }
     }
 }

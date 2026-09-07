@@ -264,14 +264,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "List the notebooks",
     readOnly: true,
     description:
-      "Names every notebook the signed-in person has, with how many documents each holds. " +
-      "Use it when they ask what notebooks exist, or when you need the exact name of one " +
-      "before acting on it. " +
-      "Do not use it to read what is inside a notebook - that is notebook.list_sources for " +
-      "the file names, and document.search for what they say. " +
-      "Effects: none, a single read of a local database. " +
-      "Limits: names and counts only; it never returns document contents. " +
-      "If it says there are none, say so and offer to create one.",
+      "Names every notebook the person has, with how many documents each holds. " +
+      "Use it when they ask what notebooks exist, or to get an exact name. " +
+      "Do not use it to read a notebook: names only, never contents. " +
+      "Effects: none, one local read. Limits: names and counts. " +
+      "If it says there are none, offer to create one.",
     parameters: closed({}),
   },
   {
@@ -279,16 +276,13 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Create a notebook",
     readOnly: false,
     description:
-      "Makes a new, empty notebook with the name given. " +
+      "Makes a new, empty notebook. " +
       "Use it when the person asks for a notebook to be created. " +
-      "Do not use it to add documents - a new notebook is empty, and notebook.add_source " +
-      "puts an attached file into it afterwards. Do not create one to hold an answer or a " +
-      "note; a notebook groups source documents, it is not a scratchpad, and " +
-      "workspace.write_text is the tool for writing a file. " +
-      "Effects: one row in a local database. Nothing is downloaded and no file is written. " +
-      "Limits: names are at most 120 characters, and a name already in use is refused rather " +
-      "than duplicated. " +
-      "If it says the name is taken, use the existing notebook instead of inventing a variant.",
+      "Do not use it to add documents, and never write a file instead - a notebook is " +
+      "a row in the notebook list, not a document named after it. " +
+      "Effects: one row in a local database. Limits: 120 characters; a name already " +
+      "in use is refused. " +
+      "If it says the name is taken, use that notebook rather than a variant.",
     parameters: closed({
       name: Type.String({
         description: "What to call it, in the person's own words.",
@@ -301,13 +295,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Rename a notebook",
     readOnly: false,
     description:
-      "Changes a notebook's name, keeping its documents and its graph. " +
-      "Use it when the person asks for one to be renamed or called something else. " +
-      "Do not use it to make a copy - there is one notebook before and after, under a new " +
-      "name. " +
-      "Effects: one row updated in a local database. " +
-      "Limits: the same 120-character limit as creating one. " +
-      "If it cannot tell which notebook is meant, it says which exist; ask rather than guess.",
+      "Changes a notebook name, keeping its documents and its graph. " +
+      "Use it when the person asks for one to be renamed. " +
+      "Do not use it to copy: there is one notebook before and after. " +
+      "Effects: one row updated. Limits: 120 characters. " +
+      "If it cannot tell which notebook is meant, it lists them; ask rather than guess.",
     parameters: closed({
       notebook: Type.Optional(
         Type.String({
@@ -324,17 +316,15 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Delete a notebook",
     readOnly: false,
     description:
-      "Deletes a notebook, its list of sources, and the whole knowledge graph built over it. " +
-      "Use it only when the person has clearly asked for that notebook to be deleted. " +
-      "Do not use it to clear a notebook out so it can be refilled - notebook.remove_source " +
-      "takes single sources out and keeps the notebook. Do not use it to tidy up on your own " +
-      "initiative. " +
-      "Effects: rows removed from five local tables, and the graph cannot be recovered without " +
-      "running the extraction passes again. The documents themselves are NOT deleted and stay " +
-      "attached wherever they were. This asks the person before it runs. " +
-      "Limits: one notebook per call, and only one belonging to the signed-in person. " +
-      "If it cannot tell which notebook is meant, it lists them rather than choosing; ask. " +
-      "If the person has not clearly said to delete it, do not call this - confirm first.",
+      "Deletes a notebook, its list of sources, and the graph built over it. " +
+      "Use it only when the person has clearly asked to delete that notebook. " +
+      "Do not use it to empty one for refilling - notebook.remove_source does that - " +
+      "and never on your own initiative. " +
+      "Effects: rows removed from five tables; the graph needs rebuilding to return. " +
+      "The documents are NOT deleted. A person is asked before it runs. " +
+      "Limits: one notebook, belonging to the signed-in person. " +
+      "If it cannot tell which notebook is meant, it lists them; and if the person has " +
+      "not clearly said to delete it, confirm first instead of calling.",
     parameters: closed({
       notebook: Type.Optional(
         Type.String({
@@ -349,12 +339,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     readOnly: true,
     description:
       "Names the documents in a notebook, with the content hash of each. " +
-      "Use it when the person asks what is in a notebook, and before removing a source so " +
-      "you know what is there. The hash it returns is what document.read_pages takes. " +
-      "Do not use it to read the documents - it returns names, never text. " +
-      "Effects: none, a single read of a local database. " +
-      "Limits: file names and hashes only. " +
-      "If it says the notebook is empty, say so rather than describing what might be in it.",
+      "Use it when the person asks what is in a notebook, or before removing a source. " +
+      "The hash it returns is what document.read_pages takes. " +
+      "Do not use it to read them: names and hashes, never text. " +
+      "Effects: none, one local read. Limits: file names and hashes. " +
+      "If it says the notebook is empty, say so rather than guessing at contents.",
     parameters: closed({
       notebook: Type.Optional(
         Type.String({
@@ -369,14 +358,10 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     readOnly: false,
     description:
       "Puts a document attached to THIS conversation into a notebook. " +
-      "Use it when the person attaches a file and asks for it to go into one of their " +
-      "notebooks. " +
-      "Do not use it for a file that is not attached here - it can only reach this " +
-      "conversation's own attachments, and naming anything else is refused. Adding a document " +
-      "does not put it in the graph; Build graph on the Notebooks screen does that. " +
-      "Effects: one row in a local database. The document is not copied or moved. " +
-      "Limits: one document per call, named exactly enough to be unambiguous. " +
-      "If it says nothing of that name is attached, list what is rather than guessing.",
+      "Use it when the person attaches a file and asks for it to go into a notebook. " +
+      "Do not use it for anything not attached here; adding does not build the graph. " +
+      "Effects: one row. The document is not copied or moved. Limits: one per call. " +
+      "If it says nothing of that name is attached, list what is.",
     parameters: closed({
       notebook: Type.Optional(
         Type.String({
@@ -394,15 +379,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Take a source out of a notebook",
     readOnly: false,
     description:
-      "Removes one document from a notebook, along with the graph evidence that came from it. " +
+      "Removes one document from a notebook, with the graph evidence it produced. " +
       "Use it when the person asks for a source to be taken out. " +
-      "Do not use it to delete the document - the file itself is untouched and stays attached " +
-      "where it was; this only takes it out of this notebook. " +
-      "Effects: rows removed from the notebook's membership and evidence tables. The terms " +
-      "that came only from this document stop being cited. " +
-      "Limits: one document per call. " +
-      "If it says the name matches more than one source, name it exactly rather than " +
-      "picking one.",
+      "Do not use it to delete the file: it stays attached where it was. " +
+      "Effects: membership and evidence rows removed; terms it alone supported stop " +
+      "being cited. Limits: one document per call. " +
+      "If it says the name matches more than one source, name it exactly.",
     parameters: closed({
       notebook: Type.Optional(
         Type.String({

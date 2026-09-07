@@ -1826,3 +1826,77 @@ mod runtime_wiring {
         }
     }
 }
+
+/// Creating a notebook from a chat turn, over the real RPC path.
+///
+/// The feature failed three times in a row with every layer checked in
+/// isolation and passing: the tool was in the catalogue, in the plan, in the
+/// grammar and in the dispatch, and no notebook appeared. Each check was of one
+/// layer. This is the only test that asks the question the person actually
+/// asks - "if I say create a notebook, does one exist afterwards?" - and it
+/// asks it through `tool.catalogue`, `tool.authorize` and `tool.execute`, which
+/// is exactly what the runtime calls.
+#[cfg(test)]
+mod notebook_from_chat_tests {
+    use super::*;
+
+    fn arguments(fields: Value) -> Value {
+        json!({
+            "runId": "r",
+            "toolCallId": "call-1",
+            // `args` is the wire field. `read_call` reads that name and
+            // nothing else, so a payload using "arguments" arrives with none.
+            "args": fields,
+            "tool": "notebook.create",
+        })
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_asks_for_a_notebook_gets_one() {
+        let (deps, _dir) = deps_with_plan("create the notebook named Arjun test");
+
+        // 1. The runtime asks what it may use. If the tool is missing here the
+        //    model is never shown it and can only talk about calling it, which
+        //    is what the screen showed.
+        let catalogue = tool_catalogue(json!({ "runId": "r" }), &deps).expect("a catalogue");
+        let names: Vec<&str> = catalogue["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&"notebook.create"),
+            "the runtime was never offered notebook.create, so no model could call it: {names:?}"
+        );
+
+        // 2. The gateway is asked to allow this specific call.
+        let verdict = authorize(arguments(json!({ "name": "Arjun test" })), &deps)
+            .await
+            .expect("the authorize call itself should not error");
+        let grant = verdict["grant"].as_str().unwrap_or_else(|| {
+            panic!(
+                "notebook.create was refused rather than granted: {}",
+                verdict["reason"].as_str().unwrap_or("no reason given")
+            )
+        });
+
+        // 3. And run.
+        let mut params = arguments(json!({ "name": "Arjun test" }));
+        params["grant"] = json!(grant);
+        let answer = execute(params, &deps).await.expect("execute should not error");
+        let said = answer["text"].as_str().unwrap_or_default();
+        assert!(
+            said.contains("Arjun test"),
+            "notebook.create did not report creating it: {answer}"
+        );
+
+        // 4. The question the person is actually asking.
+        let made = deps.notebooks.list("priya").expect("list");
+        let names: Vec<&str> = made.iter().map(|n| n.name.as_str()).collect();
+        assert!(
+            names.contains(&"Arjun test"),
+            "the call reported success and no notebook exists: {names:?}"
+        );
+    }
+}

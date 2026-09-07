@@ -181,6 +181,15 @@ pub(super) fn remember_refusal(deps: &Arc<RuntimeDeps>, call: &CallParams, reaso
 /// Harmless where no reservation was taken — a call refused before the plan saw
 /// it holds nothing, and releasing nothing answers `false` and changes nothing.
 pub(super) fn refused(deps: &Arc<RuntimeDeps>, call: &CallParams, reason: String) -> Value {
+    // Every refusal, named, beside the `[tool]` line `execute` writes when a
+    // call actually runs. Without this a refused call and a call that was never
+    // made look identical from outside the process, and the difference is the
+    // whole question when a tool appears to do nothing.
+    log::warn!(
+        "[tool] run={} {} refused: {reason}",
+        call.run_id,
+        call.tool
+    );
     remember_refusal(deps, call, &reason);
     super::release_reservation(deps, &call.run_id, &call.tool_call_id);
     json!({ "outcome": "refuse", "reason": reason })
