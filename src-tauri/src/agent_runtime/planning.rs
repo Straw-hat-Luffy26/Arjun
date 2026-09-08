@@ -328,6 +328,13 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ToolName::NotebookSources,
         ToolName::NotebookAddSource,
         ToolName::NotebookRemoveSource,
+        // Drawing a chart of figures already in hand starts nothing and
+        // reads nothing; withholding it would mean a run asked for a
+        // chart could only describe one in prose.
+        ToolName::CreateChart,
+        ToolName::CreateDiagram,
+        ToolName::CreatePdf,
+        ToolName::CreateTable,
         // Reading memory is always available: a run that may not consult what
         // the project already agreed a term means will re-derive it, differently
         // each time. Promotion is not here — writing something later runs read

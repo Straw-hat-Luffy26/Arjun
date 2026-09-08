@@ -715,6 +715,10 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "artifact.create_approval_note",
             "artifact.create_briefing_deck",
             "artifact.create_calculation_workbook",
+            "artifact.create_chart",
+            "artifact.create_diagram",
+            "artifact.create_pdf",
+            "artifact.create_table",
             "artifact.verify_docx",
             "calculation.evaluate_with_units",
             "capability.search",
@@ -1898,5 +1902,67 @@ mod notebook_from_chat_tests {
             names.contains(&"Arjun test"),
             "the call reported success and no notebook exists: {names:?}"
         );
+    }
+}
+
+/// The first of the four ways a generation gets stuck: a tool name nothing
+/// knows.
+///
+/// A mistyped or unregistered name must come back as a refusal the model can
+/// read and correct, immediately. The failure being guarded against is the
+/// opposite: a name that resolves to nothing, is therefore skipped by every
+/// check that matches on `ToolName`, and leaves the call waiting for a handler
+/// that will never run.
+#[cfg(test)]
+mod unknown_tool_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_tool_nothing_knows_is_refused_at_once() {
+        let (deps, _dir) = deps_with_plan("draw me something");
+
+        let verdict = authorize(
+            json!({
+                "runId": "r",
+                "toolCallId": "call-1",
+                "tool": "artifact.create_hologram",
+                "args": {},
+            }),
+            &deps,
+        )
+        .await
+        .expect("authorize should answer, not error");
+
+        assert_eq!(
+            verdict["outcome"].as_str(),
+            Some("refuse"),
+            "an unknown tool was not refused: {verdict}"
+        );
+        let reason = verdict["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains("artifact.create_hologram"),
+            "the refusal does not name the tool: {reason}"
+        );
+    }
+
+    /// And a real tool called with a typo is refused the same way, rather than
+    /// being quietly matched to something near it.
+    #[tokio::test]
+    async fn a_near_miss_is_not_helpfully_corrected() {
+        let (deps, _dir) = deps_with_plan("make a table");
+
+        let verdict = authorize(
+            json!({
+                "runId": "r",
+                "toolCallId": "call-1",
+                "tool": "artifact.create_tables",
+                "args": {},
+            }),
+            &deps,
+        )
+        .await
+        .expect("authorize should answer");
+
+        assert_eq!(verdict["outcome"].as_str(), Some("refuse"), "{verdict}");
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { convertToLlm, type AgentMessage } from "@openclaw/agent-core";
+import { convertToLlm, estimateContextTokens, type AgentMessage } from "@openclaw/agent-core";
 import type { Model } from "@openclaw/ai";
 import { RunCompactor, settingsForWindow } from "./compaction.js";
 
@@ -197,16 +197,26 @@ describe("a run that outgrows its window", () => {
     expect(JSON.stringify(prompts[1])).toContain("previous-summary");
   });
 
-  it("keeps the run going when summarisation fails", async () => {
-    // A failed summary must not fail the task. The provider's own refusal about
-    // size is a clearer error than one about summarisation nobody asked for.
+  it("still makes the context fit when summarisation fails", async () => {
+    // A failed summary must not fail the task, and it must not be allowed to
+    // send an over-long request either.
+    //
+    // This used to return the transcript untouched and leave the size to the
+    // provider, on the reasoning that its refusal named the problem better than
+    // a summary of nothing would. It named it accurately and uselessly: the
+    // person saw `400 request (…) exceeds the available context size` and had
+    // no action available, and a model server that cannot write a summary is in
+    // no better position to accept an over-long request than to shorten one. So
+    // the ceiling pass drops messages instead — mechanically, needing nothing
+    // from the model that has just declined to answer.
     const failing = {
       completeSimple: vi.fn(async () => {
         throw new Error("the summariser is unavailable");
       }),
     } as never;
+    const window = 8_192;
     const compactor = new RunCompactor({
-      model: model(8_192),
+      model: model(window),
       runtime: failing,
       apiKey: "local",
     });
@@ -214,8 +224,19 @@ describe("a run that outgrows its window", () => {
 
     const projected = await compactor.transform(messages);
 
-    expect(projected).toEqual(messages);
     expect(compactor.compactions).toBe(0);
+    // Shorter than what it was given, and inside what the model will accept.
+    expect(projected.length).toBeLessThan(messages.length);
+    expect(estimateContextTokens(projected).tokens).toBeLessThanOrEqual(
+      window - settingsForWindow(window).reserveTokens,
+    );
+    // The question is the one message that may never be dropped: an answer to a
+    // request that fits because the question was removed is an answer about
+    // nothing.
+    expect(projected[projected.length - 1]).toEqual(messages[messages.length - 1]);
+    // And the loss is stated in the context rather than left for the model to
+    // discover by contradicting itself.
+    expect(JSON.stringify(projected)).toContain("Context notice");
   });
 
   it("never cuts between a tool call and its result", async () => {

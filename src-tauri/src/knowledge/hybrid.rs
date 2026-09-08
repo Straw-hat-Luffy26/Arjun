@@ -27,14 +27,21 @@
 //! set of one.
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::{KnowledgeIndex, SearchResult};
 use crate::identity::Session;
 
-/// Turns text into a vector. Implemented once an embedding model is registered.
+/// Turns text into a vector.
+///
+/// Implemented by [`super::embedding::LocalEmbedder`] against a model server on
+/// this machine. Asynchronous because the implementation is an HTTP call to
+/// that server: a synchronous signature would force the caller to block a
+/// runtime thread on a model that can take a second to answer.
+#[async_trait]
 pub trait Embedder: Send + Sync {
-    fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
     /// Vector width. Recorded with stored vectors so a model swap is detectable
     /// rather than silently producing nonsense similarities.
     fn dimensions(&self) -> usize;
@@ -132,7 +139,7 @@ pub struct Hybrid<'a> {
 
 impl<'a> Hybrid<'a> {
     /// Searches with everything available, and says what that was.
-    pub fn search(
+    pub async fn search(
         &self,
         session: &Session,
         query: &str,
@@ -158,10 +165,38 @@ impl<'a> Hybrid<'a> {
             });
         };
 
-        // The vector half. Reached once an embedder exists; the fusion below is
-        // already exercised by its own tests.
-        let _ = embedder.embed(query)?;
-        let vector: Vec<SearchResult> = Vec::new();
+        // The vector half.
+        //
+        // A registered embedding model that is not answering degrades to
+        // keyword rather than failing the search. The person asked a question
+        // about their documents; half an answer that says it is half is worth
+        // more to them than an error, and the alternative — a model server
+        // restarting mid-shift taking search down with it — is worse than the
+        // narrower recall.
+        let vector: Vec<SearchResult> = match embedder.embed(query).await {
+            Ok(embedded) => {
+                self.index
+                    .search_vectors(session, embedder.model_id(), &embedded, depth)?
+            }
+            Err(error) => {
+                let mut results = keyword;
+                results.truncate(limit);
+                return Ok(HybridResults {
+                    results,
+                    methods: vec![Method::Keyword],
+                    degraded: Some(format!(
+                        "Searching by keyword only: the embedding model did not answer. {error}"
+                    )),
+                });
+            }
+        };
+
+        // Embedded nothing yet is not the same as found nothing. The pass runs
+        // over an index that is searchable by keyword from the moment it is
+        // written, so an early question arrives before any vector exists — and
+        // reporting that as a working vector search would misrepresent the
+        // recall the answer was built from.
+        let vector_covered = !vector.is_empty();
 
         let keyword_ids: Vec<String> = keyword.iter().map(|r| r.chunk_id.clone()).collect();
         let vector_ids: Vec<String> = vector.iter().map(|r| r.chunk_id.clone()).collect();
@@ -182,8 +217,20 @@ impl<'a> Hybrid<'a> {
 
         Ok(HybridResults {
             results,
-            methods: vec![Method::Keyword, Method::Vector],
-            degraded: None,
+            methods: if vector_covered {
+                vec![Method::Keyword, Method::Vector]
+            } else {
+                vec![Method::Keyword]
+            },
+            degraded: if vector_covered {
+                None
+            } else {
+                Some(
+                    "Searching by keyword only: none of the passages this search could reach \
+                     have been embedded yet. Recall improves as the embedding pass proceeds."
+                        .to_string(),
+                )
+            },
         })
     }
 }
@@ -295,15 +342,15 @@ mod tests {
         Session::open(User::new("p", "P", vec![Role::Employee]))
     }
 
-    #[test]
-    fn without_an_embedder_it_searches_by_keyword_and_says_so() {
+    #[tokio::test]
+    async fn without_an_embedder_it_searches_by_keyword_and_says_so() {
         let f = fixture();
         let hybrid = Hybrid {
             index: &f.index,
             embedder: None,
         };
 
-        let found = hybrid.search(&session(), "PV-2201", 10).unwrap();
+        let found = hybrid.search(&session(), "PV-2201", 10).await.unwrap();
 
         assert_eq!(found.results.len(), 1);
         assert_eq!(found.methods, vec![Method::Keyword]);
@@ -313,14 +360,122 @@ mod tests {
         assert!(degraded.contains("Exact terms"));
     }
 
-    #[test]
-    fn the_limit_is_respected_even_though_more_are_fetched_for_fusion() {
+    #[tokio::test]
+    async fn the_limit_is_respected_even_though_more_are_fetched_for_fusion() {
         let f = fixture();
         let hybrid = Hybrid {
             index: &f.index,
             embedder: None,
         };
-        let found = hybrid.search(&session(), "thickness", 1).unwrap();
+        let found = hybrid.search(&session(), "thickness", 1).await.unwrap();
         assert_eq!(found.results.len(), 1);
+    }
+
+    /// An embedder that answers without a model, so the wiring can be tested
+    /// without one. It returns the same vector for every query, which is enough:
+    /// what is under test is that the vector half is reached, its results are
+    /// fused, and the methods reported match what actually ran.
+    struct FixedEmbedder {
+        vector: Vec<f32>,
+    }
+
+    #[async_trait]
+    impl Embedder for FixedEmbedder {
+        async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(self.vector.clone())
+        }
+        fn dimensions(&self) -> usize {
+            self.vector.len()
+        }
+        fn model_id(&self) -> &str {
+            "test-embedder"
+        }
+    }
+
+    /// An embedder that is registered and not answering — a model server that
+    /// is down, which is the ordinary case on a workstation mid-restart.
+    struct DeadEmbedder;
+
+    #[async_trait]
+    impl Embedder for DeadEmbedder {
+        async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+            anyhow::bail!("connection refused")
+        }
+        fn dimensions(&self) -> usize {
+            3
+        }
+        fn model_id(&self) -> &str {
+            "test-embedder"
+        }
+    }
+
+    /// The wiring test: with vectors stored, both halves run and both are
+    /// reported. Before this, the vector half was an empty `Vec` and the
+    /// methods list claimed it anyway.
+    #[tokio::test]
+    async fn with_an_embedder_and_stored_vectors_both_halves_run() {
+        let f = fixture();
+        f.index
+            .store_vectors("test-embedder", &[("c1".to_string(), vec![1.0, 0.0, 0.0])])
+            .unwrap();
+
+        let embedder = FixedEmbedder {
+            vector: vec![1.0, 0.0, 0.0],
+        };
+        let hybrid = Hybrid {
+            index: &f.index,
+            embedder: Some(&embedder),
+        };
+
+        let found = hybrid.search(&session(), "PV-2201", 10).await.unwrap();
+
+        assert_eq!(found.methods, vec![Method::Keyword, Method::Vector]);
+        assert!(found.degraded.is_none(), "both halves ran, so nothing is degraded");
+        assert!(!found.results.is_empty());
+    }
+
+    /// An index nothing has embedded yet must not report a working vector
+    /// search. The passages are there and searchable by keyword; claiming
+    /// vector recall the answer never had is the misrepresentation this guards.
+    #[tokio::test]
+    async fn an_embedder_with_nothing_embedded_yet_reports_keyword_only() {
+        let f = fixture();
+        let embedder = FixedEmbedder {
+            vector: vec![1.0, 0.0, 0.0],
+        };
+        let hybrid = Hybrid {
+            index: &f.index,
+            embedder: Some(&embedder),
+        };
+
+        let found = hybrid.search(&session(), "PV-2201", 10).await.unwrap();
+
+        assert_eq!(found.methods, vec![Method::Keyword]);
+        let degraded = found.degraded.expect("it must say the vectors are not there yet");
+        assert!(degraded.contains("embedded"));
+        assert!(
+            !found.results.is_empty(),
+            "keyword search still answers while the embedding pass catches up"
+        );
+    }
+
+    /// A model server that is down narrows the search; it does not break it.
+    #[tokio::test]
+    async fn an_embedder_that_cannot_answer_degrades_instead_of_failing() {
+        let f = fixture();
+        let hybrid = Hybrid {
+            index: &f.index,
+            embedder: Some(&DeadEmbedder),
+        };
+
+        let found = hybrid.search(&session(), "PV-2201", 10).await.unwrap();
+
+        assert_eq!(found.methods, vec![Method::Keyword]);
+        assert_eq!(found.results.len(), 1, "the keyword half still answered");
+        let degraded = found.degraded.expect("a silent narrowing would be the bug");
+        assert!(
+            degraded.contains("did not answer"),
+            "the reason must name what failed, not just that something did"
+        );
     }
 }

@@ -94,6 +94,25 @@ pub struct GgufMetadata {
     /// both a model that never reasons and one that always does. Neither wants
     /// the kwarg sent.
     pub supports_toggled_reasoning: bool,
+    /// Whether this model produces a reasoning block **at all**.
+    ///
+    /// A different question from [`Self::supports_toggled_reasoning`], and
+    /// conflating the two suppressed streaming across the whole product.
+    ///
+    /// The switch answers "may the `enable_thinking` kwarg be sent?". This
+    /// answers "will reasoning come back?", and a model that always reasons —
+    /// a DeepSeek-R1 distill, any model with a think tag baked into its
+    /// template — answers no to the first and yes to the second.
+    ///
+    /// That mattered far beyond the Thinking panel. The runtime set
+    /// `thinkingLevel` from the switch, and `thinkingLevel: "off"` makes the
+    /// transport drop every reasoning delta *and* makes the reasoning-tag
+    /// partitioner hold the visible answer back with them — so the whole
+    /// answer arrived as a single `text_delta` and nothing streamed. Prose
+    /// merely appeared abruptly; a long code block appeared to hang, because
+    /// the reader watched an empty space for the entire time the model spent
+    /// writing it.
+    pub emits_reasoning: bool,
 }
 
 impl GgufMetadata {
@@ -244,17 +263,43 @@ fn from_kv(kv: &HashMap<String, Scalar>) -> Result<GgufMetadata> {
     // Substring rather than a template parse. The question is only whether the
     // template branches on the variable at all; rendering it would mean
     // shipping a Jinja engine to answer a yes-or-no.
-    let supports_toggled_reasoning = kv
-        .get("tokenizer.chat_template")
-        .and_then(Scalar::as_str)
+    let chat_template = kv.get("tokenizer.chat_template").and_then(Scalar::as_str);
+    let supports_toggled_reasoning = chat_template
         .map(|template| template.contains("enable_thinking"))
         .unwrap_or(false);
+    // A template that opens a reasoning block is a model that reasons, switch
+    // or no switch. Checked as well as the switch rather than instead of it: a
+    // Qwen3 template has both and a DeepSeek-R1 distill has only the tag, and
+    // reading only the switch is what made the second look like a model that
+    // never reasons.
+    //
+    // The openers are the ones the runtime's own reasoning-tag partitioner
+    // recognises (`REASONING_TAG_NAMES` in `markdown-core`), and keeping the
+    // two in step is the whole point. The partitioner strips these tags out of
+    // the visible answer; if this side has not declared the model as reasoning,
+    // the transport drops what the partitioner stripped and holds the answer
+    // back with it. A tag one side treats as reasoning and the other does not
+    // is precisely the disagreement that loses the text.
+    //
+    // Prefixes, not whole tags: `<think` covers `<think>` and `<thinking>`, and
+    // a tag carrying attributes still matches.
+    const REASONING_OPENERS: &[&str] =
+        &["<think", "<thought", "<reasoning", "<internal", "<antthinking"];
+    let emits_reasoning = supports_toggled_reasoning
+        || chat_template
+            .map(|template| {
+                REASONING_OPENERS
+                    .iter()
+                    .any(|opener| template.contains(opener))
+            })
+            .unwrap_or(false);
 
     // Every `get` is done, so the closure's borrow of `architecture` has ended
     // and it can be moved into the result.
     Ok(GgufMetadata {
         architecture,
         supports_toggled_reasoning,
+        emits_reasoning,
         block_count,
         embedding_length,
         expert_count,
@@ -469,6 +514,70 @@ mod tests {
         ]);
         let meta = parse_gguf_metadata(&mut reader).expect("parses");
         assert!(meta.supports_toggled_reasoning);
+        assert!(meta.emits_reasoning, "a switchable model still reasons");
+    }
+
+    /// The case that suppressed streaming everywhere.
+    ///
+    /// A DeepSeek-R1 distill reasons on every turn and has no switch to do it
+    /// with. Read only for the switch it looks like a model that never
+    /// reasons, which set `thinkingLevel: "off"`, which made the partitioner
+    /// hold the visible answer back until the turn ended.
+    #[test]
+    fn a_model_that_always_reasons_is_recognised_even_with_no_switch() {
+        let mut reader = header(vec![
+            kv_str("general.architecture", "qwen2"),
+            kv_u32("qwen2.block_count", 28),
+            kv_str(
+                "tokenizer.chat_template",
+                "{{ bos_token }}{% for m in messages %}{{ m.content }}{% endfor %}<think>",
+            ),
+        ]);
+        let meta = parse_gguf_metadata(&mut reader).expect("parses");
+        assert!(
+            !meta.supports_toggled_reasoning,
+            "there is no switch, so the kwarg must not be sent"
+        );
+        assert!(
+            meta.emits_reasoning,
+            "it reasons on every turn, so its reasoning must be forwarded and its \
+             answer must stream"
+        );
+    }
+
+    /// Every opener the runtime's partitioner strips must be recognised here.
+    ///
+    /// The two lists are the same list, held in two languages, and the failure
+    /// when they disagree is silent: the partitioner removes a tag this side
+    /// never declared, the transport drops what it removed, and the visible
+    /// answer is held back with it until the turn ends. Which is a run that
+    /// produces nothing for four minutes and is stopped as stuck.
+    #[test]
+    fn every_reasoning_opener_the_partitioner_knows_is_recognised_here() {
+        for opener in ["<think>", "<thinking>", "<thought>", "<reasoning>", "<internal>"] {
+            let mut reader = header(vec![
+                kv_str("general.architecture", "llama"),
+                kv_u32("llama.block_count", 32),
+                kv_str("tokenizer.chat_template", &format!("{{{{ x }}}}{opener}")),
+            ]);
+            let meta = parse_gguf_metadata(&mut reader).expect("parses");
+            assert!(
+                meta.emits_reasoning,
+                "{opener} is stripped by the partitioner but was not declared as reasoning"
+            );
+        }
+    }
+
+    /// A tag carrying attributes is still that tag.
+    #[test]
+    fn an_opener_with_attributes_is_still_a_reasoning_opener() {
+        let mut reader = header(vec![
+            kv_str("general.architecture", "llama"),
+            kv_u32("llama.block_count", 32),
+            kv_str("tokenizer.chat_template", "{{ x }}<thinking level=\"high\">"),
+        ]);
+        let meta = parse_gguf_metadata(&mut reader).expect("parses");
+        assert!(meta.emits_reasoning);
     }
 
     #[test]
@@ -480,6 +589,10 @@ mod tests {
         ]);
         let meta = parse_gguf_metadata(&mut reader).expect("parses");
         assert!(!meta.supports_toggled_reasoning);
+        assert!(
+            !meta.emits_reasoning,
+            "a template mentioning neither is a model that does not reason"
+        );
     }
 
     /// A header with no template at all is not a reasoning model. Absent has
@@ -493,6 +606,7 @@ mod tests {
         ]);
         let meta = parse_gguf_metadata(&mut reader).expect("parses");
         assert!(!meta.supports_toggled_reasoning);
+        assert!(!meta.emits_reasoning);
     }
 
     fn header(entries: Vec<Vec<u8>>) -> Cursor<Vec<u8>> {
@@ -818,6 +932,10 @@ pub struct ModelCapabilities {
     pub layers: Option<u32>,
     /// Whether the chat template branches on `enable_thinking`.
     pub supports_toggled_reasoning: bool,
+    /// Whether the model produces a reasoning block at all. See
+    /// [`GgufMetadata::emits_reasoning`] — this is the one that decides
+    /// whether the answer streams.
+    pub emits_reasoning: bool,
     /// The trained context window, where the header states one.
     pub context_length: Option<u32>,
 }
@@ -849,6 +967,7 @@ pub fn capabilities(weights: &Path) -> ModelCapabilities {
         Ok(meta) => ModelCapabilities {
             layers: Some(meta.block_count).filter(|count| *count > 0),
             supports_toggled_reasoning: meta.supports_toggled_reasoning,
+            emits_reasoning: meta.emits_reasoning,
             context_length: meta.context_length,
         },
         Err(error) => {

@@ -191,6 +191,12 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         // graph built over it go together, and nothing here can put the
         // graph back - rebuilding it means running the extraction passes
         // again over every document.
+        // Writes a file into the run's own workspace, which is a trace
+        // outside the task even though nothing outside it changes.
+        ToolName::CreateChart
+        | ToolName::CreateDiagram
+        | ToolName::CreatePdf
+        | ToolName::CreateTable => ToolClass::SideEffecting,
         ToolName::NotebookDelete => ToolClass::Irreversible,
 
         // Deterministic arithmetic recorded in the run's own calculation table.

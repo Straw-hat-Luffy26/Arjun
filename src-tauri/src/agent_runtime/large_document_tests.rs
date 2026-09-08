@@ -1132,10 +1132,27 @@ fn a_record_written_before_chunks_existed_is_migrated_on_read() {
         let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
             continue;
         };
-        let has_chunks = parsed
-            .pointer("/document/chunks")
-            .is_some_and(|c| !c.as_array().is_none_or(|a| a.is_empty()));
-        if has_chunks {
+        // A schema-1 record has no `chunks` key at all.
+        //
+        // An empty `chunks` array is something else entirely: a *current*
+        // record whose reader produced nothing — an image with no text, a scan
+        // that OCR'd to nothing, a docx that read empty. `DocumentStore::get`
+        // deliberately leaves those alone, because `rebuild` only runs when
+        // there is page text to cut, and cutting nothing would produce nothing.
+        //
+        // Conflating the two was this test's own defect: it collected modern
+        // empty records, correctly found nothing migrated in them, and reported
+        // that as a migration failure.
+        if parsed.pointer("/document/chunks").is_some() {
+            continue;
+        }
+        // And without page text there is nothing to cut whatever the schema
+        // says, so such a record cannot demonstrate a migration either way.
+        let has_text = parsed
+            .pointer("/document/pageText")
+            .and_then(|t| t.as_array())
+            .is_some_and(|pages| !pages.is_empty());
+        if !has_text {
             continue;
         }
         let sha = parsed
@@ -1162,7 +1179,9 @@ fn a_record_written_before_chunks_existed_is_migrated_on_read() {
         copied.push((sha, owner, conversation));
     }
     if legacy == 0 {
-        eprintln!("skipping: every record on this machine already carries its passages");
+        eprintln!(
+            "skipping: no schema-1 record on this machine — every record carries a chunks field"
+        );
         return;
     }
 
@@ -1210,6 +1229,134 @@ fn a_record_written_before_chunks_existed_is_migrated_on_read() {
     assert!(
         migrated > 0,
         "{legacy} legacy record(s) were copied and none of them migrated"
+    );
+}
+
+/// The same migration, proved without depending on what is on this machine.
+///
+/// The test above reads the records earlier builds actually wrote, which is the
+/// only way to prove the migration against real history. But on a machine whose
+/// store has already been migrated it finds nothing and skips — and a test that
+/// skips proves nothing. That is not hypothetical: it is the state of every
+/// record in this developer's store today, all of them `schemaVersion: 2`.
+///
+/// So this one constructs the case instead. It writes a genuine schema-1 record
+/// — page text and **no `chunks` key at all** — and reads it back through the
+/// ordinary owner-filtered path.
+///
+/// The record is written as literal JSON rather than by serialising
+/// `ExtractedDocument`, and that is the whole point: the current struct always
+/// emits `chunks` and `completeness`, so a serialised fixture would arrive
+/// already migrated and the test would pass without the migration ever running.
+#[test]
+fn a_schema_one_record_gains_its_passages_when_it_is_read() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let root = dir.path().join("documents").join("extractions");
+    std::fs::create_dir_all(&root).expect("the store root");
+
+    let sha = "1".repeat(64);
+    let legacy = serde_json::json!({
+        "schemaVersion": 1,
+        "document": {
+            "sha256": sha,
+            "name": "inspection-report.pdf",
+            "kind": "pdf-text",
+            "pages": 2,
+            "truncated": false,
+            "extractedAt": "2026-01-01T00:00:00Z",
+            "pageText": [
+                { "page": 1, "text": filler(1, 40) },
+                { "page": 2, "text": filler(2, 40) }
+            ],
+            "seen": [{
+                "ownerUserId": "u-1",
+                "conversationId": "c-1",
+                "messageId": "m-1",
+                "runId": "r-1",
+                "at": "2026-01-01T00:00:00Z"
+            }]
+        }
+    });
+    std::fs::write(
+        root.join(format!("{sha}.json")),
+        serde_json::to_vec(&legacy).expect("the fixture serialises"),
+    )
+    .expect("the legacy record is written");
+
+    let store = DocumentStore::open(dir.path()).expect("the store opens");
+    let document = store
+        .get(&sha, "u-1", Some("c-1"))
+        .expect("the read succeeds")
+        .expect("the record is visible to the owner who attached it");
+
+    assert!(
+        !document.chunks.is_empty(),
+        "a schema-1 record with {} page(s) of text was read back with no passages, so it is          invisible to search",
+        document.page_text.len()
+    );
+    assert_eq!(
+        document.completeness.chunks_total as usize,
+        document.chunks.len(),
+        "the migrated count and the migrated passages disagree"
+    );
+    assert!(
+        document
+            .chunks
+            .iter()
+            .all(|chunk| document.page_text.iter().any(|page| page.page == chunk.page)),
+        "a migrated passage cites a page the record does not have"
+    );
+}
+
+/// A record with no page text is left alone, and that is not a failure.
+///
+/// The counterpart to the test above, and the case that made the machine-backed
+/// test fail: an image that carried no text, a scan that OCR'd to nothing. Such
+/// a record has an empty `chunks` array and nothing to cut, so `rebuild` must
+/// not run and must not invent a passage from nothing.
+#[test]
+fn a_record_with_no_text_is_not_given_invented_passages() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let root = dir.path().join("documents").join("extractions");
+    std::fs::create_dir_all(&root).expect("the store root");
+
+    let sha = "2".repeat(64);
+    let empty = serde_json::json!({
+        "schemaVersion": 2,
+        "document": {
+            "sha256": sha,
+            "name": "photograph.jpg",
+            "kind": "image",
+            "pages": 1,
+            "truncated": false,
+            "extractedAt": "2026-01-01T00:00:00Z",
+            "pageText": [],
+            "chunks": [],
+            "seen": [{
+                "ownerUserId": "u-1",
+                "conversationId": "c-1",
+                "messageId": "m-1",
+                "runId": "r-1",
+                "at": "2026-01-01T00:00:00Z"
+            }]
+        }
+    });
+    std::fs::write(
+        root.join(format!("{sha}.json")),
+        serde_json::to_vec(&empty).expect("the fixture serialises"),
+    )
+    .expect("the record is written");
+
+    let store = DocumentStore::open(dir.path()).expect("the store opens");
+    let document = store
+        .get(&sha, "u-1", Some("c-1"))
+        .expect("the read succeeds")
+        .expect("the record is visible to the owner who attached it");
+
+    assert!(
+        document.chunks.is_empty(),
+        "a record with no page text was given {} passage(s), which cite text that does not exist",
+        document.chunks.len()
     );
 }
 

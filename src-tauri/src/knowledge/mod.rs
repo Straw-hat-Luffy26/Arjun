@@ -18,6 +18,7 @@
 //!   region the asker cannot see is not returned.
 
 pub mod chunking;
+pub mod embedding;
 pub mod collections;
 pub mod connector;
 pub mod evidence;
@@ -29,6 +30,7 @@ pub mod multimodal;
 
 pub use chunking::{chunk_document, Chunk, ChunkKind};
 pub use connector::{discover, plan_sync, Collection, SourceKind, SyncPlan};
+pub use embedding::LocalEmbedder;
 pub use hybrid::{reciprocal_rank_fusion, Embedder, Hybrid, HybridResults};
 pub use index::{KnowledgeIndex, Retrieval, SearchResult};
 pub use evidence::{present, EvidenceBlock, PresentedPassage};

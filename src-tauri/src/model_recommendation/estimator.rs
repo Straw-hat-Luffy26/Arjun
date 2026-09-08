@@ -312,6 +312,7 @@ mod tests {
         // openai/gpt-oss-20b's published config.json.
         let from_header = GgufMetadata {
             architecture: "gpt-oss".to_string(),
+            emits_reasoning: false,
             block_count: 24,
             embedding_length: 2880,
             expert_count: 32,

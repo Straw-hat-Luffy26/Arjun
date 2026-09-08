@@ -260,6 +260,111 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     }),
   },
   {
+    name: "artifact.create_diagram",
+    label: "Draw a diagram",
+    readOnly: false,
+    description:
+      "Draws a block, architecture, process or engineering diagram as an SVG, laid out in " +
+      "the order the blocks connect. " +
+      "Use it when the person asks for a diagram, block diagram, flowchart, process flow or " +
+      "P&ID-style sketch. This is the answer to 'draw a block diagram', not a knowledge graph. " +
+      "Do not use it for how documents relate: that is knowledge.build_graph. " +
+      "Effects: writes one .svg into the run's workspace. " +
+      "Limits: shapes are box, rounded, vessel, valve, instrument, decision. " +
+      "If it says a connection names a block that is not there, add the block - it refuses " +
+      "rather than dropping the line. Put the returned ```svg fence in your reply.",
+    parameters: closed({
+      title: Type.String({ description: "What the diagram shows.", minLength: 1 }),
+      direction: Type.String({ description: "LR to read across, TD to read down." }),
+      blocks: Type.String({
+        description:
+          "One block per line: 'id | Label | shape | tag'. Shape and tag are optional. " +
+          "Example: pump | Charge pump | box | P-101A",
+      }),
+      connections: Type.String({
+        description:
+          "One per line: 'from -> to : label'. The label is optional. Example: pump -> drum : 40 m3/h",
+      }),
+    }),
+  },
+  {
+    name: "artifact.create_pdf",
+    label: "Write a PDF",
+    readOnly: false,
+    description:
+      "Writes a PDF report or note that opens in any reader. " +
+      "Use it when the person asks for a PDF specifically. " +
+      "Do not use it when they asked for Word - artifact.create_approval_note writes the " +
+      "approval note, and a PDF is not a substitute for a document they need to edit. " +
+      "Effects: writes one .pdf into the run's workspace. " +
+      "Limits: text only - headings, paragraphs, bullets, fenced code and fixed-width rows. " +
+      "No images. " +
+      "If it refuses, it says what was missing; it will not write a blank page.",
+    parameters: closed({
+      title: Type.String({ description: "The document title.", minLength: 1 }),
+      classification: Type.String({ description: "Banner on every page, e.g. OFFICIAL." }),
+      body: Type.String({
+        description:
+          "The content. Start a line with # for a heading, - for a bullet, or use | to " +
+          "separate columns of a row. Everything else is a paragraph. " +
+          "Put code between ``` fences: inside them every line is kept exactly as you " +
+          "write it, so indentation survives and a # line stays a comment instead of " +
+          "becoming a heading. Always fence code - unfenced code loses its indentation.",
+      }),
+    }),
+  },
+  {
+    name: "artifact.create_table",
+    label: "Write a table",
+    readOnly: false,
+    description:
+      "Writes a table as a spreadsheet and returns it for the reply. " +
+      "Use it when the person asks for a table of figures they may want to sort or total. " +
+      "Do not use it for a calculation with steps - that is " +
+      "artifact.create_calculation_workbook, which shows the working. " +
+      "Effects: writes one .xlsx into the run's workspace. Numeric cells are written as " +
+      "numbers so the sheet can add them up. " +
+      "Limits: one sheet; every row must have as many cells as the header. " +
+      "If it says a row is the wrong width, fix the row - it refuses rather than padding. " +
+      "Put the returned markdown table in your reply.",
+    parameters: closed({
+      title: Type.String({ description: "What the table shows.", minLength: 1 }),
+      header: Type.String({ description: "Column names, separated by |." }),
+      rows: Type.String({ description: "One row per line, cells separated by |." }),
+      classification: Type.String({ description: "e.g. OFFICIAL. May be empty." }),
+    }),
+  },
+  {
+    name: "artifact.create_chart",
+    label: "Draw a chart",
+    readOnly: false,
+    description:
+      "Draws a bar or line chart of figures you already have and returns it as an SVG. " +
+      "Use it whenever the person asks for a chart, graph or plot of numbers - it is the " +
+      "answer to 'chart this', not a knowledge graph. " +
+      "Do not use it for how things connect: that is knowledge.build_graph. Do not invent " +
+      "figures to fill it; chart only numbers you were given or read from a document. " +
+      "Effects: writes one .svg into the run's workspace. No model is started. " +
+      "Limits: bar or line only; every series needs one value per category. " +
+      "If it refuses, it says which series had the wrong count - fix the data, do not drop " +
+      "a series to make it fit. Put the returned ```svg fence in your reply so it is drawn.",
+    parameters: closed({
+      title: Type.String({ description: "What the chart shows.", minLength: 1 }),
+      kind: Type.String({ description: "bar or line." }),
+      categories: Type.String({
+        description: "The x-axis labels, comma separated. Example: Unit One, Unit Four.",
+      }),
+      series: Type.String({
+        description:
+          "One series per line, as 'Name: 1, 2, 3'. One value per category. " +
+          "Example: Actual: 120, 96\nTarget: 130, 110",
+      }),
+      valueLabel: Type.String({
+        description: "What the numbers are, drawn on the value axis. Example: tonnes/day.",
+      }),
+    }),
+  },
+  {
     name: "notebook.list",
     label: "List the notebooks",
     readOnly: true,

@@ -46,7 +46,12 @@ use serde::{Deserialize, Serialize};
 use super::statistical::normalise_phrase;
 
 /// Bumping this invalidates stored typing units and forces a re-run.
-pub const TYPING_VERSION: u32 = 1;
+///
+/// Raised to 2 when `approval` and `project` joined [`NODE_TYPES`]. A document
+/// typed under version 1 was typed against a vocabulary that could not express
+/// either, so leaving those units marked complete would freeze the gap in place
+/// for exactly the documents already in a notebook.
+pub const TYPING_VERSION: u32 = 2;
 
 /// The closed set of types a term may be given.
 ///
@@ -62,6 +67,15 @@ pub const NODE_TYPES: &[&str] = &[
     "person",
     "site",
     "document",
+    // Added after an audit against the feature list found both missing. Their
+    // absence was not neutral: the vocabulary is closed and enforced, so a
+    // model correctly typing "the Kochi revamp" as a project had that entry
+    // discarded as an unknown type, and the term ended up untyped rather than
+    // typed differently. An approval note and the project it belongs to are
+    // the two things this product is most often asked about, which is why they
+    // earn a place in a list kept deliberately short.
+    "approval",
+    "project",
 ];
 
 /// Shortest quote accepted as evidence.

@@ -17,7 +17,8 @@ import { Agent, convertToLlm, type AgentEvent, type AgentMessage } from "@opencl
 import { createLlmRuntime, type Model } from "@openclaw/ai";
 import { registerBuiltInApiProviders } from "@openclaw/ai/providers";
 import type { RpcPeer } from "./peer.js";
-import { RunCompactor, type PreservedState } from "./compaction.js";
+import { RunCompactor, settingsForWindow, type PreservedState } from "./compaction.js";
+import { estimateTextTokens, fitToolsToBudget } from "./tool-budget.js";
 import { ContextLedger } from "./context-ledger.js";
 import { WorkingNotes, type WorkingNotesState } from "./working-notes.js";
 import { payloadPolicy } from "./providers.js";
@@ -362,6 +363,70 @@ function toModel(spec: RunRequest["model"]): Model {
   } as Model;
 }
 
+/**
+ * The chat template's own scaffolding, which is charged to every request and
+ * appears in none of the text this process holds.
+ *
+ * Role markers, the begin/end-of-turn tokens, the tool-call preamble a
+ * template emits when tools are present. Measured against llama-server's
+ * `/tokenize` on this product's own prompts, it lands between 150 and 300
+ * tokens for a request with a tool catalogue attached. Budgeting as though it
+ * were zero is how a request that was calculated to fit exactly does not.
+ *
+ * Matches `TEMPLATE_OVERHEAD_TOKENS` in `commands/agent.rs`, which charges the
+ * same scaffolding to the document budget.
+ */
+const TEMPLATE_OVERHEAD_TOKENS = 256;
+
+/**
+ * The least of the window that is kept for the conversation, whatever the
+ * tools cost.
+ *
+ * Tool *results* land in the transcript, and a run whose window is all schema
+ * has nowhere to put the passage it just retrieved. A fifth is the smallest
+ * share that leaves room for a search result and the turn that reads it.
+ */
+const CONVERSATION_FLOOR_SHARE = 0.2;
+
+/**
+ * The most of the window the tool catalogue may occupy, however much is free.
+ *
+ * A large window is not a reason to spend half of it on prose the model reads
+ * once. This ceiling is what stops a 32k model carrying the full catalogue
+ * *and* being unable to hold the document it was asked about.
+ */
+const TOOL_CEILING_SHARE = 0.45;
+
+/**
+ * How many tokens the tool catalogue may occupy on this model.
+ *
+ * The arithmetic is the whole point, so it is written out rather than tuned:
+ * the window, less the reply the model must have room to write, less the
+ * system prompt and the question that are going out whatever happens, less the
+ * template's scaffolding, less a floor kept for the conversation and the tool
+ * results that land in it.
+ *
+ * Returns `0` — meaning "no budget could be worked out" — only when the window
+ * itself is unknown. When the window is known but tiny, the answer is `1`
+ * rather than `0`: the catalogue is then compressed as far as it goes and
+ * trimmed of tools, which is a reported degradation. Returning `0` there would
+ * be read as "leave the catalogue alone", which is the behaviour that sent a
+ * 9,238-token request at an 8,192-token server.
+ */
+export function toolBudgetFor(window: number, systemPrompt: string, prompt: string): number {
+  if (!Number.isFinite(window) || window <= 0) return 0;
+  const reserve = settingsForWindow(window).reserveTokens;
+  const committed =
+    reserve +
+    estimateTextTokens(systemPrompt) +
+    estimateTextTokens(prompt) +
+    TEMPLATE_OVERHEAD_TOKENS;
+  const free = window - committed;
+  const conversationFloor = Math.max(512, Math.floor(window * CONVERSATION_FLOOR_SHARE));
+  const affordable = Math.min(free - conversationFloor, Math.floor(window * TOOL_CEILING_SHARE));
+  return Math.max(1, affordable);
+}
+
 /** A run in flight, so `run.abort` can reach it. */
 export interface ActiveRun {
   abort(reason?: unknown): void;
@@ -452,7 +517,7 @@ export async function startRun(
   // A catalogue that could not be fetched comes back empty, which is the
   // failing-closed reading: silence from the gateway is not a list of tools.
   const catalogue = await fetchCatalogue(peer, runId);
-  const tools = buildTools(
+  const offered = buildTools(
     peer,
     ledger,
     runId,
@@ -475,10 +540,53 @@ export async function startRun(
   // during a run, and re-counting them every turn would spend real time
   // counting characters that are identical to last turn's.
   contextLedger.setText("system", request.systemPrompt);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // The tool catalogue, cut to what this window can actually carry.
+  //
+  // This is the fix for the failure that produced
+  // `400 request (9238 tokens) exceeds the available context size (8192
+  // tokens)` on a five-word question. The catalogue serialises to about 9,200
+  // tokens; the server was started with 8,192. No amount of history trimming
+  // on the Rust side or compaction on this one could recover that, because
+  // none of it is history and none of it is a message — it is the fixed cost
+  // of the request, and until now nothing measured it against the window
+  // before sending it.
+  //
+  // What is left for tools is the window, less everything else the request
+  // must carry: the system prompt, the question, the conversation seeded from
+  // earlier turns, the reply the model has to have room to write, and the
+  // chat template's own scaffolding. See `tool-budget.ts` for why the
+  // catalogue is compressed rather than truncated and why tools are dropped
+  // only as a last resort.
+  // ───────────────────────────────────────────────────────────────────────
+  const fitted = fitToolsToBudget(
+    offered,
+    toolBudgetFor(request.model.contextWindow ?? 0, request.systemPrompt, request.prompt),
+  );
+  const tools = fitted.tools;
   contextLedger.setText(
     "toolSchema",
     tools.map((tool) => `${tool.name}${tool.description ?? ""}${JSON.stringify(tool.parameters ?? {})}`).join(""),
   );
+  if (fitted.report.stage !== "full" || fitted.report.dropped.length > 0) {
+    // Said out loud rather than done quietly. A run whose tool guidance was
+    // shortened may pick a worse tool, and a run whose tools were dropped
+    // cannot do part of its job — neither is a thing to discover from an
+    // answer that is subtly wrong.
+    process.stderr.write(
+      `[agent-runtime:log] [context] run=${runId} tools fitted stage=${fitted.report.stage} ` +
+        `tokens=${fitted.report.tokens} was=${fitted.report.tokensBefore} ` +
+        `budget=${fitted.report.budget} kept=${tools.length} ` +
+        `dropped=${fitted.report.dropped.length}${
+          fitted.report.dropped.length > 0 ? ` (${fitted.report.dropped.join(", ")})` : ""
+        }\n`,
+    );
+    peer.notify("run.event", {
+      runId,
+      event: { type: "tools_fitted", ...fitted.report, kept: tools.length },
+    });
+  }
 
   const compactor = new RunCompactor({
     model,
@@ -811,8 +919,56 @@ export async function startRun(
     notes,
   });
 
+  /** Whether the salvage turn below has already been spent. */
+  let salvaged = false;
+
   try {
     await agent.prompt(request.prompt);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // The turn that ended having said nothing.
+    //
+    // Reported as: "sometimes it generates no output and stops answering
+    // automatically without showing any answer or error." That is not a
+    // metaphor for a crash — it is precisely what happened. The loop returned
+    // normally with `stopReason: "stop"`, the ending classified as
+    // `completed`, the answer was the empty string, and the chat cell closed
+    // with nothing in it. `completed` carries no detail to display, so the
+    // surface had an empty message and no error to show beside it.
+    //
+    // The cause, measured on this machine: a reasoning model can spend a whole
+    // turn in `reasoning_content` and emit no `content` at all — the second
+    // screenshot of the bug report shows Qwen3.5-9B composing an entire
+    // document inside its thinking block — and a loop that stops on a tool
+    // call it never followed up leaves the same shape.
+    //
+    // Both are recoverable, and the remedy is one more turn: the work is
+    // already done and in the transcript, and what is missing is the sentence
+    // that says so. Asked for it, the model writes it. Asking costs one call
+    // on a path that currently produces nothing at all.
+    //
+    // Deliberately inside the `try`. The `finally` below closes the chat cell,
+    // and text streamed after that reaches a cell the surface has already
+    // finished — so the recovery has to happen while the cell is still open.
+    // ─────────────────────────────────────────────────────────────────────
+    if (
+      needsSalvage(agent.state, abortCause) &&
+      // An operator who pressed stop is not asking for one more model call, and
+      // a deadline that has passed has no time to spend on one.
+      (typeof request.deadlineMs !== "number" || Date.now() < request.deadlineMs)
+    ) {
+      salvaged = true;
+      process.stderr.write(
+        `[agent-runtime:log] [answer] run=${runId} the turn ended with no visible text; ` +
+          "asking once for the answer itself\n",
+      );
+      peer.notify("run.event", {
+        runId,
+        event: { type: "answer_salvage_started", runId },
+      });
+      noteProgress();
+      await agent.prompt(SALVAGE_PROMPT);
+    }
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);
     clearStall();
@@ -851,20 +1007,40 @@ export async function startRun(
   // makes the inconsistency obvious in hindsight: the ending was read off the
   // last assistant message while the text was read off whatever happened to be
   // last.
-  const finalAssistant = [...messages].reverse().find((message) => isAssistantMessage(message));
-  const assistantContent = (finalAssistant as { content?: unknown } | undefined)?.content;
-  const text = Array.isArray(assistantContent)
-    ? assistantContent
-        .filter((block): block is { type: "text"; text: string } => block?.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-    : "";
+  const { text, finalAssistant } = answerOf(messages);
 
-  const outcome = terminationOf({
+  let outcome = terminationOf({
     finalAssistant,
     errorMessage: agent.state.errorMessage,
     abortCause,
   });
+
+  // A run that finished cleanly and said nothing is not a run that finished.
+  //
+  // The salvage turn above is the recovery; this is what happens when it did
+  // not work, or when the ending ruled it out. `completed` is the one ending
+  // that carries no sentence to display, so classifying this as `completed`
+  // is what produced a blank chat cell with no answer and no error beside it.
+  // `failed` is the honest reading — the turn was asked a question and did not
+  // answer it — and it is the one that puts something on the screen.
+  //
+  // Only `completed` is reclassified. Every other ending already says what
+  // happened, and a stopped or length-limited run that produced no text has
+  // been explained by the thing that stopped it.
+  if (outcome.kind === "completed" && text.trim().length === 0) {
+    outcome = {
+      kind: "failed",
+      detail: salvaged
+        ? "The model finished without writing an answer, and did not write one when asked " +
+          "again. Its reasoning may have run to the end of the turn without producing any " +
+          "visible text. Try the question again, or a model with a larger output limit."
+        : "The model finished without writing an answer. Try the question again.",
+    };
+    process.stderr.write(
+      `[agent-runtime:log] [answer] run=${runId} ended with no text after ${turns} turn(s)` +
+        `${salvaged ? " and one salvage attempt" : ""}\n`,
+    );
+  }
 
   return {
     runId,
@@ -875,6 +1051,103 @@ export async function startRun(
     notes: notes.state,
     ledger: contextLedger.snapshot(),
   };
+}
+
+/**
+ * What to say to a model that finished a turn without saying anything.
+ *
+ * Three clauses, and each one closes a way the second attempt could go wrong:
+ *
+ * - **Do not call any tool.** The work is already done and its results are in
+ *   the transcript. A salvage turn that re-ran a write would produce the
+ *   document twice, which is a far worse failure than the silence it is
+ *   recovering from.
+ * - **Write it as the answer, not as reasoning.** This turn exists precisely
+ *   because a model spent the last one thinking; saying so is the whole
+ *   instruction.
+ * - **Say what you could not do.** A model with nothing to report must be able
+ *   to report that, or it is being pushed towards inventing an answer — which
+ *   would turn a visible failure into an invisible one.
+ */
+const SALVAGE_PROMPT =
+  "You ended that turn without writing anything the person can read. Write the answer now, " +
+  "as your visible reply rather than as reasoning. Do not call any tool: use only what is " +
+  "already in this conversation, including any tool results above. If a file or document was " +
+  "produced, say what it is and where it is. If you could not complete the task, say plainly " +
+  "what you could not do and why — do not invent an answer to fill the gap.";
+
+/**
+ * The answer a run produced, and the message it came from.
+ *
+ * The last *assistant* message, not the last message.
+ *
+ * These are not the same thing on exactly the path where it matters most. A
+ * run that is stopped has an interrupt message appended after the assistant
+ * turn — `Agent` adds a `custom` message saying the previous turn was
+ * interrupted and tools may have partially executed — so reading
+ * `messages[messages.length - 1]` found *that*, not the answer, and the run
+ * reported no text at all.
+ *
+ * The consequence was quiet and only visible afterwards: the chat cell kept
+ * what had streamed into it, because the reducer persists its own buffer, but
+ * the *task record* recorded an empty answer for every stopped run. So a turn
+ * somebody stopped halfway through a useful answer was, in the durable record,
+ * a turn that produced nothing.
+ *
+ * Found the same way `terminationOf` does it, which is what makes the old
+ * inconsistency obvious in hindsight: the ending was read off the last
+ * assistant message while the text was read off whatever happened to be last.
+ *
+ * Lifted out of `startRun` so the run can ask the same question twice — once
+ * to decide whether the turn needs rescuing, and once at the end to report
+ * what it produced — without two readings of "the answer" that could disagree.
+ */
+export function answerOf(messages: readonly unknown[]): {
+  text: string;
+  finalAssistant: { stopReason?: unknown; errorMessage?: unknown } | undefined;
+} {
+  const finalAssistant = [...messages].reverse().find((message) => isAssistantMessage(message));
+  const assistantContent = (finalAssistant as { content?: unknown } | undefined)?.content;
+  const text = Array.isArray(assistantContent)
+    ? assistantContent
+        .filter((block): block is { type: "text"; text: string } => block?.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+    : "";
+  return { text, finalAssistant };
+}
+
+/**
+ * Whether this turn ended having said nothing, and could still be rescued.
+ *
+ * Four conditions, and each one excludes a case where asking again would be
+ * wrong rather than merely wasteful:
+ *
+ * - **Nothing visible was produced.** The whole premise.
+ * - **Nothing stopped it.** A run an operator halted is not asking for one more
+ *   model call, and a run its budget stopped has none to spend.
+ * - **Nothing errored.** A failed provider call is already explained, and
+ *   re-issuing it against a server that just refused is not a recovery.
+ * - **The loop thinks it finished.** `completed` is the one ending that carries
+ *   no sentence to display, which is exactly why an empty one is invisible;
+ *   every other ending already says what happened.
+ *
+ * Separated from the run so the policy is readable on its own, which matters
+ * because the cost of getting it wrong is a duplicate model call on a path that
+ * was working.
+ */
+export function needsSalvage(
+  state: { messages: readonly unknown[]; errorMessage?: string },
+  abortCause: RunTermination | null,
+): boolean {
+  if (abortCause !== null) return false;
+  if (state.errorMessage) return false;
+  const { text, finalAssistant } = answerOf(state.messages);
+  if (text.trim().length > 0) return false;
+  return (
+    terminationOf({ finalAssistant, errorMessage: state.errorMessage, abortCause }).kind ===
+    "completed"
+  );
 }
 
 /**

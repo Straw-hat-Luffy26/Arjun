@@ -1726,6 +1726,10 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         ToolName::NotebookSources => notebook_sources(deps, &session, &tool_call),
         ToolName::NotebookAddSource => notebook_add_source(deps, &call, &session, &tool_call),
         ToolName::NotebookRemoveSource => notebook_remove_source(deps, &session, &tool_call),
+        ToolName::CreateChart => create_chart(deps, &call, &tool_call),
+        ToolName::CreateDiagram => create_diagram(deps, &call, &tool_call),
+        ToolName::CreatePdf => create_pdf(deps, &call, &tool_call),
+        ToolName::CreateTable => create_table(deps, &call, &tool_call),
         _ => {
             // Built with everything the run has, rather than with the index
             // alone.
@@ -2613,6 +2617,412 @@ fn notebook_remove_source(
     ))
 }
 
+/// Draws a chart of figures the run already has.
+///
+/// The SVG goes back in the tool result as well as to a file. A chart the
+/// person has to open a file manager to see is a chart they will not look at,
+/// and the chat surface draws an `svg` fence directly.
+///
+/// Series arrive as one per line, `Name: 1, 2, 3`. A model that has been given
+/// a table can write that without being taught a schema, and the parse either
+/// works or says which line it could not read - it never drops a series to make
+/// the rest fit, because a chart missing a series still looks like a whole one.
+/// Where a produced file goes, and under what name.
+///
+/// One place, so every producer names its output the same way and a person
+/// reading an artifact list is not guessing which tool wrote which file.
+fn artifact_path(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    title: &str,
+    extension: &str,
+) -> Result<(std::path::PathBuf, String), String> {
+    let workspace = deps
+        .root_for(&call.run_id)
+        .ok_or_else(|| "This run has no workspace to write into.".to_string())?;
+    let slug: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = slug.trim_matches('-').to_string();
+    let stem = if stem.is_empty() {
+        "artifact".to_string()
+    } else {
+        stem
+    };
+    let name = format!("{stem}.{extension}");
+    Ok((workspace.join(&name), name))
+}
+
+/// Draws a block, process or engineering diagram.
+///
+/// Blocks arrive one per line as `id | Label | shape | tag`, connections as
+/// `from -> to : label`. Both are shapes a model can write from a description
+/// without being taught a schema, and both refuse rather than guess: a
+/// connection naming a block that was never declared is an error, because a
+/// diagram silently missing a line says something false about the plant.
+fn create_diagram(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    use crate::artifacts::diagram::{DiagramSpec, Direction, Edge, Node, Shape};
+
+    let title = tool_call.text("title").unwrap_or_default().trim().to_string();
+    let direction_text = tool_call.text("direction").unwrap_or_default();
+    let direction = if direction_text.trim().is_empty() {
+        Direction::Across
+    } else {
+        Direction::parse(direction_text).ok_or_else(|| {
+            format!(
+                "\"{direction_text}\" is not a direction. Use \"LR\" to read across or \
+                 \"TD\" to read down."
+            )
+        })?
+    };
+
+    let mut nodes = Vec::new();
+    for line in tool_call.text("blocks").unwrap_or_default().lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('|').map(str::trim).collect();
+        if parts.len() < 2 {
+            return Err(format!(
+                "Could not read the block \"{line}\". Each line is \
+                 \"id | Label | shape | tag\", and shape and tag may be left off."
+            ));
+        }
+        let shape = match parts.get(2).copied().filter(|s| !s.is_empty()) {
+            Some(text) => Shape::parse(text).ok_or_else(|| {
+                format!(
+                    "\"{text}\" is not a shape. Use box, rounded, vessel, valve, instrument \
+                     or decision."
+                )
+            })?,
+            None => Shape::Box,
+        };
+        nodes.push(Node {
+            id: parts[0].to_string(),
+            label: parts[1].to_string(),
+            shape,
+            tag: parts
+                .get(3)
+                .map(|t| t.to_string())
+                .filter(|t| !t.is_empty()),
+        });
+    }
+
+    let mut edges = Vec::new();
+    for line in tool_call.text("connections").unwrap_or_default().lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (pair, label) = match line.split_once(':') {
+            Some((pair, label)) => (pair, Some(label.trim().to_string())),
+            None => (line, None),
+        };
+        let (from, to) = pair.split_once("->").ok_or_else(|| {
+            format!("Could not read the connection \"{line}\". Each line is \"from -> to\".")
+        })?;
+        edges.push(Edge {
+            from: from.trim().to_string(),
+            to: to.trim().to_string(),
+            label: label.filter(|l| !l.is_empty()),
+        });
+    }
+
+    let svg = crate::artifacts::diagram::render_svg(&DiagramSpec {
+        title: title.clone(),
+        direction,
+        nodes,
+        edges,
+    })?;
+
+    let (path, name) = artifact_path(deps, call, &title, "svg")?;
+    std::fs::write(&path, svg.as_bytes())
+        .map_err(|error| format!("the diagram could not be written: {error}"))?;
+
+    Ok(format!(
+        "Drew \"{title}\" and saved it as {name}. Include the fence below in your reply so \
+         the reader sees the diagram.\n\n```svg\n{svg}\n```"
+    ))
+}
+
+/// Writes a PDF report or note.
+///
+/// Turns a tool's `body` into document blocks.
+///
+/// The grammar is markdown-ish on purpose: `#` for a heading, `-` for a bullet,
+/// `|` for columns, anything else a paragraph. A model writes that without being
+/// taught, and it keeps the tool from needing a structured document schema it
+/// would then have to explain in a description that is already long.
+///
+/// ## Why fenced code is part of it
+///
+/// Because without it the grammar destroyed the one content people most often
+/// ask to be put in a document. Every rule above is actively wrong inside a
+/// program:
+///
+/// - `#include <iostream>` and every Python `#` comment became a **heading**;
+/// - a line containing `|` — a pipe, a bitwise or, a table in a docstring —
+///   was cut into padded columns;
+/// - `line.trim()` deleted the indentation, which in Python *is* the program;
+/// - blank lines were dropped, so statements ran together.
+///
+/// The file opened, and nothing said it was wrong. Worse, it was unfixable from
+/// the model's side: there was no way to say "this part is verbatim", so a model
+/// asked for a PDF of some code had no correct move available. Watching one
+/// deliberate about it — "the body parameter should be a string that starts with
+/// # for headings… but actually the body parameter expects a string, I'll just
+/// put the entire code in a string with line breaks" — is what led here.
+///
+/// So a ``` fence turns the rules off until the closing fence. Inside one the
+/// line is kept exactly as written apart from trailing whitespace, and is drawn
+/// in the fixed-width face that already exists for table rows.
+///
+/// An unclosed fence runs to the end of the body. That is what the chat renderer
+/// does with a half-arrived answer, and it is the safe reading here too: the
+/// alternative is to apply the interpreting rules to the rest of the document,
+/// which is the mangling this exists to prevent.
+fn parse_document_body(body: &str) -> Vec<crate::artifacts::pdf::Block> {
+    use crate::artifacts::pdf::Block;
+
+    let mut blocks = Vec::new();
+    let mut verbatim = false;
+
+    for raw in body.lines() {
+        let line = raw.trim();
+
+        // The fence is a delimiter, never content, so it is not drawn.
+        if line.starts_with("```") {
+            verbatim = !verbatim;
+            continue;
+        }
+
+        if verbatim {
+            // Only trailing whitespace goes. Leading whitespace is the
+            // program's structure, and a blank line inside a listing is a
+            // deliberate separation rather than nothing.
+            blocks.push(Block::Fixed(raw.trim_end().to_string()));
+            continue;
+        }
+
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('#') {
+            blocks.push(Block::Heading(
+                rest.trim_start_matches('#').trim().to_string(),
+            ));
+        } else if let Some(rest) = line.strip_prefix("- ") {
+            blocks.push(Block::Bullet(rest.trim().to_string()));
+        } else if line.contains('|') {
+            // A row of a table keeps its columns lined up.
+            blocks.push(Block::Fixed(
+                line.split('|')
+                    .map(|c| format!("{:<14}", c.trim()))
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string(),
+            ));
+        } else {
+            blocks.push(Block::Paragraph(line.to_string()));
+        }
+    }
+
+    blocks
+}
+
+/// Writes a PDF from a title, a classification banner and a body.
+///
+/// The body grammar, including its fenced-code rule, is [`parse_document_body`].
+fn create_pdf(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    use crate::artifacts::pdf::{Block, PdfSpec};
+
+    let title = tool_call.text("title").unwrap_or_default().trim().to_string();
+    let blocks = parse_document_body(&tool_call.text("body").unwrap_or_default());
+
+    let bytes = crate::artifacts::pdf::render(&PdfSpec {
+        title: title.clone(),
+        classification: tool_call
+            .text("classification")
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        blocks,
+    })?;
+
+    let (path, name) = artifact_path(deps, call, &title, "pdf")?;
+    let size = bytes.len();
+    std::fs::write(&path, bytes)
+        .map_err(|error| format!("the PDF could not be written: {error}"))?;
+
+    Ok(format!(
+        "Wrote \"{title}\" as {name} ({size} bytes). It is in this run's artifacts, where it \
+         can be previewed and opened."
+    ))
+}
+
+/// Writes a table as a spreadsheet, and returns it for the chat to draw.
+fn create_table(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    let title = tool_call.text("title").unwrap_or_default().trim().to_string();
+    let header: Vec<String> = tool_call
+        .text("header")
+        .unwrap_or_default()
+        .split('|')
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for line in tool_call.text("rows").unwrap_or_default().lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        rows.push(line.split('|').map(|c| c.trim().to_string()).collect());
+    }
+
+    let (path, name) = artifact_path(deps, call, &title, "xlsx")?;
+    let classification = tool_call
+        .text("classification")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    crate::artifacts::xlsx::write_table(&path, &title, &header, &rows, &classification)?;
+
+    // The same table as markdown, so the reader sees it in the reply rather
+    // than only as a file they have to open.
+    let mut markdown = String::new();
+    markdown.push_str(&format!("| {} |\n", header.join(" | ")));
+    markdown.push_str(&format!(
+        "|{}|\n",
+        header.iter().map(|_| " --- ").collect::<Vec<_>>().join("|")
+    ));
+    for row in &rows {
+        markdown.push_str(&format!("| {} |\n", row.join(" | ")));
+    }
+
+    Ok(format!(
+        "Wrote \"{title}\" as {name}. Include the table below in your reply.\n\n{markdown}"
+    ))
+}
+
+fn create_chart(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    use crate::artifacts::chart::{ChartKind, ChartSpec, Series};
+
+    let title = tool_call.text("title").unwrap_or_default().trim().to_string();
+    let kind_text = tool_call.text("kind").unwrap_or_default();
+    let kind = ChartKind::parse(kind_text).ok_or_else(|| {
+        format!(
+            "\"{kind_text}\" is not a chart kind this draws. Use \"bar\" for comparing \
+             categories or \"line\" for something measured over an ordered axis."
+        )
+    })?;
+
+    let categories: Vec<String> = tool_call
+        .text("categories")
+        .unwrap_or_default()
+        .split(',')
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+
+    let mut series = Vec::new();
+    for line in tool_call.text("series").unwrap_or_default().lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (name, values) = line.split_once(':').ok_or_else(|| {
+            format!(
+                "Could not read the series \"{line}\". Each line is a name, a colon, then \
+                 the values: \"Actual: 120, 96, 143\"."
+            )
+        })?;
+        let mut parsed = Vec::new();
+        for value in values.split(',') {
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            parsed.push(value.parse::<f64>().map_err(|_| {
+                format!(
+                    "\"{value}\" in series \"{}\" is not a number.",
+                    name.trim()
+                )
+            })?);
+        }
+        series.push(Series {
+            name: name.trim().to_string(),
+            values: parsed,
+        });
+    }
+
+    let spec = ChartSpec {
+        kind,
+        title: title.clone(),
+        categories,
+        series,
+        value_label: tool_call
+            .text("valueLabel")
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    };
+
+    // Every refusal comes from the renderer, which checks the data rather than
+    // the arguments: a series with the wrong number of values is a fact about
+    // the chart, not about the call.
+    let svg = crate::artifacts::chart::render_svg(&spec)?;
+
+    // Written into the run's own workspace, like every other artifact, so it
+    // appears in the artifact list with preview and reveal.
+    let workspace = deps
+        .root_for(&call.run_id)
+        .ok_or_else(|| "This run has no workspace to write a chart into.".to_string())?;
+    let slug: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = format!("{}.svg", slug.trim_matches('-'));
+    let path = workspace.join(&name);
+    std::fs::write(&path, svg.as_bytes())
+        .map_err(|error| format!("the chart could not be written: {error}"))?;
+
+    Ok(format!(
+        "Drew \"{title}\" and saved it as {name}. Include the fence below in your reply so \
+         the reader sees the chart.\n\n```svg\n{svg}\n```"
+    ))
+}
+
 fn build_document_graph(
     deps: &Arc<RuntimeDeps>,
     session: &Session,
@@ -2983,5 +3393,90 @@ mod notebook_choice_tests {
         let problem = choose_notebook(&[], Some("anything")).unwrap_err();
         assert!(problem.contains("no notebooks"), "{problem}");
         assert!(problem.contains("Build graph"), "{problem}");
+    }
+
+}
+
+/// The grammar every generated document's body is read with.
+#[cfg(test)]
+mod document_body_tests {
+    use super::parse_document_body;
+
+    /// Blocks in a comparable shape. `Block` carries no `PartialEq`, and giving
+    /// it one for a test would be the test changing the type it is testing.
+    fn described(body: &str) -> Vec<String> {
+        use crate::artifacts::pdf::Block;
+        parse_document_body(body)
+            .iter()
+            .map(|block| match block {
+                Block::Heading(text) => format!("H:{text}"),
+                Block::Paragraph(text) => format!("P:{text}"),
+                Block::Bullet(text) => format!("B:{text}"),
+                Block::Fixed(text) => format!("F:{text}"),
+            })
+            .collect()
+    }
+
+    /// Indentation is the program. Losing it is losing the code.
+    #[test]
+    fn fenced_python_keeps_its_indentation_comments_and_blank_lines() {
+        let body = "```python\nclass Node:\n    # the payload\n    def __init__(self):\n\n        self.next = None\n```";
+
+        assert_eq!(
+            described(body),
+            vec![
+                "F:class Node:",
+                "F:    # the payload",
+                "F:    def __init__(self):",
+                "F:",
+                "F:        self.next = None",
+            ],
+            "inside a fence every line is verbatim: indentation kept, a # comment \
+             is a comment and not a heading, and a blank line is a real line"
+        );
+    }
+
+    /// The C++ case from the report: `#include` is not a heading.
+    #[test]
+    fn an_include_line_is_code_and_not_a_heading() {
+        let lines = described("```cpp\n#include <iostream>\nint a = b | c;\n```");
+        assert_eq!(lines, vec!["F:#include <iostream>", "F:int a = b | c;"]);
+        assert!(
+            !lines.iter().any(|line| line.starts_with("H:")),
+            "an include line became a document heading"
+        );
+    }
+
+    /// The prose grammar is untouched outside a fence.
+    #[test]
+    fn prose_outside_a_fence_still_reads_as_before() {
+        assert_eq!(
+            described("# Findings\n- The valve was replaced.\nOrdinary prose.\nItem | Qty"),
+            vec![
+                "H:Findings",
+                "B:The valve was replaced.",
+                "P:Ordinary prose.",
+                "F:Item          Qty",
+            ]
+        );
+    }
+
+    /// A fence the model never closed must not hand the rest of the listing
+    /// back to the interpreting rules — that is the mangling, arriving late.
+    #[test]
+    fn an_unclosed_fence_runs_to_the_end_rather_than_reverting() {
+        assert_eq!(
+            described("Intro paragraph.\n```py\n# not a heading\n    indented"),
+            vec!["P:Intro paragraph.", "F:# not a heading", "F:    indented"]
+        );
+    }
+
+    /// Prose, then code, then prose again.
+    #[test]
+    fn the_fence_closes_and_the_prose_rules_come_back() {
+        assert_eq!(
+            described("# Title\n```\n# code\n```\n# Heading again"),
+            vec!["H:Title", "F:# code", "H:Heading again"]
+        );
     }
 }

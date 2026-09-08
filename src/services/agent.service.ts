@@ -1289,6 +1289,50 @@ export type AgentEvent =
       ledger: ContextLedgerRecord;
     }
   | {
+      /**
+       * The tool catalogue was shortened to fit this model's window.
+       *
+       * Emitted once, before the first turn, and only when something had to
+       * give. The tool definitions are the largest fixed cost in a request —
+       * measured at about 9,200 tokens against models this product routinely
+       * serves at 8,192 — so on a small window they are compressed, and on a
+       * very small one some tools are left out entirely.
+       *
+       * Worth showing for the same reason `context_compacted` is: it is a
+       * caveat on what follows. A run at `shortGuidance` may choose its tools
+       * slightly less well; a run with names in `dropped` cannot do that part
+       * of its job at all, and an operator reading "it did not create the
+       * notebook" deserves to know the tool was never offered.
+       */
+      type: 'tools_fitted';
+      /** How far the catalogue had to be compressed. */
+      stage: 'full' | 'trimmedGuidance' | 'shortGuidance' | 'schemaOnly' | 'minimal';
+      /** Tokens the rendered catalogue occupies. */
+      tokens: number;
+      /** What it would have occupied untouched. */
+      tokensBefore: number;
+      /** What the window afforded it. */
+      budget: number;
+      /** How many tools survived. */
+      kept: number;
+      /** The names of any left out entirely. */
+      dropped: string[];
+      /** True when even the smallest rendering does not fit. */
+      overBudget: boolean;
+    }
+  | {
+      /**
+       * A turn ended with no visible text, so the model was asked once more.
+       *
+       * Rare and worth naming when it happens: a reasoning model can spend a
+       * whole turn in its private reasoning and emit nothing to show, and this
+       * says the run noticed and spent one more call rather than closing an
+       * empty chat cell.
+       */
+      type: 'answer_salvage_started';
+      runId: string;
+    }
+  | {
       type: 'tool_execution_end';
       toolCallId: string;
       toolName: string;

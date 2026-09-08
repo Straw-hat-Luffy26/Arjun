@@ -180,6 +180,58 @@ export async function authorizeToolCall(
 }
 
 /** Builds one tool whose execution is performed by the Rust core. */
+/**
+ * The default ceiling for a tool that did not declare one.
+ *
+ * Twenty seconds rather than none. A catalogue entry without a timeout is a
+ * defect, but the failure it produces should be a message a person can read,
+ * not a run that never returns.
+ */
+const FALLBACK_TIMEOUT_MS = 20_000;
+
+/**
+ * Fails a call that does not come back.
+ *
+ * `ToolSpec::timeout` has existed on the Rust side all along and was carried
+ * across the wire as `timeoutSeconds` - into a field nothing read. Every
+ * generator was therefore unbounded: a subprocess that wedged, a headless step
+ * that never exited, or a handler that blocked took the whole run with it, and
+ * the person watching saw a spinner rather than an error.
+ *
+ * Bounded here rather than in each generator because this is the one place
+ * every tool call passes through. A ceiling added per-generator is a ceiling
+ * somebody forgets on the next one.
+ *
+ * The timer is cleared on both paths: leaving it pending would hold the process
+ * open for as long as the longest timeout in the catalogue.
+ */
+async function withTimeout<T>(
+  work: Promise<T>,
+  milliseconds: number,
+  tool: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new RpcError(
+              ErrorCode.ToolFailed,
+              `${tool} did not finish within ${Math.round(milliseconds / 1000)}s and was ` +
+                `stopped. Nothing it may have produced can be relied on. Say so rather than ` +
+                `describing what it would have returned.`,
+            ),
+          );
+        }, milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function hostTool(options: {
   name: string;
   label: string;
@@ -199,6 +251,8 @@ function hostTool(options: {
    * whichever finished first.
    */
   executionMode: "parallel" | "sequential";
+  /** Wall-clock ceiling for one call, from the catalogue entry. */
+  timeoutMs: number;
   /**
    * Told what each call produced, so the run's notes can be kept current.
    *
@@ -212,6 +266,7 @@ function hostTool(options: {
     name,
     label,
     description,
+    timeoutMs,
     parameters,
     peer,
     ledger,
@@ -237,7 +292,8 @@ function hostTool(options: {
           `No authorisation grant for ${name}. The call was not put through the gateway.`,
         );
       }
-      const execution = (await peer.request("tool.execute", {
+      const execution = (await withTimeout(
+        peer.request("tool.execute", {
         runId,
         toolCallId,
         tool: name,
@@ -246,7 +302,10 @@ function hostTool(options: {
         // Stamped onto anything this call produces, so a reader of the
         // document knows which model wrote it.
         model: modelId,
-      })) as ToolExecution;
+        }),
+        timeoutMs,
+        name,
+      )) as ToolExecution;
       // After the call has actually succeeded. Recording an effect before the
       // gateway and the tool have both agreed to it would tell a resumed run
       // not to repeat something that never happened.
@@ -396,19 +455,33 @@ export function buildTools(
   observe?: (observation: { tool: string; args: unknown; text: string }) => void,
   eligible?: readonly EligibleTool[],
 ): AgentTool[] {
-  const definitions =
+  type Entry = { definition: ToolDefinition; readOnly: boolean; timeoutMs: number };
+  const definitions: Entry[] =
     eligible === undefined
-      ? TOOL_DEFINITIONS.map((definition) => ({ definition, readOnly: definition.readOnly }))
+      ? TOOL_DEFINITIONS.map((definition) => ({
+          definition,
+          readOnly: definition.readOnly,
+          timeoutMs: FALLBACK_TIMEOUT_MS,
+        }))
       : eligible
           .map((entry) => {
             const definition = definitionFor(entry.name);
-            return definition ? { definition, readOnly: entry.readOnly } : undefined;
+            return definition
+              ? {
+                  definition,
+                  readOnly: entry.readOnly,
+                  // The catalogue's own figure. A missing or nonsensical one
+                  // falls back rather than becoming an unbounded call.
+                  timeoutMs:
+                    Number.isFinite(entry.timeoutSeconds) && entry.timeoutSeconds > 0
+                      ? entry.timeoutSeconds * 1000
+                      : FALLBACK_TIMEOUT_MS,
+                }
+              : undefined;
           })
-          .filter((entry): entry is { definition: ToolDefinition; readOnly: boolean } =>
-            entry !== undefined,
-          );
+          .filter((entry): entry is Entry => entry !== undefined);
 
-  return definitions.map(({ definition, readOnly }) =>
+  return definitions.map(({ definition, readOnly, timeoutMs }) =>
     hostTool({
       peer,
       ledger,
@@ -419,6 +492,7 @@ export function buildTools(
       label: definition.label,
       description: definition.description,
       parameters: definition.parameters,
+      timeoutMs,
       // Reads may overlap: one cannot change what another returns, so several
       // at once cost the operator the slowest rather than the sum. Everything
       // that writes, produces a file, runs code or asks a person is serialised.

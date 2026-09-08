@@ -1,6 +1,8 @@
 import React from 'react';
 import { CodeBlock } from './CodeBlock';
+import { isClosingFence, openingFenceLanguage } from './markdownFence';
 import { MermaidGraph } from './MermaidGraph';
+import { sanitizeSvg } from './svgSanitize';
 import styles from './ChatSurface.module.css';
 
 /**
@@ -181,17 +183,21 @@ function tokenize(input: string): Block[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block: ```lang\n...\n```
-    const fence = line.match(/^```(\w*)\s*$/);
-    if (fence) {
-      const lang = fence[1] || undefined;
+    // Fenced code block. `null` means this line is not a fence at all;
+    // `undefined` means a fence that named no language. See `markdownFence`.
+    const lang = openingFenceLanguage(line);
+    if (lang !== null) {
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+      while (i < lines.length && !isClosingFence(lines[i])) {
         body.push(lines[i]);
         i += 1;
       }
       if (i < lines.length) i += 1; // skip closing fence
+      // Emitted even when the closing fence has not arrived, which is what
+      // makes code stream. A block that waited for its close would leave the
+      // reader watching a blank space for the whole time the model spends
+      // writing the code — the part of an answer that takes longest.
       blocks.push({ kind: 'code', lang, text: body.join('\n') });
       continue;
     }
@@ -383,6 +389,12 @@ export function Markdown({ content }: { content: string }) {
             if (block.lang === 'mermaid') {
               return <MermaidGraph key={key} source={block.text} />;
             }
+            // An SVG fence is a picture too - a chart, or a diagram the model
+            // was handed. Drawn rather than printed, and sanitised first: this
+            // markup came from a model, and an SVG has a script model.
+            if (block.lang === 'svg') {
+              return <InlineSvg key={key} source={block.text} />;
+            }
             return <CodeBlock key={key} code={block.text} lang={block.lang} />;
           case 'table':
             return (
@@ -426,3 +438,29 @@ export function Markdown({ content }: { content: string }) {
 // Suppress unused warning for escapeHtml (kept available for future raw-html
 // support without re-importing it).
 void escapeHtml;
+
+/**
+ * An `svg` fence, drawn.
+ *
+ * Falls back to the source, exactly as `MermaidGraph` does. A fence that does
+ * not survive sanitising is shown as text rather than silently dropped: a
+ * reader seeing nothing cannot tell a refused drawing from a model that never
+ * produced one, and the difference matters when the reason is that something
+ * tried to put a script in it.
+ */
+function InlineSvg({ source }: { source: string }) {
+  const safe = React.useMemo(() => sanitizeSvg(source), [source]);
+
+  if (!safe) {
+    return <CodeBlock code={source} lang="svg" />;
+  }
+
+  return (
+    <figure
+      className={styles.mdSvg}
+      // Sanitised immediately above by an allowlist that drops every element
+      // and attribute it does not name, including scripts and event handlers.
+      dangerouslySetInnerHTML={{ __html: safe }}
+    />
+  );
+}

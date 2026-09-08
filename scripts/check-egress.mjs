@@ -53,6 +53,13 @@ const LOOPBACK_CLIENT_FILES = new Map([
       + 'whose host does not parse as a loopback address before the client is built',
   ],
   [
+    'src-tauri/src/knowledge/embedding.rs',
+    'asks a local embedding model for one vector per passage; calls '
+      + 'serving::probe::check_loopback on the base URL and returns an error '
+      + 'before the client is constructed if the host is not loopback, so the '
+      + 'client cannot be built for a remote endpoint at all',
+  ],
+  [
     'src-tauri/src/ai_engine/vision_bridge.rs',
     'speaks the OpenAI vision schema to a local vLLM / llama.cpp server; the constructor '
       + 'parses base_url and refuses any host that is not localhost, 127.0.0.1 or ::1 '

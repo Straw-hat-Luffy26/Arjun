@@ -2371,3 +2371,20 @@
   color: var(--text-muted, rgba(128, 128, 128, 0.9));
   border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
 }
+
+/* An SVG fence: a chart or diagram, drawn.
+   The source sizes itself to the container, and the container bounds how much
+   of the conversation one picture may take. */
+.mdSvg {
+  margin: 12px 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.mdSvg svg {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+}

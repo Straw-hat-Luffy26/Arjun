@@ -1004,6 +1004,42 @@ const TEMPLATE_OVERHEAD_TOKENS: u32 = 64;
 /// than to keep trying.
 const MAX_REFITS: usize = 3;
 
+/// What the tool catalogue costs, per tool this run may use.
+///
+/// ## Why this side has to know
+///
+/// The tool definitions go out with every request and none of them are visible
+/// from here: the schemas live in `agent-runtime/src/catalogue.ts` and are
+/// attached by the runtime, after this side has finished dividing the window
+/// between documents, history and the reply. So every budget below was
+/// computing what was free from a window that had already been spent — and on
+/// a model served at 8 192 tokens the catalogue alone is over 9 000 of them,
+/// which is how a five-word question produced
+/// `400 request (9238 tokens) exceeds the available context size (8192 tokens)`.
+///
+/// ## Why a floor rather than the real figure
+///
+/// The real figure depends on how far the runtime compresses the catalogue,
+/// which depends in turn on what is left after this arithmetic — a circle. The
+/// floor breaks it: this side reserves what the catalogue costs at *maximum*
+/// compression, and the runtime then spends whatever is genuinely free, which
+/// is at least this much. Reserving the uncompressed figure would starve
+/// documents on every small model; reserving nothing is the defect.
+///
+/// Measured, not chosen: 87.3 tokens per tool across the real catalogue at its
+/// smallest rendering. `MAX_MINIMAL_TOKENS_PER_TOOL` in
+/// `agent-runtime/src/tool-budget.ts` holds the same number, and
+/// `tool-budget.test.ts` fails if the catalogue grows past it — so the two
+/// sides cannot drift into dividing different windows.
+const TOOL_FLOOR_TOKENS_PER_TOOL: u32 = 96;
+
+/// The least the tool catalogue will occupy for a run offered this many tools.
+fn tool_schema_floor(tool_count: usize) -> u32 {
+    u32::try_from(tool_count)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(TOOL_FLOOR_TOKENS_PER_TOOL)
+}
+
 /// Chooses passages, composes the prompt, and checks the result against the
 /// server's own tokeniser.
 ///
@@ -1036,17 +1072,22 @@ async fn fit_documents_to_window(
     >,
     system_prompt: &str,
     served_window: u32,
+    tool_floor: u32,
     base_url: &str,
 ) -> Fitted {
     use crate::agent_runtime::doc_pipeline;
 
     // What is free for document text: the window, less the answer, less the
-    // template, less the question and the system prompt that are going out
-    // whatever happens.
+    // template, less the tool definitions, less the question and the system
+    // prompt that are going out whatever happens.
+    //
+    // `tool_floor` is the one that was missing, and it was the largest of them
+    // on a small model. See `TOOL_FLOOR_TOKENS_PER_TOOL`.
     let fixed = doc_pipeline::estimate_tokens(question)
         .saturating_add(doc_pipeline::estimate_tokens(system_prompt))
         .saturating_add(REPLY_RESERVE_TOKENS)
-        .saturating_add(TEMPLATE_OVERHEAD_TOKENS);
+        .saturating_add(TEMPLATE_OVERHEAD_TOKENS)
+        .saturating_add(tool_floor);
     let mut budget = served_window.saturating_sub(fixed);
 
     let mut selection = doc_pipeline::select(question, candidates, budget);
@@ -1054,8 +1095,12 @@ async fn fit_documents_to_window(
     let mut measured: Option<u32> = None;
     let mut refits = 0u32;
 
-    // The ceiling the whole request has to sit under.
-    let ceiling = served_window.saturating_sub(REPLY_RESERVE_TOKENS + TEMPLATE_OVERHEAD_TOKENS);
+    // The ceiling the whole request has to sit under. The tool definitions are
+    // part of that request, so they are subtracted here as well — a ceiling
+    // that ignores them is one a request can pass and the server still refuse.
+    let ceiling = served_window
+        .saturating_sub(REPLY_RESERVE_TOKENS + TEMPLATE_OVERHEAD_TOKENS)
+        .saturating_sub(tool_floor);
 
     for attempt in 0..MAX_REFITS {
         // Counted, not estimated — when the server will say.
@@ -2058,6 +2103,11 @@ async fn drive_run(
         Grounding::GeneralKnowledge
     };
     let planned = PlanRecord::of(&task_plan);
+    // Read before the plan is handed to the run table, because the window
+    // arithmetic that needs it happens after routing and the plan has moved by
+    // then. A count, not the list: what the budget below needs to know is how
+    // many schemas the runtime will attach, not which.
+    let permitted_tool_count = task_plan.budget.permitted_tools.len();
     // The fixed half of every checkpoint this attempt will take. Established
     // here because this is the first point at which all of it is known: the
     // workspace exists, the plan is fixed, the model is chosen, and the session
@@ -2245,6 +2295,26 @@ async fn drive_run(
         );
     }
 
+    // What the tool definitions will cost, charged before anything else is
+    // budgeted. See [`TOOL_FLOOR_TOKENS_PER_TOOL`]: the schemas are attached by
+    // the runtime and are invisible from here, and leaving them out is what let
+    // every budget below divide a window that was already spent.
+    //
+    // The plan's permitted set is the upper bound. The runtime narrows it
+    // further — a delegation tool with no worker behind it, a networked tool in
+    // a mode that forbids the network — and a narrower catalogue costs less
+    // than this reserves, which is the safe direction to be wrong in.
+    let tool_floor = tool_schema_floor(permitted_tool_count);
+    if tool_floor >= served_window / 2 {
+        log::warn!(
+            "[context] run {run_id}: the {} tool(s) this plan permits will occupy at least \
+             {tool_floor} of a {served_window}-token window, so this turn has little room for \
+             documents or conversation. The runtime will compress the catalogue and say how far \
+             it had to go.",
+            permitted_tool_count
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Which passages of which documents go into this turn.
     //
@@ -2284,6 +2354,7 @@ async fn drive_run(
             &counted,
             &system_prompt,
             served_window,
+            tool_floor,
             &endpoint.base_url,
         )
         .await;
@@ -2416,9 +2487,15 @@ async fn drive_run(
     let history = {
         use crate::agent_runtime::turn_context;
         const REPLY_RESERVE_TOKENS: u32 = 4_096;
+        // The tool definitions are charged here too. History was previously
+        // budgeted against a window that still appeared to hold the catalogue,
+        // so a turn could be handed several thousand tokens of conversation
+        // that had nowhere to go — and the runtime then compacted it away on
+        // the first turn, having spent the window carrying it.
         let committed = crate::ai_engine::ocr_budget::estimate_tokens(&model_prompt)
             .saturating_add(crate::ai_engine::ocr_budget::estimate_tokens(&system_prompt))
-            .saturating_add(REPLY_RESERVE_TOKENS);
+            .saturating_add(REPLY_RESERVE_TOKENS)
+            .saturating_add(tool_floor);
         // The window the server holds, not the one the entry declares. See
         // `served_window` above.
         let budget = turn_context::budget_for(served_window, committed);
@@ -2509,7 +2586,19 @@ async fn drive_run(
             // model that had a switch. Reasoning was therefore off across the
             // whole product, which is why the Thinking panel had nothing to
             // show for the entire length of a run.
-            "supportsReasoning": model_capabilities.supports_toggled_reasoning,
+            // Two fields, two questions, and they are not the same question.
+            //
+            // `reasoning` gates the `enable_thinking` kwarg, so it must stay on
+            // the switch: a model without one must not be sent it.
+            //
+            // `supportsReasoning` decides `thinkingLevel` in the runtime, and
+            // `"off"` there does not merely hide the Thinking panel — it drops
+            // every reasoning delta and makes the reasoning-tag partitioner
+            // hold the visible answer back with them, so the answer arrives in
+            // one lump and nothing streams. A model that always reasons has no
+            // switch, so reading the switch here turned streaming off for
+            // exactly the models that most need it.
+            "supportsReasoning": model_capabilities.emits_reasoning,
             "reasoning": model_capabilities.supports_toggled_reasoning,
         },
         // The same instant this side is holding, as epoch milliseconds. Sent so
@@ -4745,6 +4834,56 @@ fn notes_to_resume_from(
     from_record
         .filter(|notes| !notes.is_empty())
         .or_else(|| from_checkpoint.filter(|notes| !notes.is_empty()))
+}
+
+#[cfg(test)]
+mod tool_floor_tests {
+    use super::{
+        tool_schema_floor, REPLY_RESERVE_TOKENS, TEMPLATE_OVERHEAD_TOKENS,
+        TOOL_FLOOR_TOKENS_PER_TOOL,
+    };
+
+    /// How many tools a planned run is typically offered, and how many the
+    /// catalogue holds in total. Both are read off `TOOL_DEFINITIONS`; the
+    /// second is the worst case a plan can reach.
+    const CATALOGUE_TOOLS: usize = 31;
+
+    #[test]
+    fn the_catalogue_is_charged_before_anything_else_is_budgeted() {
+        // The reported failure, in numbers: an 8,192-token window, the whole
+        // catalogue, and a short question. Before the floor existed this side
+        // believed almost the entire window was free for documents and
+        // conversation, and the request went out at 9,238 tokens.
+        let served_window: u32 = 8_192;
+        let floor = tool_schema_floor(CATALOGUE_TOOLS);
+
+        assert!(
+            floor > 2_000,
+            "a catalogue of {CATALOGUE_TOOLS} tools cannot cost only {floor} tokens; if this              fires, the floor has been set below what the runtime actually spends"
+        );
+        // And what is left is genuinely free: the reply, the template and the
+        // tools all subtracted, with room still to say something.
+        let free = served_window
+            .saturating_sub(REPLY_RESERVE_TOKENS + TEMPLATE_OVERHEAD_TOKENS)
+            .saturating_sub(floor);
+        assert!(free > 0, "an 8k window must still hold a question after the fixed costs");
+    }
+
+    #[test]
+    fn a_run_with_no_tools_is_charged_nothing_for_them() {
+        // A plan that permits nothing must not have a window shortened for
+        // schemas that will never be attached.
+        assert_eq!(tool_schema_floor(0), 0);
+    }
+
+    #[test]
+    fn the_floor_is_per_tool_and_does_not_overflow() {
+        assert_eq!(tool_schema_floor(1), TOOL_FLOOR_TOKENS_PER_TOOL);
+        assert_eq!(tool_schema_floor(10), TOOL_FLOOR_TOKENS_PER_TOOL * 10);
+        // A nonsense count saturates rather than wrapping to a small number,
+        // which would silently restore the defect.
+        assert_eq!(tool_schema_floor(usize::MAX), u32::MAX);
+    }
 }
 
 #[cfg(test)]

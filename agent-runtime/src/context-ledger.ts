@@ -221,6 +221,58 @@ export class ContextLedger {
     return this.#sections[section];
   }
 
+  /**
+   * What the request costs before a single message is added to it.
+   *
+   * The system prompt, the skill guidance and the tool schemas: the three
+   * sections that are set once and do not move for the life of the run.
+   *
+   * Exposed because compaction was deciding without it. `shouldCompact` was
+   * asked whether the *messages* fitted the window, and answered yes on a run
+   * whose tool schemas alone were larger than the window — so the loop
+   * compacted nothing and the server refused the request. The messages were
+   * never the problem, and a measurement that only looks at them cannot say so.
+   */
+  fixed(): number {
+    return this.#sections.system + this.#sections.skill + this.#sections.toolSchema;
+  }
+
+  /**
+   * How much the estimator has been under-counting, as a multiplier at or
+   * above 1.
+   *
+   * ## Why a correction is needed at all
+   *
+   * Every budget in this product is built on characters ÷ 4. That is a fair
+   * average for English prose and wrong in the dangerous direction for what
+   * ARJUN actually carries: OCR'd tables, tag numbers and drawing annotations
+   * tokenise denser, so a request estimated at 7,800 tokens genuinely arrives
+   * as 8,590. A budget built on the optimistic number is one that fits right
+   * up until the server counts it.
+   *
+   * ## Why the run's own measurements rather than a constant
+   *
+   * The provider reports `usage.input` on every turn, and
+   * {@link ContextLedger.reconcile} already records it beside what was
+   * predicted. That is a measurement of *this* model tokenising *this* run's
+   * material — strictly better than any margin picked in advance, and it costs
+   * nothing to read.
+   *
+   * The **worst** observed ratio is taken, not the mean: the question this
+   * answers is "how wrong could the next estimate be", and averaging a turn
+   * that was 40% under with one that was exact produces a margin that fits
+   * neither. Clamped to 1 at the bottom — an estimator that over-counts is
+   * safe and must not be talked into counting less — and to 1.5 at the top, so
+   * one anomalous turn cannot shrink every later request by a third.
+   */
+  driftFactor(): number {
+    let worst = 1;
+    for (const record of this.#reconciliations) {
+      if (record.driftRatio !== null && record.driftRatio > worst) worst = record.driftRatio;
+    }
+    return Math.min(1.5, worst);
+  }
+
   setWindow(window: number): void {
     this.#window = Math.max(0, Math.floor(window));
   }

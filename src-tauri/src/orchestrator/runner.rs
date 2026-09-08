@@ -959,7 +959,11 @@ impl ToolRunner for LocalToolRunner<'_> {
             | ToolName::NotebookDelete
             | ToolName::NotebookSources
             | ToolName::NotebookAddSource
-            | ToolName::NotebookRemoveSource => Err(format!(
+            | ToolName::NotebookRemoveSource
+            | ToolName::CreateChart
+            | ToolName::CreateDiagram
+            | ToolName::CreatePdf
+            | ToolName::CreateTable => Err(format!(
                 "{} is served on the agent path, not by this runner.",
                 tool.as_str()
             )),

@@ -83,6 +83,12 @@ pub const fn is_side_effecting(tool: ToolName) -> bool {
             // recording an intent for each would make every notebook edit a
             // two-write operation for no recovery it enables.
             | ToolName::NotebookDelete
+            // A chart writes a file into the workspace. An interrupted run
+            // that resumes must not draw a second copy beside the first.
+            | ToolName::CreateChart
+            | ToolName::CreateDiagram
+            | ToolName::CreatePdf
+            | ToolName::CreateTable
     )
 }
 

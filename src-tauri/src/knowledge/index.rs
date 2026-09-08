@@ -37,7 +37,7 @@ use crate::policy::Classification;
 pub enum Retrieval {
     /// Full-text keyword match.
     Keyword,
-    /// Vector similarity. Not yet available — no embedding model is installed.
+    /// Vector similarity, against a passage embedded by a local model.
     Vector,
 }
 
@@ -161,7 +161,26 @@ impl KnowledgeIndex {
             CREATE VIRTUAL TABLE IF NOT EXISTS chunk_text USING fts5(
                 id UNINDEXED,
                 body
-            );",
+            );
+
+            -- One passage's embedding, under the model that produced it.
+            --
+            -- `model_id` and `dimensions` are stored beside the vector rather
+            -- than assumed, because the failure they prevent is silent: swap
+            -- the embedding model and every stored vector becomes a point in a
+            -- different space, where cosine similarity still returns a
+            -- plausible number and the ranking is nonsense. A search asks for
+            -- one model's vectors by name, so vectors from another are not
+            -- found rather than quietly compared.
+            CREATE TABLE IF NOT EXISTS chunk_vectors (
+                id         TEXT PRIMARY KEY,
+                model_id   TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                vector     BLOB NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS chunk_vectors_model_idx
+                ON chunk_vectors(model_id);",
         )?;
         Ok(())
     }
@@ -268,6 +287,10 @@ impl KnowledgeIndex {
                 .collect();
             for id in ids {
                 tx.execute("DELETE FROM chunk_text WHERE id = ?1", [&id])?;
+                // The vector belongs to the text that produced it. Re-reading a
+                // document with a better engine changes the text, and a vector
+                // left behind would rank a passage by what it used to say.
+                tx.execute("DELETE FROM chunk_vectors WHERE id = ?1", [&id])?;
             }
         }
         tx.execute("DELETE FROM chunks WHERE document_sha256 = ?1", [&sha])?;
@@ -308,6 +331,204 @@ impl KnowledgeIndex {
         tx.commit()?;
         log::info!("[KNOWLEDGE] indexed {} chunk(s) from {document_name}", chunks.len());
         Ok(chunks.len())
+    }
+
+    /// Stores one embedding per passage, replacing any the same model held.
+    ///
+    /// Separate from [`Self::index_document`] because embedding costs a model
+    /// call per passage and indexing must not wait on a model being up. A
+    /// document is retrievable by keyword the moment it is indexed; its vectors
+    /// arrive when the embedding pass gets to it, and until then it is found by
+    /// the half of the search that does not need them.
+    pub fn store_vectors(&self, model_id: &str, vectors: &[(String, Vec<f32>)]) -> Result<usize> {
+        if vectors.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock().expect("index lock poisoned");
+        let tx = conn.transaction()?;
+        let mut written = 0usize;
+        for (chunk_id, vector) in vectors {
+            if vector.is_empty() {
+                continue;
+            }
+            tx.execute(
+                "INSERT OR REPLACE INTO chunk_vectors (id, model_id, dimensions, vector)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![chunk_id, model_id, vector.len() as i64, vector_to_bytes(vector)],
+            )?;
+            written += 1;
+        }
+        tx.commit()?;
+        Ok(written)
+    }
+
+    /// Passages this model has not embedded yet, in reading order.
+    ///
+    /// The work list for the embedding pass, and what makes the pass resumable:
+    /// it asks again after every batch, so a run interrupted halfway resumes
+    /// where it stopped rather than starting over.
+    pub fn chunks_needing_vectors(
+        &self,
+        model_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().expect("index lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT c.id, t.body
+             FROM chunks c
+             JOIN chunk_text t ON t.id = c.id
+             LEFT JOIN chunk_vectors v ON v.id = c.id AND v.model_id = ?1
+             WHERE v.id IS NULL AND c.superseded = 0
+             ORDER BY c.document_sha256, c.ordinal
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![model_id, limit as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
+    /// How much of the index this model has embedded, as (embedded, total).
+    ///
+    /// Reported rather than assumed so a screen can say "vector search covers
+    /// 40 of 900 passages" instead of implying the whole index is searchable
+    /// that way. A half-embedded index that presents itself as whole is exactly
+    /// the silent degradation this product refuses elsewhere.
+    pub fn vector_coverage(&self, model_id: &str) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().expect("index lock poisoned");
+        let total: i64 =
+            conn.query_row("SELECT COUNT(*) FROM chunks WHERE superseded = 0", [], |row| {
+                row.get(0)
+            })?;
+        let embedded: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chunk_vectors v
+             JOIN chunks c ON c.id = v.id
+             WHERE v.model_id = ?1 AND c.superseded = 0",
+            [model_id],
+            |row| row.get(0),
+        )?;
+        Ok((embedded as usize, total as usize))
+    }
+
+    /// Searches by vector similarity, returning only what this person may see.
+    ///
+    /// ## The clearance rule is the same one, in the same place
+    ///
+    /// ARJUN design rule 22 says the gateway filters by permission *before* the
+    /// passages reach the model, and [`Self::search`] honours that by binding
+    /// clearance into the SQL. So does this. A passage the asker cannot see is
+    /// never fetched, so its vector is never compared and it cannot influence
+    /// the ranking of anything else — which a filter applied after scoring
+    /// could not promise.
+    ///
+    /// ## Why the arithmetic is in Rust and not in SQL
+    ///
+    /// SQLite has no vector type and no cosine function without an extension,
+    /// and an extension is a native dependency an air-gapped installer would
+    /// have to carry. The rows are reduced to what this person may read before
+    /// any of them are scored, so the work is bounded by the reader's own
+    /// library rather than by the whole index.
+    ///
+    /// `score` is `1 - cosine similarity`, a distance, so lower stays better
+    /// here exactly as it is for bm25 — letting the two be fused by rank
+    /// without either pretending its numbers mean the same thing.
+    pub fn search_vectors(
+        &self,
+        session: &Session,
+        model_id: &str,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let cleared: Vec<String> = Classification::ALL
+            .iter()
+            .filter(|c| {
+                c.cleared_roles()
+                    .iter()
+                    .any(|role| session.user.roles.contains(role))
+            })
+            .filter_map(|c| serde_json::to_string(c).ok())
+            .collect();
+
+        if cleared.is_empty() {
+            // Cleared for nothing, and the same answer keyword search gives:
+            // empty, and indistinguishable from nothing having matched.
+            return Ok(Vec::new());
+        }
+
+        let placeholders = cleared.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT c.id, c.document_sha256, c.document_name, t.body, c.page,
+                    c.section_path, c.classification, v.vector, v.dimensions
+             FROM chunk_vectors v
+             JOIN chunks c ON c.id = v.id
+             JOIN chunk_text t ON t.id = v.id
+             WHERE v.model_id = ?1
+               AND c.superseded = 0
+               AND c.classification IN ({placeholders})"
+        );
+
+        let conn = self.conn.lock().expect("index lock poisoned");
+        let mut stmt = conn.prepare(&sql)?;
+
+        let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&model_id];
+        for value in &cleared {
+            bound.push(value);
+        }
+
+        let rows = stmt.query_map(bound.as_slice(), |row| {
+            let section_path: String = row.get(5)?;
+            let classification: String = row.get(6)?;
+            let bytes: Vec<u8> = row.get(7)?;
+            let dimensions: i64 = row.get(8)?;
+            Ok((
+                SearchResult {
+                    chunk_id: row.get(0)?,
+                    document_sha256: row.get(1)?,
+                    document_name: row.get(2)?,
+                    text: row.get(3)?,
+                    page: row.get(4)?,
+                    section_path: serde_json::from_str(&section_path).unwrap_or_default(),
+                    classification: serde_json::from_str(&classification)
+                        .unwrap_or(Classification::Internal),
+                    score: 0.0,
+                    retrieval: Retrieval::Vector,
+                },
+                bytes,
+                dimensions as usize,
+            ))
+        })?;
+
+        let mut scored: Vec<SearchResult> = Vec::new();
+        for (mut result, bytes, dimensions) in rows.filter_map(Result::ok) {
+            // A stored vector of a different width came from a different model
+            // than the one asked for, or from a corrupted write. Either way it
+            // cannot be compared, and skipping it is the only honest choice —
+            // truncating to the shorter length would still produce a number.
+            if dimensions != query.len() {
+                continue;
+            }
+            let Some(vector) = bytes_to_vector(&bytes, dimensions) else {
+                continue;
+            };
+            let Some(similarity) = cosine_similarity(query, &vector) else {
+                continue;
+            };
+            result.score = 1.0 - similarity;
+            scored.push(result);
+        }
+
+        // Nearest first. `total_cmp` rather than `partial_cmp` so the
+        // comparator is total: a NaN that somehow survived the guards above
+        // sorts to one end deterministically instead of making the order
+        // arbitrary, and a citation that moves between identical runs is a bug
+        // report waiting to happen.
+        scored.sort_by(|a, b| a.score.total_cmp(&b.score));
+        scored.truncate(limit);
+        Ok(scored)
     }
 
     /// Marks a document superseded.
@@ -501,6 +722,63 @@ impl KnowledgeIndex {
 
         Ok(rows.filter_map(Result::ok).collect())
     }
+}
+
+
+/// A vector as it is stored: little-endian `f32`, no header.
+///
+/// The width is a column, not a prefix, so a malformed blob is caught by the
+/// length check in [`bytes_to_vector`] rather than by trusting bytes that came
+/// out of the same row that is being checked.
+fn vector_to_bytes(vector: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(vector.len() * 4);
+    for value in vector {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+/// Reads a stored vector back, or `None` when the blob is not the width the row
+/// claims.
+///
+/// Returning `None` rather than a shorter vector is the point: a truncated read
+/// would compare a passage on part of its meaning and score it confidently.
+fn bytes_to_vector(bytes: &[u8], dimensions: usize) -> Option<Vec<f32>> {
+    if bytes.len() != dimensions * 4 {
+        return None;
+    }
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+    )
+}
+
+/// Cosine similarity, or `None` when it is not defined for these two.
+///
+/// `None` for mismatched widths and for a zero-magnitude vector, where the
+/// quotient would divide by zero. Both are refused rather than defaulted to
+/// 0.0, because a zero similarity is a real answer meaning "unrelated", and an
+/// undefined comparison reported as unrelated is a silent wrong answer of
+/// exactly the kind that is impossible to notice later.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> Option<f64> {
+    if a.len() != b.len() || a.is_empty() {
+        return None;
+    }
+    let mut dot = 0f64;
+    let mut norm_a = 0f64;
+    let mut norm_b = 0f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let (x, y) = (*x as f64, *y as f64);
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    if norm_a <= 0.0 || norm_b <= 0.0 {
+        return None;
+    }
+    Some(dot / (norm_a.sqrt() * norm_b.sqrt()))
 }
 
 #[cfg(test)]
@@ -745,6 +1023,220 @@ mod tests {
 
         let hits = f.index.search(&session(vec![Role::Employee]), "thickness", 10).unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    // ---- The vector half -------------------------------------------------
+
+    /// Indexes two passages and gives them vectors pointing in different
+    /// directions, so "nearest" has an unambiguous right answer.
+    fn index_two_with_vectors(f: &Fixture, model: &str) {
+        f.index
+            .index_document(
+                "Pump Manual",
+                Classification::Internal,
+                &[
+                    chunk("c-valve", "man", 0, "The control valve was replaced.", vec![]),
+                    chunk("c-pump", "man", 1, "The charge pump was overhauled.", vec![]),
+                ],
+            )
+            .unwrap();
+        f.index
+            .store_vectors(
+                model,
+                &[
+                    ("c-valve".to_string(), vec![1.0, 0.0, 0.0]),
+                    ("c-pump".to_string(), vec![0.0, 1.0, 0.0]),
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn the_nearest_vector_ranks_first_and_the_far_one_still_appears() {
+        let f = fixture();
+        index_two_with_vectors(&f, "bge-m3");
+
+        // Almost exactly the valve vector, so the valve passage must lead.
+        let hits = f
+            .index
+            .search_vectors(&session(vec![Role::Employee]), "bge-m3", &[0.9, 0.1, 0.0], 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 2, "both passages are cleared and embedded");
+        assert_eq!(hits[0].chunk_id, "c-valve");
+        assert_eq!(hits[1].chunk_id, "c-pump");
+        assert!(
+            hits[0].score < hits[1].score,
+            "score is a distance, so the nearer passage must carry the smaller number"
+        );
+        assert!(hits.iter().all(|hit| hit.retrieval == Retrieval::Vector));
+    }
+
+    /// The same guarantee keyword search makes, made by the same means: the
+    /// clearance is in the SQL, so an uncleared passage is never fetched and
+    /// therefore never scored.
+    #[test]
+    fn an_uncleared_passage_is_never_compared_by_vector() {
+        let f = fixture();
+        f.index
+            .index_document(
+                "Vendor terms",
+                Classification::VendorNegotiation,
+                &[chunk("c1", "deal", 0, "Unit price is 4.2 lakh per valve.", vec![])],
+            )
+            .unwrap();
+        f.index
+            .store_vectors("bge-m3", &[("c1".to_string(), vec![1.0, 0.0, 0.0])])
+            .unwrap();
+
+        // An Auditor is cleared for nothing, so the row is not fetched at all.
+        let hits = f
+            .index
+            .search_vectors(&session(vec![Role::Auditor]), "bge-m3", &[1.0, 0.0, 0.0], 10)
+            .unwrap();
+        assert!(
+            hits.is_empty(),
+            "a passage above the reader clearance was scored and returned"
+        );
+    }
+
+    /// Swapping the embedding model must not silently re-rank the corpus.
+    #[test]
+    fn vectors_from_another_model_are_not_compared() {
+        let f = fixture();
+        index_two_with_vectors(&f, "bge-m3");
+
+        let hits = f
+            .index
+            .search_vectors(&session(vec![Role::Employee]), "e5-large", &[1.0, 0.0, 0.0], 10)
+            .unwrap();
+
+        assert!(
+            hits.is_empty(),
+            "vectors produced by a different model were compared as though they shared a \
+             space with this query"
+        );
+    }
+
+    /// A query of a different width than the stored vectors is not comparable,
+    /// and producing a number anyway would be the silent kind of wrong.
+    #[test]
+    fn a_query_of_the_wrong_width_matches_nothing_rather_than_truncating() {
+        let f = fixture();
+        index_two_with_vectors(&f, "bge-m3");
+
+        let hits = f
+            .index
+            .search_vectors(&session(vec![Role::Employee]), "bge-m3", &[1.0, 0.0], 10)
+            .unwrap();
+
+        assert!(hits.is_empty());
+    }
+
+    /// A vector outliving the text it was made from would rank a passage by
+    /// what it used to say.
+    #[test]
+    fn re_reading_a_document_drops_the_vectors_of_the_text_it_replaced() {
+        let f = fixture();
+        index_two_with_vectors(&f, "bge-m3");
+        assert_eq!(f.index.vector_coverage("bge-m3").unwrap(), (2, 2));
+
+        // The same document, read again by a better engine into one passage.
+        f.index
+            .index_document(
+                "Pump Manual",
+                Classification::Internal,
+                &[chunk("c-merged", "man", 0, "Valve replaced; pump overhauled.", vec![])],
+            )
+            .unwrap();
+
+        let (embedded, total) = f.index.vector_coverage("bge-m3").unwrap();
+        assert_eq!(total, 1, "the re-read replaced both passages with one");
+        assert_eq!(embedded, 0, "the old vectors did not survive their text");
+    }
+
+    /// The work list is what makes the embedding pass resumable.
+    #[test]
+    fn the_work_list_shrinks_as_passages_are_embedded() {
+        let f = fixture();
+        f.index
+            .index_document(
+                "Pump Manual",
+                Classification::Internal,
+                &[
+                    chunk("c1", "man", 0, "The control valve was replaced.", vec![]),
+                    chunk("c2", "man", 1, "The charge pump was overhauled.", vec![]),
+                ],
+            )
+            .unwrap();
+
+        let outstanding = f.index.chunks_needing_vectors("bge-m3", 10).unwrap();
+        assert_eq!(outstanding.len(), 2);
+        assert!(
+            outstanding.iter().any(|(id, body)| id == "c1" && body.contains("valve")),
+            "the work list carries the text to embed, not just the id"
+        );
+
+        f.index
+            .store_vectors("bge-m3", &[("c1".to_string(), vec![1.0, 0.0, 0.0])])
+            .unwrap();
+
+        let outstanding = f.index.chunks_needing_vectors("bge-m3", 10).unwrap();
+        assert_eq!(outstanding.len(), 1);
+        assert_eq!(outstanding[0].0, "c2");
+        assert_eq!(f.index.vector_coverage("bge-m3").unwrap(), (1, 2));
+    }
+
+    /// Half an index embedded must not look like a whole one.
+    #[test]
+    fn coverage_counts_only_this_models_vectors_on_live_passages() {
+        let f = fixture();
+        index_two_with_vectors(&f, "bge-m3");
+
+        assert_eq!(f.index.vector_coverage("bge-m3").unwrap(), (2, 2));
+        assert_eq!(
+            f.index.vector_coverage("e5-large").unwrap(),
+            (0, 2),
+            "a model that has embedded nothing covers nothing, and the total is still the truth"
+        );
+
+        f.index.supersede("man").unwrap();
+        assert_eq!(
+            f.index.vector_coverage("bge-m3").unwrap(),
+            (0, 0),
+            "superseded passages are not current guidance and are not counted"
+        );
+    }
+
+    #[test]
+    fn a_vector_survives_the_round_trip_through_storage() {
+        let original = vec![1.5f32, -0.25, 0.0, 1e-8];
+        let bytes = vector_to_bytes(&original);
+        assert_eq!(bytes_to_vector(&bytes, original.len()), Some(original));
+    }
+
+    /// A blob that is not the width its row claims is refused rather than read
+    /// short, because a passage compared on part of its meaning still gets a
+    /// confident score.
+    #[test]
+    fn a_blob_of_the_wrong_length_is_refused_rather_than_read_short() {
+        let bytes = vector_to_bytes(&[1.0, 2.0, 3.0]);
+        assert_eq!(bytes_to_vector(&bytes, 4), None);
+        assert_eq!(bytes_to_vector(&bytes, 2), None);
+        assert!(bytes_to_vector(&bytes, 3).is_some());
+    }
+
+    #[test]
+    fn cosine_similarity_is_undefined_rather_than_zero_where_it_has_no_meaning() {
+        // Identical direction is 1, opposite is -1, orthogonal is 0.
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[2.0, 0.0]), Some(1.0));
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[-1.0, 0.0]), Some(-1.0));
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]), Some(0.0));
+
+        // The cases that must not quietly become "unrelated".
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 0.0]), None);
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0, 0.0, 0.0]), None);
+        assert_eq!(cosine_similarity(&[], &[]), None);
     }
 
     /// The requirement this module exists for: an uncleared passage is never

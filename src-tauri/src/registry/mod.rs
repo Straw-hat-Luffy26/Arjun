@@ -543,11 +543,69 @@ impl ModelRegistry {
         available_runtime_profiles: &[String],
         allowed_licenses: &[String],
     ) -> Vec<&ModelEntry> {
+        self.candidates_inner(
+            role,
+            classification,
+            required_modality,
+            require_structured_output,
+            available_runtime_profiles,
+            allowed_licenses,
+            true,
+        )
+    }
+
+    /// The same candidates, with the parameter floor not applied.
+    ///
+    /// The floor is a quality rule: a 4B model writes worse code than a 9B, so
+    /// coding asks for 7B and up. It assumes, reasonably, that something at or
+    /// above the floor can actually run.
+    ///
+    /// On a machine where nothing at or above the floor fits in VRAM that
+    /// assumption inverts. Measured on an 8 GB laptop GPU: every cleared coding
+    /// model was 9B or larger, so every coding request fell back to a partial
+    /// offload and decoded at about 0.4 tokens a second — 116 characters in five
+    /// minutes, then stopped as stuck. A 4B model sitting unused in the same
+    /// registry would have fitted entirely on the GPU and answered.
+    ///
+    /// So the router may ask for this list, and only in that situation. A model
+    /// below the floor is worse than a model above it; it is not worse than no
+    /// answer at all, which is what the floor was delivering here.
+    pub fn candidates_ignoring_floor(
+        &self,
+        role: ModelRole,
+        classification: Option<Classification>,
+        required_modality: Option<Modality>,
+        require_structured_output: bool,
+        available_runtime_profiles: &[String],
+        allowed_licenses: &[String],
+    ) -> Vec<&ModelEntry> {
+        self.candidates_inner(
+            role,
+            classification,
+            required_modality,
+            require_structured_output,
+            available_runtime_profiles,
+            allowed_licenses,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn candidates_inner(
+        &self,
+        role: ModelRole,
+        classification: Option<Classification>,
+        required_modality: Option<Modality>,
+        require_structured_output: bool,
+        available_runtime_profiles: &[String],
+        allowed_licenses: &[String],
+        enforce_floor: bool,
+    ) -> Vec<&ModelEntry> {
         self.entries
             .iter()
             .filter(|e| e.enabled)
             .filter(|e| e.serves(role))
-            .filter(|e| e.meets_floor(role))
+            .filter(|e| !enforce_floor || e.meets_floor(role))
             .filter(|e| match classification {
                 Some(c) => e.permits(c),
                 None => true,

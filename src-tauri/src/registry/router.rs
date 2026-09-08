@@ -439,7 +439,67 @@ impl ModelRouter {
             }
         }
 
-        // Step 5: nothing fits entirely. The configured orchestrator still wins
+        // Step 5a: nothing at or above the floor fits in VRAM. Before accepting
+        // a partial offload, look *below* the floor for something that fits
+        // entirely on the GPU.
+        //
+        // The floor assumes that a model meeting it can run. Where that is
+        // false the floor stops being a quality rule and becomes a guarantee of
+        // the worst outcome available: on an 8 GB laptop GPU every cleared
+        // coding model was 9B or larger, so every coding request ran partly on
+        // the CPU at about 0.4 tokens a second and was stopped as stuck before
+        // it finished a sentence. A 4B model in the same registry would have
+        // fitted entirely and answered in seconds.
+        //
+        // Ordered largest-first, so this takes the best model that fits rather
+        // than the smallest. `used_fallback` is set and the reason says plainly
+        // that the floor was crossed, because a smaller model answering is a
+        // fact about the answer's quality and the reader is owed it.
+        let mut below_floor = registry.candidates_ignoring_floor(
+            role,
+            classification,
+            required_modality,
+            require_structured_output,
+            available_runtime_profiles,
+            allowed_licenses,
+        );
+        below_floor.retain(|entry| !entry.meets_floor(role));
+        below_floor.sort_by(|a, b| {
+            b.parameters_b
+                .partial_cmp(&a.parameters_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for entry in &below_floor {
+            let plan = plan_gpu_offload(
+                vram_total_bytes,
+                entry.weights_bytes,
+                entry.context_length,
+                None,
+            );
+            if plan.full_offload {
+                reasons.push(format!(
+                    "No cleared {} model at or above the {}B floor fits in this machine's VRAM. \
+                     {} is below the floor but fits entirely on the GPU, so it answers rather \
+                     than a larger model running partly on the CPU at a few tokens a second.",
+                    role.label(),
+                    role.minimum_parameters_b(),
+                    entry.name
+                ));
+                reasons.push(plan.reason.clone());
+                return Ok(Self::decide(
+                    entry,
+                    role,
+                    intent_label,
+                    confidence,
+                    plan,
+                    true,
+                    reasons,
+                ));
+            }
+        }
+
+        // Step 5: nothing fits entirely, at or below the floor. The configured
+        // orchestrator still wins
         // here — an administrator who chose a model slightly too big for this
         // GPU asked for that model, not for a different one — and otherwise the
         // smallest candidate runs partly on the CPU. Either way ARJUN keeps
@@ -668,6 +728,96 @@ mod tests {
             entry("qwen-8b", 8.0, vec![ModelRole::Reasoning]),
             entry("surya", 0.65, vec![ModelRole::DocumentOcr]),
         ])
+    }
+
+    /// The 8 GB laptop, reproduced.
+    ///
+    /// Measured on an RTX 5060 Laptop (7.9 GB): every cleared coding model was
+    /// 9B or larger, all of them above the 7B floor and none of them a fit. The
+    /// router took the smallest *candidate* — 9B, 5.4 GB — and ran it at 31/32
+    /// layers with the last on the CPU. It decoded at about 0.4 tokens a second,
+    /// produced 116 characters in five minutes, and was stopped as stuck.
+    ///
+    /// A 4B model was sitting in the same registry, excluded for being below the
+    /// coding floor. It fits entirely on the GPU. The floor is a quality rule
+    /// and it was buying nothing: the larger model did not answer at all.
+    #[test]
+    fn a_model_below_the_floor_that_fits_beats_a_larger_one_on_the_cpu() {
+        let mut small = entry(
+            "nemotron-nano-4b",
+            4.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        small.context_length = 8192;
+        let mut large = entry("qwen-9b", 9.0, vec![ModelRole::Reasoning, ModelRole::Coding]);
+        large.context_length = 8192;
+        let registry = registry(vec![large, small]);
+
+        // 6 GB rather than the laptop's nominal 8: the measured weight budget
+        // there was 4.91 GB once the 1.25 GB KV cache was taken out, and the 9B
+        // is 5.4 GB. This is the same relationship — one model over the budget,
+        // one under it — expressed against the fixture's own geometry.
+        let coding = ModelRouter::route(
+            &registry,
+            "Write the example code for a linked list in cpp",
+            None,
+            6 * GB,
+            None,
+            false,
+            &[],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            coding.model_id, "nemotron-nano-4b",
+            "the 9B does not fit and decodes at a few tokens a second; the 4B fits entirely"
+        );
+        assert!(
+            coding.fully_on_gpu,
+            "the whole point of crossing the floor is that this one actually fits"
+        );
+        assert!(
+            coding.used_fallback,
+            "a model below the floor answering is a degradation and must be reported as one"
+        );
+        assert!(
+            coding.reasons.iter().any(|reason| reason.contains("below the floor")),
+            "the reader is owed the reason the smaller model answered: {:?}",
+            coding.reasons
+        );
+    }
+
+    /// The floor still holds when the larger model fits.
+    ///
+    /// Crossing it is a last resort, not a preference. On a machine with room
+    /// for the 9B, the 9B answers and nothing is reported as degraded.
+    #[test]
+    fn the_floor_is_not_crossed_when_a_model_above_it_fits() {
+        let mut small = entry(
+            "nemotron-nano-4b",
+            4.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        small.context_length = 8192;
+        let mut large = entry("qwen-9b", 9.0, vec![ModelRole::Reasoning, ModelRole::Coding]);
+        large.context_length = 8192;
+        let registry = registry(vec![large, small]);
+
+        let coding = ModelRouter::route(
+            &registry,
+            "Write the example code for a linked list in cpp",
+            None,
+            24 * GB,
+            None,
+            false,
+            &[],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(coding.model_id, "qwen-9b");
+        assert!(!coding.used_fallback);
     }
 
     /// The problem statement's own demo: a coding request and a document summary

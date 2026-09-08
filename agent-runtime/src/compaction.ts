@@ -41,6 +41,7 @@ import {
   createCompactionSummaryMessage,
   DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
+  estimateTokens,
   findCutPoint,
   generateSummary,
   shouldCompact,
@@ -281,6 +282,77 @@ function textOf(message: AgentMessage): string {
 export function isEvidenceMessage(message: AgentMessage): boolean {
   if ((message as ToolCallish).role !== "toolResult") return false;
   return /\[E\d+(?:,\s*E\d+)*\]/.test(textOf(message));
+}
+
+/** The sentence a truncated block ends on, so the model knows it was cut. */
+const TRUNCATION_NOTE =
+  "\n\n[… cut here to fit this model's context window. Ask for this material again in " +
+  "smaller pieces — by page, by section, or by search — rather than treating what is above " +
+  "as the whole of it.]";
+
+/**
+ * Shortens a message's text blocks until it costs about `roomTokens`.
+ *
+ * Iterative rather than arithmetic: the character-to-token ratio is an average
+ * and this is the one place where being wrong about it means the request is
+ * still refused, so the cut is measured with the same estimator the ceiling is
+ * compared against and halved again if it did not land. Six passes take any
+ * message down by a factor of sixty, which is more than the gap has ever been.
+ *
+ * Non-text blocks are left alone. An image block is a flat cost that cannot be
+ * made smaller, and dropping it would change what the message *says* rather
+ * than how much of it is carried.
+ */
+function truncateMessageText(message: AgentMessage, roomTokens: number): AgentMessage {
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return message;
+
+  const textAt = (blocks: unknown[]) =>
+    blocks.filter(
+      (block): block is { type: "text"; text: string } =>
+        typeof block === "object" &&
+        block !== null &&
+        (block as { type?: string }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string",
+    );
+  if (textAt(content).length === 0) return message;
+
+  let share = 1;
+  for (let pass = 0; pass < 6; pass += 1) {
+    const total = textAt(content).reduce((sum, block) => sum + block.text.length, 0);
+    const keep = Math.max(120, Math.floor((total * share) / 2));
+    const cut = content.map((block) => {
+      const [text] = textAt([block]);
+      if (!text || text.text.length <= keep) return block;
+      return { ...text, text: text.text.slice(0, keep) + TRUNCATION_NOTE };
+    });
+    const candidate = { ...(message as object), content: cut } as AgentMessage;
+    if (estimateTokens(candidate) <= roomTokens) return candidate;
+    share /= 2;
+    if (pass === 5) return candidate;
+  }
+  return message;
+}
+
+/** One line the model can read, saying what the window could not hold. */
+function ceilingMarker(dropped: number, truncated: number): string {
+  const parts: string[] = [];
+  if (dropped > 0) {
+    parts.push(
+      `${dropped} earlier message${dropped === 1 ? "" : "s"} in this task ${
+        dropped === 1 ? "was" : "were"
+      } removed`,
+    );
+  }
+  if (truncated > 0) {
+    parts.push(`${truncated} message${truncated === 1 ? " was" : "s were"} shortened`);
+  }
+  return (
+    `[Context notice: ${parts.join(" and ")} because this model's context window could not ` +
+    "hold them. Do not assume what is missing agreed with you, and do not state anything you " +
+    "can no longer see. If the answer depends on it, search or read it again — or say which " +
+    "part you can no longer account for.]"
+  );
 }
 
 /**
@@ -527,8 +599,17 @@ export class RunCompactor {
     return this.#ledger;
   }
 
-  /** What the model is shown, given the transcript and any summary so far. */
-  #project(messages: AgentMessage[]): AgentMessage[] {
+  /**
+   * What the model is shown, given the transcript and any summary so far.
+   *
+   * `preamble` counts the leading messages this class wrote rather than the
+   * conversation contributing: the summary standing in for older history, the
+   * carried state, the working notes. {@link RunCompactor} needs to know where
+   * they stop, because they are the messages the ceiling pass must not drop —
+   * the summary *is* the earlier history, and evicting it to make room would
+   * throw away the very thing compaction produced to save space.
+   */
+  #project(messages: AgentMessage[]): { messages: AgentMessage[]; preamble: number } {
     const notes = this.#notes.render();
 
     if (!this.#summary || this.#covered === 0) {
@@ -536,8 +617,11 @@ export class RunCompactor {
       // A model asked to maintain notes it has never been shown maintains
       // nothing, and the first thing it would have recorded is the goal — which
       // is exactly what the first compaction is most likely to lose.
-      if (!notes) return messages;
-      return [this.#notesMessage(notes, asEpoch(messages[0]?.timestamp)), ...messages];
+      if (!notes) return { messages, preamble: 0 };
+      return {
+        messages: [this.#notesMessage(notes, asEpoch(messages[0]?.timestamp)), ...messages],
+        preamble: 1,
+      };
     }
 
     const summary = createCompactionSummaryMessage(
@@ -556,7 +640,9 @@ export class RunCompactor {
     // The cut is re-aligned here and not only where it was chosen, because the
     // kept tail is what is actually sent. See `alignCutToPairs`.
     const tail = messages.slice(alignCutToPairs(messages, this.#covered));
-    return carried ? [summary, carried, ...tail] : [summary, ...tail];
+    return carried
+      ? { messages: [summary, carried, ...tail], preamble: 2 }
+      : { messages: [summary, ...tail], preamble: 1 };
   }
 
   #notesMessage(rendered: string, timestamp?: number): AgentMessage {
@@ -608,12 +694,22 @@ export class RunCompactor {
     const working = pruned.messages;
     this.#cleared = pruned.cleared;
 
-    let projected = this.#project(working);
-    const tokensBefore = this.#tokensAt(projected);
+    let { messages: projected, preamble } = this.#project(working);
+    // What the *request* costs, not what the messages cost.
+    //
+    // The system prompt and the tool schemas go out on every call and are
+    // measured once into the ledger; adding them here is what makes this
+    // decision about the thing the server actually refuses. Asked without
+    // them, `shouldCompact` reported that 2,700 tokens of conversation fitted
+    // an 8,192-token window while the request around it came to 9,238 — so
+    // nothing was compacted, and the turn died at the provider with the one
+    // error the compactor exists to prevent.
+    const fixed = this.#ledger.fixed();
+    const tokensBefore = this.#tokensAt(projected) + fixed;
     this.#measure(projected);
 
     if (!shouldCompact(tokensBefore, window, this.#settings)) {
-      return projected;
+      return this.#enforceCeiling(projected, preamble, window);
     }
 
     const entries = asEntries(working);
@@ -624,11 +720,12 @@ export class RunCompactor {
       this.#settings.keepRecentTokens,
     );
 
-    // Nothing new to fold in. Returning the projection unchanged is the honest
-    // answer: the request may still be too large, and the provider's own
-    // refusal names the real problem better than a summary of nothing would.
+    // Nothing new to fold in — everything older is already summarised. There is
+    // no second summary to write, so the ceiling pass takes it from here: it
+    // drops whole messages rather than summarising them, which is worse for the
+    // model and still incomparably better than a refused request.
     if (firstKeptEntryIndex <= this.#covered) {
-      return projected;
+      return this.#enforceCeiling(projected, preamble, window);
     }
 
     const toSummarise = working.slice(this.#covered, firstKeptEntryIndex);
@@ -664,10 +761,12 @@ export class RunCompactor {
     }
 
     if (summary === undefined) {
-      // The context is returned as it was. If it really is too large the
-      // provider says so, which is a clearer error than one about summarisation
-      // the operator never asked for.
-      return projected;
+      // Summarisation is what failed, not the run. The context still has to fit
+      // — a model server that could not write a summary is in no better
+      // position to accept an over-long request — so the ceiling pass drops
+      // messages instead. Mechanical rather than clever, and it needs nothing
+      // from the model that just declined to answer.
+      return this.#enforceCeiling(projected, preamble, window);
     }
 
     this.#summary = capCompactionSummary(summary);
@@ -677,12 +776,18 @@ export class RunCompactor {
     this.#compactions += 1;
     this.#ledger.countCompaction();
 
-    projected = this.#project(working);
+    ({ messages: projected, preamble } = this.#project(working));
+    // The ceiling pass runs after a successful compaction too. A summary is a
+    // large saving and not an unbounded one: a single tool result carrying
+    // forty pages can still be in the kept tail, and the request either fits or
+    // it does not — a compaction that halved it is not an answer to that
+    // question, only a better starting point for it.
+    projected = this.#enforceCeiling(projected, preamble, window);
     this.#measure(projected);
 
     this.#options.onCompacted?.({
       tokensBefore,
-      tokensAfter: this.#tokensAt(projected),
+      tokensAfter: this.#tokensAt(projected) + fixed,
       messagesSummarised: this.#covered,
       ordinal: this.#compactions,
       refinedExistingSummary,
@@ -691,6 +796,135 @@ export class RunCompactor {
       at: new Date().toISOString(),
     });
     return projected;
+  }
+
+  /**
+   * The last thing between a projection and the wire: makes it fit, whatever
+   * it takes.
+   *
+   * ## Why a mechanical pass exists at all
+   *
+   * Everything above it is a *good* way to shrink a context — clear a tool
+   * result that is retrievable by marker, summarise the oldest half, carry the
+   * decisions across verbatim. Every one of them can decline. Summarisation
+   * needs the model server, which may be the thing that is failing. Cut-point
+   * selection returns nothing when the whole transcript is already summarised.
+   * Pruning finds nothing when there is nothing stale. On each of those paths
+   * the projection went to the provider exactly as it was, and the run ended
+   * with `400 request (…) exceeds the available context size`.
+   *
+   * A person watching that cannot tell it from the model failing, and there is
+   * nothing they can do about it. So this pass is deliberately stupid and
+   * cannot decline: it drops whole messages, oldest first, until the projection
+   * fits, and if one message is on its own larger than the window it truncates
+   * that message's text and says so in the text.
+   *
+   * ## What it will not do
+   *
+   * - **The preamble stays.** The summary is the earlier history; dropping it
+   *   to make room would discard what compaction was run to produce.
+   * - **The last user message stays.** That is the question. A request that
+   *   fits because the question was removed is a request that will be answered
+   *   confidently and about nothing.
+   * - **Pairing stays intact.** A tool result without the call that produced it
+   *   is a malformed request — a *different* provider refusal, reached by
+   *   trying to avoid this one.
+   * - **Nothing is silent.** Every drop and every truncation leaves a marker in
+   *   the context the model can read, and a line on stderr the operator can.
+   *
+   * ## Why the estimate is inflated before it is compared
+   *
+   * See {@link ContextLedger.driftFactor}. The estimator counts characters ÷ 4,
+   * and the material this product carries tokenises denser than that. Fitting
+   * to the optimistic count is how a request calculated to fit exactly is
+   * refused for being 6% over.
+   */
+  #enforceCeiling(
+    projected: AgentMessage[],
+    preamble: number,
+    window: number,
+  ): AgentMessage[] {
+    if (!Number.isFinite(window) || window <= 0) return projected;
+
+    const fixed = this.#ledger.fixed();
+    // What the messages may occupy: the window, less the reply the model has to
+    // have room to write, less everything that is not a message. Never below a
+    // token, so the arithmetic below always has somewhere to aim.
+    const ceiling = Math.max(1, window - this.#settings.reserveTokens - fixed);
+    const drift = this.#ledger.driftFactor();
+    const cost = (messages: AgentMessage[]) => Math.ceil(this.#tokensAt(messages) * drift);
+
+    if (cost(projected) <= ceiling) return projected;
+
+    // The notice this pass adds is itself part of the request, so it is charged
+    // before anything is dropped rather than spliced in afterwards. Fitting to
+    // the ceiling and *then* adding a hundred tokens of explanation is how a
+    // pass whose entire job is to make the request fit sends one that does not.
+    const noticeCost = Math.ceil(
+      estimateTokens({
+        role: "user",
+        content: [{ type: "text", text: ceilingMarker(1, 1) }],
+        timestamp: 0,
+      } as AgentMessage) * drift,
+    );
+    const target = Math.max(1, ceiling - noticeCost);
+
+    const kept = [...projected];
+    // The question, or the newest user turn standing in for it. Found by index
+    // so the identity survives the splicing below.
+    let protectedFrom = kept.length;
+    for (let index = kept.length - 1; index >= preamble; index -= 1) {
+      if ((kept[index] as { role?: string }).role === "user") {
+        protectedFrom = index;
+        break;
+      }
+    }
+
+    let dropped = 0;
+    // Oldest first, from just after the preamble, and never into the protected
+    // tail. `alignCutToPairs` moves the cut forward off a tool result whose
+    // call would be left behind.
+    while (cost(kept) > target && preamble < protectedFrom) {
+      const cut = alignCutToPairs(kept, preamble + 1);
+      if (cut <= preamble || cut > protectedFrom) break;
+      const removed = cut - preamble;
+      kept.splice(preamble, removed);
+      protectedFrom -= removed;
+      dropped += removed;
+    }
+
+    let truncated = 0;
+    if (cost(kept) > target) {
+      // What is left is the preamble and the question, and it still does not
+      // fit — a single message larger than the window. Almost always a document
+      // pasted into the prompt, occasionally a tool result that came back
+      // enormous. Truncating it keeps the shape of the request correct and
+      // tells the model what happened, which is a thing it can work with;
+      // sending it unchanged is a thing nobody can work with.
+      const room = Math.max(1, Math.floor(target / Math.max(1, kept.length)));
+      for (let index = 0; index < kept.length; index += 1) {
+        const before = Math.ceil(estimateTokens(kept[index]!) * drift);
+        if (before <= room) continue;
+        kept[index] = truncateMessageText(kept[index]!, room);
+        truncated += 1;
+      }
+    }
+
+    if (dropped > 0 || truncated > 0) {
+      // A drop nobody can see is indistinguishable from a model that forgot.
+      const marker = ceilingMarker(dropped, truncated);
+      kept.splice(preamble, 0, {
+        role: "user",
+        content: [{ type: "text", text: marker }],
+        timestamp: asEpoch(kept[preamble]?.timestamp) ?? Date.now(),
+      } as AgentMessage);
+      process.stderr.write(
+        `[agent-runtime:log] [context] ceiling enforced: ${dropped} message(s) dropped, ` +
+          `${truncated} truncated, to fit ${ceiling} token(s) of a ${window}-token window ` +
+          `(fixed cost ${fixed}, drift x${drift.toFixed(2)})\n`,
+      );
+    }
+    return kept;
   }
 
   /**

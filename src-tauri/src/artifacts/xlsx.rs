@@ -490,3 +490,148 @@ mod tests {
         assert!(!check.is_sound());
     }
 }
+
+/// Writes an ordinary table as a workbook.
+///
+/// Reuses the parts and the sheet writer that `write_workbook` uses, because a
+/// table of figures and a table of calculation steps are the same file with
+/// different rows. The only judgement here is which cells are numbers: a column
+/// of quantities that arrives as text sorts and sums wrongly in Excel, and the
+/// person who opens it will not think to check.
+pub fn write_table(
+    path: &Path,
+    title: &str,
+    header: &[String],
+    rows: &[Vec<String>],
+    classification: &str,
+) -> Result<(), String> {
+    if header.is_empty() {
+        return Err("A table needs a header row. Nothing was written.".to_string());
+    }
+    if rows.is_empty() {
+        return Err("A table with no rows would be an empty sheet. Nothing was written.".to_string());
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if row.len() != header.len() {
+            return Err(format!(
+                "Row {} has {} cell(s) for {} column(s). Every row must match the header; \
+                 nothing was written.",
+                index + 1,
+                row.len(),
+                header.len()
+            ));
+        }
+    }
+
+    let mut sheet: Vec<Vec<Cell>> = Vec::with_capacity(rows.len() + 3);
+    sheet.push(vec![Cell::Text(title.to_string())]);
+    if !classification.trim().is_empty() {
+        sheet.push(vec![Cell::Text(format!(
+            "Classification: {}",
+            classification.trim()
+        ))]);
+    }
+    sheet.push(header.iter().map(|h| Cell::Text(h.clone())).collect());
+
+    for row in rows {
+        sheet.push(
+            row.iter()
+                .map(|value| {
+                    // Parsed rather than assumed. A value that is a number is
+                    // written as one so the sheet can add it up; anything else
+                    // stays exactly the text it arrived as.
+                    match value.trim().parse::<f64>() {
+                        Ok(number) if value.trim().parse::<f64>().is_ok() => Cell::Number(number),
+                        _ => Cell::Text(value.clone()),
+                    }
+                })
+                .collect(),
+        );
+    }
+
+    let parts = [
+        ("[Content_Types].xml", CONTENT_TYPES.to_string()),
+        ("_rels/.rels", ROOT_RELS.to_string()),
+        ("xl/workbook.xml", WORKBOOK.to_string()),
+        ("xl/_rels/workbook.xml.rels", WORKBOOK_RELS.to_string()),
+        ("xl/worksheets/sheet1.xml", sheet_xml(&sheet)),
+    ];
+    write_parts(path, &parts).map_err(|e| format!("The table could not be written: {e}"))
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    fn rows() -> Vec<Vec<String>> {
+        vec![
+            vec!["PV-2201".into(), "1".into(), "45000".into()],
+            vec!["PT-2201".into(), "2".into(), "8250.5".into()],
+        ]
+    }
+
+    fn header() -> Vec<String> {
+        vec!["Item".into(), "Qty".into(), "Cost".into()]
+    }
+
+    #[test]
+    fn a_table_becomes_a_workbook_that_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.xlsx");
+        write_table(&path, "Spares", &header(), &rows(), "OFFICIAL").unwrap();
+
+        // `is_sound` is the *calculation workbook* contract - it wants
+        // calculations and a stated rounding rule, and a table of spares has
+        // neither by design. What matters here is that the file opens and the
+        // rows are in it.
+        let check = check_workbook(&path);
+        assert!(check.opens, "the workbook does not open: {check:?}");
+
+        let sheet = read_part(&path, "xl/worksheets/sheet1.xml").unwrap();
+        assert!(sheet.contains("Spares"), "{sheet}");
+        assert!(sheet.contains("Item"), "{sheet}");
+        assert!(sheet.contains("OFFICIAL"), "{sheet}");
+    }
+
+    /// Numbers must be numbers, or the sheet cannot add them up.
+    #[test]
+    fn numeric_cells_are_written_as_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.xlsx");
+        write_table(&path, "Spares", &header(), &rows(), "OFFICIAL").unwrap();
+
+        let sheet = read_part(&path, "xl/worksheets/sheet1.xml").unwrap();
+        assert!(sheet.contains("<v>45000</v>"), "{sheet}");
+        assert!(sheet.contains("<v>8250.5</v>"), "{sheet}");
+        // And the item code, which merely looks like data, stayed text.
+        assert!(sheet.contains("PV-2201"), "{sheet}");
+    }
+
+    #[test]
+    fn a_ragged_row_is_refused_rather_than_padded() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ragged = rows();
+        ragged[1].pop();
+        let problem = write_table(
+            &dir.path().join("t.xlsx"),
+            "Spares",
+            &header(),
+            &ragged,
+            "OFFICIAL",
+        )
+        .unwrap_err();
+        assert!(problem.contains("2 cell(s) for 3 column(s)"), "{problem}");
+        assert!(problem.contains("nothing was written"));
+    }
+
+    #[test]
+    fn an_empty_table_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(write_table(&dir.path().join("t.xlsx"), "x", &header(), &[], "OFFICIAL")
+            .unwrap_err()
+            .contains("empty sheet"));
+        assert!(write_table(&dir.path().join("t.xlsx"), "x", &[], &rows(), "OFFICIAL")
+            .unwrap_err()
+            .contains("header row"));
+    }
+}

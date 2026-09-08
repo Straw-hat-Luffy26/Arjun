@@ -252,6 +252,39 @@ pub fn plan_launch(
         args.push(projector.display().to_string());
     }
 
+    // Reasoning on its own channel, for a model that produces it.
+    //
+    // Without these flags llama-server leaves the model's think block inline in
+    // `content`. The agent runtime then has to separate reasoning from answer
+    // itself, and the partitioner that does it runs in its strict mode - where
+    // text is held until the Markdown around it can no longer change. A fenced
+    // code block cannot stop changing until its closing fence arrives, so the
+    // whole block is withheld and then delivered at once.
+    //
+    // Measured here: an answer of 4,036 characters arrived in 22 text deltas -
+    // about 183 characters each - while the reasoning beside it arrived in 195
+    // deltas of about 4 characters, one per token. Prose looked like typing and
+    // code looked like a paste, and the difference was only which side of the
+    // partitioner the text came out of.
+    //
+    // With `--reasoning-format deepseek` the server fills `reasoning_content`
+    // instead, the runtime takes its non-strict path, and visible text is
+    // released at line boundaries as it decodes. `--jinja` is required for it:
+    // the parsing lives in the chat template, which the default handler does
+    // not run.
+    //
+    // Both conditions are asked, not assumed. A model with no reasoning block
+    // gains nothing and keeps the plainer request; an older llama-server that
+    // does not know the flag would refuse to start, which is the one outcome
+    // worse than inline reasoning.
+    if crate::ai_engine::gguf_meta::capabilities(weights).emits_reasoning
+        && llama_server_splits_reasoning()
+    {
+        args.push("--jinja".to_string());
+        args.push("--reasoning-format".to_string());
+        args.push("deepseek".to_string());
+    }
+
     LaunchPlan {
         program: llama_server_program(),
         args,
@@ -325,6 +358,28 @@ fn llama_server_fits_layers_itself() -> bool {
                 .skip_while(|line| !line.contains("--n-gpu-layers"))
                 .take(3)
                 .any(|line| line.contains("'auto'"))
+    })
+}
+
+/// Whether this llama-server can put reasoning in its own response field.
+///
+/// Probed once and remembered, exactly as [`llama_server_fits_layers_itself`]
+/// is and for the same reason: a build that does not know `--reasoning-format`
+/// treats it as an unknown argument and refuses to start. A server that cannot
+/// be probed at all is assumed not to support it, so the failure mode of a
+/// missing probe is the behaviour that shipped before this existed.
+fn llama_server_splits_reasoning() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        let Ok(output) = std::process::Command::new(llama_server_program())
+            .arg("--help")
+            .output()
+        else {
+            return false;
+        };
+        let help = String::from_utf8_lossy(&output.stdout);
+        // Both are needed together, so both are required before either is sent.
+        help.contains("--reasoning-format") && help.contains("--jinja")
     })
 }
 

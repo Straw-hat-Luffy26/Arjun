@@ -582,3 +582,85 @@ describe("startRun: the outcome it returns", () => {
     }
   });
 });
+
+describe("a turn that ends having said nothing", () => {
+  // The second half of the reported defect: "sometimes it generates no output
+  // and stops answering automatically without showing any answer or error."
+  //
+  // Not a crash. The loop returns normally, `stopReason` is `stop`, the ending
+  // classifies as `completed` — which is the one ending that carries no
+  // sentence to display — and the answer is the empty string. So the chat cell
+  // closed empty with nothing beside it to explain why. Measured cause: a
+  // reasoning model can spend the whole turn in `reasoning_content` and emit no
+  // `content` at all.
+
+  it("asks once more for the answer instead of returning nothing", async () => {
+    server = await modelServer([
+      // The turn that says nothing: an assistant message, no text, `stop`.
+      [chunk({ role: "assistant", content: "" }), chunk({}, "stop")],
+      // Asked again, the model writes the answer it had already worked out.
+      [
+        chunk({ role: "assistant", content: "" }),
+        chunk({ content: "The seal is 9.0 mm." }),
+        chunk({}, "stop"),
+      ],
+    ]);
+    const core = coreStub({});
+
+    const outcome = await startRun(core.peer, request(server.baseUrl), () => {});
+
+    expect(outcome.text).toBe("The seal is 9.0 mm.");
+    expect(outcome.outcome.kind).toBe("completed");
+    // Two model calls, because the first produced nothing to show.
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("tells the model not to act again, only to write what it already has", async () => {
+    // The salvage turn must not re-run a tool. The work is already done and its
+    // results are in the transcript; a second attempt that re-issued a write
+    // would produce the document twice — a worse failure than the silence.
+    server = await modelServer([
+      [chunk({ role: "assistant", content: "" }), chunk({}, "stop")],
+      [chunk({ role: "assistant", content: "" }), chunk({ content: "Done." }), chunk({}, "stop")],
+    ]);
+    const core = coreStub({});
+
+    await startRun(core.peer, request(server.baseUrl), () => {});
+
+    const second = JSON.stringify(server.requests[1]);
+    expect(second).toContain("Do not call any tool");
+    expect(second).toContain("do not invent an answer");
+  });
+
+  it("reports a failure rather than an empty answer when it stays silent", async () => {
+    // The floor. Whatever else happens, a turn that produced nothing must not
+    // be recorded as a completed one — `completed` puts an empty cell on the
+    // screen with no error beside it, which is precisely what was reported.
+    server = await modelServer([[chunk({ role: "assistant", content: "" }), chunk({}, "stop")]]);
+    const core = coreStub({});
+
+    const outcome = await startRun(core.peer, request(server.baseUrl), () => {});
+
+    expect(outcome.text).toBe("");
+    expect(outcome.outcome.kind).toBe("failed");
+    // A sentence to show, since that is the whole point of not saying
+    // `completed`.
+    expect(outcome.outcome.detail).toContain("without writing an answer");
+  });
+
+  it("does not ask again when the run was stopped", async () => {
+    // An operator who pressed stop is not asking for one more model call, and a
+    // deadline that expired has no time to spend on one. Both already explain
+    // themselves, so there is nothing silent to rescue.
+    const stalled = await stallingServer();
+    try {
+      const core = coreStub({});
+      const outcome = await startRun(core.peer, request(stalled.baseUrl), (handle) => {
+        setTimeout(() => handle.abort("operator stopped it"), 60);
+      });
+      expect(outcome.outcome.kind).toBe("aborted");
+    } finally {
+      await stalled.close();
+    }
+  });
+});

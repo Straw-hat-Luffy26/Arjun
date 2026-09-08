@@ -200,6 +200,10 @@ pub enum ToolName {
     NotebookSources,
     NotebookAddSource,
     NotebookRemoveSource,
+    CreateChart,
+    CreateDiagram,
+    CreatePdf,
+    CreateTable,
 }
 
 impl ToolName {
@@ -231,6 +235,10 @@ impl ToolName {
         ToolName::NotebookSources,
         ToolName::NotebookAddSource,
         ToolName::NotebookRemoveSource,
+        ToolName::CreateChart,
+        ToolName::CreateDiagram,
+        ToolName::CreatePdf,
+        ToolName::CreateTable,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -263,6 +271,10 @@ impl ToolName {
             ToolName::NotebookSources => "notebook.list_sources",
             ToolName::NotebookAddSource => "notebook.add_source",
             ToolName::NotebookRemoveSource => "notebook.remove_source",
+            ToolName::CreateChart => "artifact.create_chart",
+            ToolName::CreateDiagram => "artifact.create_diagram",
+            ToolName::CreatePdf => "artifact.create_pdf",
+            ToolName::CreateTable => "artifact.create_table",
         }
     }
 
@@ -301,7 +313,11 @@ impl ToolName {
             | ToolName::NotebookDelete
             | ToolName::NotebookSources
             | ToolName::NotebookAddSource
-            | ToolName::NotebookRemoveSource => None,
+            | ToolName::NotebookRemoveSource
+            | ToolName::CreateChart
+            | ToolName::CreateDiagram
+            | ToolName::CreatePdf
+            | ToolName::CreateTable => None,
         }
     }
 
@@ -343,6 +359,10 @@ impl ToolName {
                 | ToolName::NotebookSources
                 | ToolName::NotebookAddSource
                 | ToolName::NotebookRemoveSource
+                | ToolName::CreateChart
+                | ToolName::CreateDiagram
+                | ToolName::CreatePdf
+                | ToolName::CreateTable
         )
     }
 
@@ -370,7 +390,11 @@ impl ToolName {
             | ToolName::NotebookRename
             | ToolName::NotebookDelete
             | ToolName::NotebookAddSource
-            | ToolName::NotebookRemoveSource => false,
+            | ToolName::NotebookRemoveSource
+            | ToolName::CreateChart
+            | ToolName::CreateDiagram
+            | ToolName::CreatePdf
+            | ToolName::CreateTable => false,
             ToolName::MemoryPromoteApproved
             | ToolName::WriteScopedFile
             | ToolName::CreateDocx
@@ -412,6 +436,10 @@ impl ToolName {
             ToolName::NotebookSources => "list the sources in a notebook",
             ToolName::NotebookAddSource => "put an attached document into a notebook",
             ToolName::NotebookRemoveSource => "take a source out of a notebook",
+            ToolName::CreateChart => "draw a bar or line chart of some figures",
+            ToolName::CreateDiagram => "draw a block, process or engineering diagram",
+            ToolName::CreatePdf => "write a PDF report or note",
+            ToolName::CreateTable => "write a table as a spreadsheet",
         }
     }
 }
@@ -756,6 +784,68 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         // it drops the notebook, its membership rows and the whole graph built
         // over it. So it asks, rather than being something a turn can do on its
         // own reading of an instruction.
+        // A chart is a file on disk and an SVG in the reply. It is grouped
+        // with the other producers rather than the notebook family because
+        // what it makes is a deliverable, not a change to a library.
+        // The three producers added beside the chart. Each writes one file and
+        // returns what the chat needs to show it; arguments are declared,
+        // because the grammar admits only what is listed.
+        ToolName::CreateDiagram => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "direction", kind: Text },
+                ArgumentSpec { name: "blocks", kind: Text },
+                ArgumentSpec { name: "connections", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 64 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CreatePdf => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "classification", kind: Text },
+                ArgumentSpec { name: "body", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(15),
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CreateTable => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "header", kind: Text },
+                ArgumentSpec { name: "rows", kind: Text },
+                ArgumentSpec { name: "classification", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            // The markdown table comes back for the chat to draw.
+            max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CreateChart => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "kind", kind: Text },
+                ArgumentSpec { name: "categories", kind: Text },
+                ArgumentSpec { name: "series", kind: Text },
+                ArgumentSpec { name: "valueLabel", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            // The SVG comes back in the tool result so the chat can draw it
+            // without a second round trip. A chart of a dozen categories is a
+            // few kilobytes; this bounds the pathological case.
+            max_response_bytes: 64 * 1024,
+            ..defaults(name)
+        },
         ToolName::NotebookDelete => ToolSpec {
             permission: UseModel,
             arguments: &[ArgumentSpec { name: "notebook", kind: Text }],
