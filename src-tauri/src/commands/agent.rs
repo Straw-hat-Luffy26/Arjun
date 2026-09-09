@@ -1535,6 +1535,26 @@ async fn drive_run(
         attachment_reads.push(read);
     }
     if attachment_count > 0 {
+        // Which reader actually ran, alongside how much it produced.
+        //
+        // The counts alone cannot answer the only question a person asks when
+        // they attach a scan: did a model look at this? A PDF carrying its own
+        // text layer is parsed rather than rendered — the right answer, and an
+        // invisible one, because this line said "9 pages, 14,300 characters"
+        // whichever path had run and the OCR readout below stayed empty for
+        // the same reason. Read as "the OCR model is broken" rather than "the
+        // file did not need it", which is what it means.
+        //
+        // Taken from the reads themselves, so it reports the path taken. A
+        // file where any page reached the model carries its id; one that never
+        // did carries none.
+        let read_by_model = attachment_reads
+            .iter()
+            .filter(|read| read.ocr_model_id.is_some())
+            .count();
+        let ocr_model_id = attachment_reads
+            .iter()
+            .find_map(|read| read.ocr_model_id.clone());
         // Counted from what the reads returned, never estimated: a file that
         // carried its own text reports the characters it actually yielded.
         reporter.stage_with(
@@ -1546,6 +1566,8 @@ async fn drive_run(
                     .iter()
                     .map(|r| r.text.chars().count())
                     .sum::<usize>(),
+                "filesReadByModel": read_by_model,
+                "ocrModelId": ocr_model_id,
                 "tookMs": attachments_started.elapsed().as_millis() as u64,
             }),
         );

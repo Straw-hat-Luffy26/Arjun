@@ -7,7 +7,7 @@
 //! keep a second copy. A slider whose labels disagree with the profiles that
 //! run is worse than no slider: it reports a configuration nobody is using.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::agent_runtime::cancellation::CancelToken;
@@ -1136,19 +1136,48 @@ fn page_image_path(app: &AppHandle, sha256: &str, page: u32) -> Result<PathBuf, 
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data directory: {e}"))?;
-    let path = base
-        .join("documents")
-        .join("pages")
-        .join(sha256)
-        .join(format!("page-{page}.png"));
-    if !path.exists() {
-        return Err(format!(
-            "page {page} of {sha256} has not been rendered to an image yet ({}). \
-             Rasterise the document before reading it.",
-            path.display()
-        ));
+    page_image_in(&base.join("documents"), sha256, page)
+}
+
+/// Where a page image lives, or why there is none.
+///
+/// Split from the Tauri command so the search order can be tested without an
+/// app handle, and because the order is the whole content of this function.
+///
+/// Two locations, likeliest first. `attachments/<sha>/` is where
+/// [`read_attachment`] has the extractor write the pages it rasterised for the
+/// OCR model — every page of a scan, and no page of a PDF that arrived with its
+/// own text layer. `pages/<sha>/` is where this used to look, and *only* where
+/// it looked: nothing in the product has ever written that directory, so every
+/// call failed and the scan view could open no document at all. From the
+/// outside that is indistinguishable from the OCR model being broken, which is
+/// how it was reported. It stays as a fallback rather than being deleted — a
+/// machine carrying one of these directories from an earlier build keeps
+/// working.
+///
+/// A page with no image is not a failure of the reader, and the message no
+/// longer implies one. It is what a page carrying usable text looks like: the
+/// extractor parsed it and never rasterised it, so there is nothing for a
+/// vision model to look at. The old wording — "rasterise the document before
+/// reading it" — named no command anybody can run.
+fn page_image_in(documents_dir: &Path, sha256: &str, page: u32) -> Result<PathBuf, String> {
+    let name = format!("page-{page}.png");
+    let attachment = documents_dir.join("attachments").join(sha256).join(&name);
+    if attachment.exists() {
+        return Ok(attachment);
     }
-    Ok(path)
+    let legacy = documents_dir.join("pages").join(sha256).join(&name);
+    if legacy.exists() {
+        return Ok(legacy);
+    }
+    Err(format!(
+        "page {page} of {sha256} has no rendered image, so there is nothing for the OCR model to \
+         look at. A page is rasterised only when it carries no usable text layer — a PDF \
+         that came with its own text was parsed instead, and that text is already in the \
+         document. Looked in {} and {}.",
+        attachment.display(),
+        legacy.display()
+    ))
 }
 
 /// Reads one page, streaming regions to the UI as the model finds them.
@@ -1352,6 +1381,50 @@ pub fn cancel_scan(cancel: State<'_, ScanCancel>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scan view could open nothing at all.
+    ///
+    /// `page_image_in` looked only in `documents/pages/<sha>/`, and no code
+    /// path in the product writes that directory — the extractor puts the
+    /// pages it rasterises in the attachment store. Every scan therefore
+    /// failed with "has not been rendered to an image yet", which reads as the
+    /// OCR model being broken rather than as the image never having been put
+    /// where the reader looked.
+    #[test]
+    fn a_rasterised_attachment_page_is_found_where_the_extractor_wrote_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let documents = dir.path().join("documents");
+        let sha = "c8cf6b8d";
+        let pages = documents.join("attachments").join(sha);
+        std::fs::create_dir_all(&pages).unwrap();
+        std::fs::write(pages.join("page-2.png"), b"a rendered page").unwrap();
+
+        assert_eq!(
+            page_image_in(&documents, sha, 2).unwrap(),
+            pages.join("page-2.png")
+        );
+    }
+
+    /// A page nobody rasterised is not a broken reader.
+    ///
+    /// A PDF carrying its own text layer is parsed, never rendered, so it has
+    /// no page image and never will have one. The refusal has to say that
+    /// rather than instruct the reader to "rasterise the document", which
+    /// names no command anybody can run.
+    #[test]
+    fn a_page_with_a_text_layer_is_refused_with_the_reason_it_has_no_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let reason = page_image_in(&dir.path().join("documents"), "deadbeef", 1).unwrap_err();
+
+        assert!(
+            reason.contains("no usable text layer"),
+            "the refusal has to explain why the page was never rendered: {reason}"
+        );
+        assert!(
+            !reason.contains("Rasterise the document"),
+            "and must not name an action that does not exist: {reason}"
+        );
+    }
 
     /// A photograph has no text layer, so a model has to look at it. This is
     /// the case the composer's hint exists for.

@@ -455,14 +455,28 @@ impl ModelRouter {
         // than the smallest. `used_fallback` is set and the reason says plainly
         // that the floor was crossed, because a smaller model answering is a
         // fact about the answer's quality and the reader is owed it.
-        let mut below_floor = registry.candidates_ignoring_floor(
-            role,
-            classification,
-            required_modality,
-            require_structured_output,
-            available_runtime_profiles,
-            allowed_licenses,
-        );
+        // An operator who marked a model preferred for this role has asked for
+        // that model, and asked knowing this machine.
+        //
+        // Crossing the floor is a rescue for a deployment that has no usable
+        // option at all — it is not a licence to overrule a deliberate choice.
+        // The orchestrator already wins this argument for the same reason;
+        // `preferred` is the per-role form of the same intent, and a fallback
+        // that quietly answered from a different model would leave the Models
+        // screen showing one choice while another did the talking.
+        let preferred_above_floor = candidates.iter().any(|entry| entry.routing.preferred);
+        let mut below_floor = if preferred_above_floor {
+            Vec::new()
+        } else {
+            registry.candidates_ignoring_floor(
+                role,
+                classification,
+                required_modality,
+                require_structured_output,
+                available_runtime_profiles,
+                allowed_licenses,
+            )
+        };
         below_floor.retain(|entry| !entry.meets_floor(role));
         below_floor.sort_by(|a, b| {
             b.parameters_b
@@ -784,6 +798,122 @@ mod tests {
         assert!(
             coding.reasons.iter().any(|reason| reason.contains("below the floor")),
             "the reader is owed the reason the smaller model answered: {:?}",
+            coding.reasons
+        );
+    }
+
+    /// A deliberate choice is not overruled by the rescue.
+    ///
+    /// The below-floor fallback exists for a machine with no usable option. An
+    /// operator who marked the 9B preferred for coding has looked at this
+    /// machine and accepted that it runs partly on the CPU — answering from a
+    /// different model anyway would leave the Models screen showing one choice
+    /// while another did the talking.
+    #[test]
+    fn a_preferred_model_above_the_floor_is_not_replaced_by_one_below_it() {
+        let mut small = entry(
+            "nemotron-nano-4b",
+            4.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        small.context_length = 8192;
+        let mut large = entry("qwen-9b", 9.0, vec![ModelRole::Reasoning, ModelRole::Coding]);
+        large.context_length = 8192;
+        large.routing.preferred = true;
+        let registry = registry(vec![large, small]);
+
+        // The same 6 GB budget that sends coding to the 4B without a preference.
+        let coding = ModelRouter::route(
+            &registry,
+            "Write the example code for a linked list in cpp",
+            None,
+            6 * GB,
+            None,
+            false,
+            &[],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            coding.model_id, "qwen-9b",
+            "the operator's preferred coding model must answer, slow or not"
+        );
+        assert!(
+            !coding.fully_on_gpu,
+            "and the decision must still say it does not fit, rather than pretending"
+        );
+    }
+
+    /// This laptop, with the coding model chosen.
+    ///
+    /// The RTX 5060 Laptop reports 7.9 GB of dedicated VRAM. Installed are a
+    /// Nemotron 4B (below the 7B coding floor, fits entirely), a Qwen3.5-9B
+    /// (above the floor, 5.4 GB of weights) and a Gemma 12B (larger still).
+    /// Coding was being answered by the 4B, because nothing above the floor
+    /// fitted in VRAM and the below-floor rescue took over.
+    ///
+    /// With Qwen3.5-9B chosen in Models -> *Set as orchestrator*, that choice
+    /// is answered before the VRAM search and before the rescue, so coding
+    /// goes to the 9B whether or not it fits, and the trace says which.
+    #[test]
+    fn the_chosen_9b_answers_coding_on_the_8gb_laptop() {
+        let mut nemotron = entry(
+            "NVIDIA_Nemotron3-Nano-4B_Q4_K_M",
+            4.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        nemotron.weights_bytes = 2_500_000_000;
+        let mut qwen = entry(
+            "Qwen_Qwen3.5-9B_Q4_K_S",
+            9.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        qwen.weights_bytes = 5_394_097_376;
+        qwen.load = Some(crate::registry::LoadSpec {
+            provider_id: "local".into(),
+            model_id: "Qwen/Qwen3.5-9B".into(),
+            quantization: "Q4_K_S".into(),
+        });
+        let mut gemma = entry(
+            "google_gemma-4-12b-it_Q4_K_M",
+            12.0,
+            vec![ModelRole::Reasoning, ModelRole::Coding],
+        );
+        gemma.weights_bytes = 7_300_000_000;
+        let registry = registry(vec![nemotron, qwen, gemma]);
+
+        // The coordinates `set_orchestrator_model` writes into `config.json`.
+        let chosen = StartupModelTarget {
+            provider_id: "local".to_string(),
+            model_id: "Qwen/Qwen3.5-9B".to_string(),
+            quantization: "Q4_K_S".to_string(),
+        };
+
+        let coding = ModelRouter::route_with_orchestrator(
+            &registry,
+            "Write the example code for a linked list in cpp",
+            None,
+            7899 * 1024 * 1024,
+            None,
+            false,
+            &[],
+            &[],
+            Some(&chosen),
+        )
+        .unwrap();
+
+        assert_eq!(coding.role, ModelRole::Coding, "the prompt is coding work");
+        assert_eq!(
+            coding.model_id, "Qwen_Qwen3.5-9B_Q4_K_S",
+            "the chosen model answers coding, not the 4B the rescue reached for"
+        );
+        assert!(
+            coding
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("configured as the orchestrator")),
+            "the trace has to say why this model answered: {:?}",
             coding.reasons
         );
     }

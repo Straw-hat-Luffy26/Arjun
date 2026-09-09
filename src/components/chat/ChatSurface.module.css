@@ -2372,6 +2372,115 @@
   border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
 }
 
+/* A widget fence: a page the model wrote, running in its own sandbox.
+
+   The frame is bordered like the other figures in a message so it reads as an
+   attachment to the answer rather than as part of the application chrome. */
+.mdWidget {
+  position: relative;
+  margin: 12px 0;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 32px;
+}
+
+.mdWidgetFrame {
+  display: block;
+  width: 100%;
+  border: 0;
+  /* The height is set inline from the frame's own measurement, so a widget is
+     as tall as its content and no taller. */
+}
+
+/* Named stages rather than a bare spinner: if a widget stops, it stops
+   somewhere with a name. */
+.mdWidgetStage,
+.mdWidgetError {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+}
+
+.mdWidgetError {
+  color: var(--text-secondary, inherit);
+}
+
+.mdWidgetRetry {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-primary, inherit);
+  background: transparent;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mdWidgetRetry:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
+}
+
+/* An ER diagram's attribute blocks, listed under the canvas.
+
+   The canvas draws entities as boxes, which is the right picture for the
+   relationships and says nothing about the columns — and in an ER diagram the
+   columns are half the content. Laid out as small tables that wrap, so a
+   schema with a dozen entities scrolls the page rather than the figure. */
+.mdEntityList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}
+
+.mdEntityTable {
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.6;
+  min-width: 140px;
+}
+
+.mdEntityName {
+  caption-side: top;
+  text-align: left;
+  padding-bottom: 3px;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-primary, inherit);
+  letter-spacing: 0.02em;
+}
+
+.mdEntityType,
+.mdEntityField,
+.mdEntityKey {
+  padding: 1px 8px 1px 0;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.mdEntityType {
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.mdEntityField {
+  color: var(--text-secondary, inherit);
+}
+
+/* PK / FK / UK. Dim rather than absent when a column carries no marker, so the
+   columns stay aligned down the table. */
+.mdEntityKey {
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
 /* An SVG fence: a chart or diagram, drawn.
    The source sizes itself to the container, and the container bounds how much
    of the conversation one picture may take. */

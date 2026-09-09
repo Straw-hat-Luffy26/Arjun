@@ -359,11 +359,21 @@ pub fn assess(tier: SandboxTier, policy: &SandboxPolicy) -> SandboxAssessment {
 
     if !policy.accept_unisolated_network {
         return SandboxAssessment::Refused {
+            // Names the remedy that exists.
+            //
+            // This used to end "or have an administrator accept this risk
+            // explicitly in Settings", which was wrong twice over. There is no
+            // such control — `accept_unisolated_network` is read from nothing
+            // and written by nothing outside these tests — and setting it would
+            // not help anyway, because `sandbox_exec::run_in_container` refuses
+            // every tier except `Container` before it looks at any policy. So
+            // the message sent an operator to a switch that does not exist, to
+            // unlock a path that is not implemented.
             reason: format!(
                 "the strongest sandbox available here is a {}, which cannot stop a child process \
                  reaching the network. ARJUN's own network controls do not bind a program it \
-                 starts, so code is not run. Install a container runtime such as Podman, or have \
-                 an administrator accept this risk explicitly in Settings.",
+                 starts, so code is not run. Start Docker Desktop if it is installed, or install \
+                 Podman; a container is the only tier that can run model-written code.",
                 tier.label()
             ),
         };
@@ -454,7 +464,21 @@ mod tests {
             other => panic!("expected a refusal, got {other:?}"),
         };
         assert!(reason.contains("Podman"), "should name a remedy: {reason}");
-        assert!(reason.contains("accept this risk"), "should name the alternative");
+        assert!(reason.contains("Docker"), "should name the remedy most operators already have");
+        // The remedy has to be one that exists. This assertion used to require
+        // "accept this risk", pinning a promise of a Settings control that is
+        // read from nothing and written by nothing — and that would not enable
+        // execution even if it were set, because `run_in_container` refuses
+        // every tier except `Container` before consulting any policy. A test
+        // that requires an impossible instruction keeps the instruction.
+        assert!(
+            !reason.contains("accept this risk"),
+            "must not offer a setting that does not exist: {reason}"
+        );
+        assert!(
+            reason.contains("container"),
+            "should say a container is the only tier that runs code: {reason}"
+        );
     }
 
     /// The refusal has to explain why ARJUN's own controls are not enough,

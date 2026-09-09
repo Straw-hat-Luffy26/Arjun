@@ -18,3 +18,4 @@ pub mod notebook;
 pub mod registry;
 pub mod voice;
 pub mod ocr;
+pub mod widget;

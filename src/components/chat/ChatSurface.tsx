@@ -449,6 +449,16 @@ export function ChatSurface({
                   : null
               }
               onOpenInspector={runId => setInspectorRunId(runId)}
+              /*
+               * A widget asking for a turn. Routed through the same `send` the
+               * composer uses, so a click inside a model-written page is an
+               * ordinary message with an ordinary classification — not a
+               * privileged path into the agent.
+               */
+              onPrompt={text => {
+                if (isStreaming) return;
+                void send(text);
+              }}
               onRetry={() => {
                 if (m.role === 'user') {
                   void replay(m);
@@ -576,6 +586,8 @@ interface MessageRowProps {
   showAvatar?: boolean;
   onOpenInspector: (runId: string) => void;
   onRetry: () => void;
+  /** Raised when a widget in this message asks for a turn. */
+  onPrompt?: (text: string) => void;
   composerDisabled?: boolean;
 }
 
@@ -591,6 +603,7 @@ function MessageRow({
   showAvatar,
   onOpenInspector,
   onRetry,
+  onPrompt,
   composerDisabled,
 }: MessageRowProps) {
   if (message.role === 'user') {
@@ -621,6 +634,7 @@ function MessageRow({
       showAvatar={showAvatar}
       onOpenInspector={runId ? () => onOpenInspector(runId) : undefined}
       onRetry={composerDisabled ? undefined : onRetry}
+      onPrompt={composerDisabled ? undefined : onPrompt}
       composerDisabled={composerDisabled}
     />
   );

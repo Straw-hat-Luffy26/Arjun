@@ -125,10 +125,25 @@ pub fn run() {
         .build();
 
     // Build and run the app
+    // The widgets a conversation has prepared, held so the `widget://` handler
+    // below can serve each one to its frame. In memory only, capped and
+    // evicted by age — see `commands::widget`.
+    let widgets: commands::widget::Widgets =
+        std::sync::Arc::new(commands::widget::WidgetStore::new());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(sql_plugin)
         .plugin(log_plugin)
+        // A scheme of its own, because a widget needs a CSP of its own and a
+        // `srcdoc` frame inherits the application's instead. Measured, with a
+        // control, before this was written; the module header carries the
+        // table.
+        .register_uri_scheme_protocol("widget", {
+            let widgets = widgets.clone();
+            move |_app, request| commands::widget::serve(&widgets, &request)
+        })
+        .manage(widgets)
         .manage(sarathi_core)
         .manage(download_manager)
         // Cloned rather than moved: the activator built in setup below needs
@@ -897,6 +912,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Interactive widgets
+            commands::widget::widget_prepare,
             // Config commands
             commands::ocr::get_ocr_detents,
             commands::ocr::preview_attachment_routing,

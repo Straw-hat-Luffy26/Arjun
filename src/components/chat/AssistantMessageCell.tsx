@@ -12,6 +12,7 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  Presentation,
   RotateCcw,
   X,
 } from 'lucide-react';
@@ -28,6 +29,9 @@ import {
 import { formatDuration, formatTokens } from './format';
 import { collapseForDisplay } from '../../contexts/ConversationContext';
 import { iconForTool, labelForTool } from '../../services/toolNames';
+import { artifactPresentation, type ArtifactGlyph } from '../../services/artifactKind';
+import { previewDisplay } from '../../services/artifactPreview';
+import { InlineErrorBoundary } from '../ui';
 import { ChatOrb } from './ChatOrb';
 import { ThinkingTree, type ThinkingNode } from './ThinkingTree';
 import { RunProgressPanel } from './RunProgressPanel';
@@ -188,6 +192,14 @@ interface AssistantMessageCellProps {
   showAvatar?: boolean;
   onOpenInspector?: (runId: string) => void;
   onRetry?: () => void;
+  /**
+   * Raised when a widget in this message calls `sendPrompt`.
+   *
+   * Absent while a turn is in flight, which is what stops a widget from
+   * queueing turns of its own: the capability exists only when the person
+   * could have typed the same thing themselves.
+   */
+  onPrompt?: (text: string) => void;
   composerDisabled?: boolean;
 }
 
@@ -206,6 +218,7 @@ export function AssistantMessageCell({
   showAvatar,
   onOpenInspector,
   onRetry,
+  onPrompt,
 }: AssistantMessageCellProps) {
   // What was stored: the model's exact words, in the order it produced them.
   //
@@ -380,7 +393,7 @@ export function AssistantMessageCell({
                 aria-busy={isStreaming || undefined}
               >
                 {displayContent ? (
-                  <Markdown content={displayContent} />
+                  <Markdown content={displayContent} onPrompt={onPrompt} />
                 ) : isStreaming ? (
                   <span className={styles.assistantPlaceholder} aria-hidden="true" />
                 ) : null}
@@ -521,17 +534,28 @@ function toolNode(item: ActivityEntry): ThinkingNode {
   };
 }
 
-const ARTIFACT_ICONS: Record<ArtifactReport['kind'], typeof FileText> = {
+/**
+ * One icon per glyph. Keyed on [`ArtifactGlyph`] — a set this file controls —
+ * rather than on the artifact kind, which arrives from Rust as JSON and once
+ * carried a fourth value this table had no entry for. `artifactPresentation`
+ * maps any kind onto a glyph, so this lookup cannot miss.
+ */
+const GLYPH_ICONS: Record<ArtifactGlyph, typeof FileText> = {
   document: FileText,
   workbook: FileSpreadsheet,
-  text: FileText,
+  deck: Presentation,
+  file: FileText,
 };
 
 function ArtifactList({ runId, artifacts }: { runId: string; artifacts: ArtifactReport[] }) {
   return (
     <ul className={styles.artifactList}>
       {artifacts.map(artifact => (
-        <ArtifactRow key={artifact.path} runId={runId} artifact={artifact} />
+        // Per row, so one file the surface cannot draw costs that row and not
+        // the conversation around it.
+        <InlineErrorBoundary key={artifact.path} label={artifact.name}>
+          <ArtifactRow runId={runId} artifact={artifact} />
+        </InlineErrorBoundary>
       ))}
     </ul>
   );
@@ -541,7 +565,8 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<ArtifactPreview | 'loading' | 'error' | undefined>(undefined);
   const [problem, setProblem] = useState<string | null>(null);
-  const Icon = ARTIFACT_ICONS[artifact.kind];
+  const presentation = artifactPresentation(artifact.kind);
+  const Icon = GLYPH_ICONS[presentation.glyph];
 
   const reveal = async () => {
     try {
@@ -570,8 +595,8 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
   return (
     <li className={styles.artifactRow}>
       <div className={styles.artifactRowMain}>
-        <Icon size={13} className={styles.artifactIcon} />
-        <button type="button" className={styles.artifactNameBtn} onClick={togglePreview} title={open ? 'Hide preview' : 'Preview'}>
+        <Icon size={13} className={styles.artifactIcon} aria-hidden="true" />
+        <button type="button" className={styles.artifactNameBtn} onClick={togglePreview} title={`${presentation.label} — ${open ? 'hide preview' : 'preview'}`}>
           <span className={styles.artifactName}>{artifact.name}</span>
         </button>
         <span className={styles.artifactSize}>{size(artifact.bytes)}</span>
@@ -603,7 +628,7 @@ function ArtifactPreviewPane({ preview, name }: { preview: ArtifactPreview | 'lo
     return (
       <div className={styles.previewPane} aria-busy="true">
         <Loader2 size={12} className={styles.spin} />
-        <span>Reading {name}·</span>
+        <span>Reading {name}…</span>
       </div>
     );
   }
@@ -615,29 +640,38 @@ function ArtifactPreviewPane({ preview, name }: { preview: ArtifactPreview | 'lo
       </div>
     );
   }
-  if (preview.kind === 'unsupported') {
+
+  // What to draw is decided in `artifactPreview.ts`, against the shape Rust
+  // actually sends. This function only draws it.
+  const display = previewDisplay(preview);
+
+  if (display.layout === 'notice') {
     return (
       <div className={styles.previewPane}>
         <CircleSlash size={12} />
-        <span>Preview not available for this format ({preview.mime || 'unknown'}). Use the folder button to open it in the file manager.</span>
+        <span>{display.message}</span>
       </div>
     );
   }
-  if (preview.kind === 'image') {
+
+  if (display.layout === 'image') {
     return (
       <div className={styles.previewPane}>
-        <img className={styles.previewImage} src={preview.dataUrl} alt={`Preview of ${name}`} />
-        {preview.truncated && <p className={styles.previewNote}>Preview is truncated to fit.</p>}
+        <img className={styles.previewImage} src={display.src} alt={`Preview of ${name}`} />
+        {display.note && <p className={styles.previewNote}>{display.note}</p>}
       </div>
     );
   }
-  const mono = preview.kind === 'docxBody' || preview.kind === 'xlsxFirstSheet' || preview.kind === 'text';
+
   return (
     <div className={styles.previewPane}>
-      <pre className={mono ? styles.previewPre : styles.previewMarkdown} data-truncated={preview.truncated || undefined}>
-        {preview.content}
+      <pre
+        className={display.mono ? styles.previewPre : styles.previewMarkdown}
+        data-truncated={preview.truncated || undefined}
+      >
+        {display.body}
       </pre>
-      {preview.truncated && <p className={styles.previewNote}>Preview is truncated. Use the folder button for the full file.</p>}
+      {display.note && <p className={styles.previewNote}>{display.note}</p>}
     </div>
   );
 }

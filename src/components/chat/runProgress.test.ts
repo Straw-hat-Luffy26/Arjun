@@ -203,6 +203,68 @@ describe('applyProgress: attachments report what the reader actually knew', () =
     expect(reading?.label).toBe('Read the attachments');
     expect(reading?.detail).toBe('1 file · 6 pages · 1,559 characters');
   });
+
+  it('says the text layer answered, so an empty OCR readout is explained', () => {
+    const steps = fold([
+      { kind: 'submitted' },
+      stage('readingAttachment', { name: 'timetable.pdf', index: 1, of: 1 }),
+      stage('attachmentsRead', {
+        files: 1,
+        pages: 9,
+        characters: 14300,
+        filesReadByModel: 0,
+        ocrModelId: null,
+      }),
+    ]);
+    expect(steps.find(s => s.kind === 'reading')?.detail).toBe(
+      '1 file · 9 pages · 14,300 characters · read from the text layer, no model needed',
+    );
+  });
+
+  it('names the OCR model when one read the pages', () => {
+    const steps = fold([
+      { kind: 'submitted' },
+      stage('readingAttachment', { name: 'scan.pdf', index: 1, of: 1 }),
+      stage('attachmentsRead', {
+        files: 1,
+        pages: 3,
+        characters: 900,
+        filesReadByModel: 1,
+        ocrModelId: 'unlimited-ocr-q6-k',
+      }),
+    ]);
+    expect(steps.find(s => s.kind === 'reading')?.detail).toBe(
+      '1 file · 3 pages · 900 characters · read by unlimited-ocr-q6-k',
+    );
+  });
+
+  it('separates the files a model read from the ones it did not', () => {
+    const steps = fold([
+      { kind: 'submitted' },
+      stage('readingAttachment', { name: 'scan.pdf', index: 1, of: 2 }),
+      stage('attachmentsRead', {
+        files: 2,
+        pages: 12,
+        characters: 5000,
+        filesReadByModel: 1,
+        ocrModelId: 'unlimited-ocr-q6-k',
+      }),
+    ]);
+    expect(steps.find(s => s.kind === 'reading')?.detail).toBe(
+      '2 files · 12 pages · 5,000 characters · 1 of 2 read by unlimited-ocr-q6-k, the rest from the text layer',
+    );
+  });
+
+  it('claims no reader for a run recorded before the field existed', () => {
+    const steps = fold([
+      { kind: 'submitted' },
+      stage('readingAttachment', { name: 'old.pdf', index: 1, of: 1 }),
+      stage('attachmentsRead', { files: 1, pages: 2, characters: 40 }),
+    ]);
+    expect(steps.find(s => s.kind === 'reading')?.detail).toBe(
+      '1 file · 2 pages · 40 characters',
+    );
+  });
 });
 
 describe('applyProgress: the thinking row carries no reasoning', () => {

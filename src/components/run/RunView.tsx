@@ -11,6 +11,7 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  Presentation,
   ShieldCheck,
   X,
   XCircle,
@@ -22,6 +23,9 @@ import {
   type PlanRecord,
   type VerificationReport,
 } from '../../services/agent.service';
+import { artifactPresentation, type ArtifactGlyph } from '../../services/artifactKind';
+import { previewDisplay } from '../../services/artifactPreview';
+import { InlineErrorBoundary } from '../ui';
 import { labelFor, type RunViewState } from './useRun';
 import type { Activity } from './recovery';
 import { MilestoneGate } from './MilestoneGate';
@@ -42,11 +46,20 @@ import styles from './RunView.module.css';
  * the model's description of them.
  */
 
-const KIND_ICONS = {
+/**
+ * One icon per glyph, not per artifact kind.
+ *
+ * Keyed on `ArtifactGlyph`, a set this surface controls. Keyed on the kind it
+ * missed `deck`, and `<Icon />` on the resulting `undefined` took the whole
+ * page down rather than losing a row. `artifactPresentation` is total, so this
+ * lookup always hits.
+ */
+const GLYPH_ICONS: Record<ArtifactGlyph, typeof FileText> = {
   document: FileText,
   workbook: FileSpreadsheet,
-  text: FileText,
-} as const;
+  deck: Presentation,
+  file: FileText,
+};
 
 /** Bytes as somebody would say them. */
 function size(bytes: number): string {
@@ -206,51 +219,54 @@ function Artifacts({ artifacts, runId }: { artifacts: ArtifactReport[]; runId: s
       <h2 className={styles.sectionTitle}>Produced</h2>
       <ul className={styles.artifacts}>
         {artifacts.map(artifact => {
-          const Icon = KIND_ICONS[artifact.kind];
+          const Icon = GLYPH_ICONS[artifactPresentation(artifact.kind).glyph];
           const isOpen = openName === artifact.name;
           const preview = previews[artifact.name];
           return (
             <li key={artifact.path} className={styles.artifact}>
-              <Icon size={17} className={styles.artifactIcon} />
-              <div className={styles.artifactBody}>
-                <div className={styles.artifactName}>
-                  <strong>{artifact.name}</strong>
-                  <span className={styles.artifactSize}>{size(artifact.bytes)}</span>
-                  {/* Re-opened and checked by the backend, not inferred from
-                    * the fact that a write returned without error. */}
-                  <span className={artifact.sound ? styles.tagSound : styles.tagUnsound}>
-                    {artifact.sound ? 'opens and checks out' : 'did not pass its check'}
-                  </span>
+              {/* One row's failure costs that row, not the run report. */}
+              <InlineErrorBoundary label={artifact.name}>
+                <Icon size={17} className={styles.artifactIcon} aria-hidden="true" />
+                <div className={styles.artifactBody}>
+                  <div className={styles.artifactName}>
+                    <strong>{artifact.name}</strong>
+                    <span className={styles.artifactSize}>{size(artifact.bytes)}</span>
+                    {/* Re-opened and checked by the backend, not inferred from
+                      * the fact that a write returned without error. */}
+                    <span className={artifact.sound ? styles.tagSound : styles.tagUnsound}>
+                      {artifact.sound ? 'opens and checks out' : 'did not pass its check'}
+                    </span>
+                  </div>
+                  <p className={styles.artifactDetail}>{artifact.detail}</p>
+                  {artifact.problems.length > 0 && (
+                    <ul className={styles.problems}>
+                      {artifact.problems.map((text, i) => (
+                        <li key={i}>{text}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {isOpen && (
+                    <ArtifactPreviewPane preview={preview} name={artifact.name} />
+                  )}
                 </div>
-                <p className={styles.artifactDetail}>{artifact.detail}</p>
-                {artifact.problems.length > 0 && (
-                  <ul className={styles.problems}>
-                    {artifact.problems.map((text, i) => (
-                      <li key={i}>{text}</li>
-                    ))}
-                  </ul>
-                )}
-                {isOpen && (
-                  <ArtifactPreviewPane preview={preview} name={artifact.name} />
-                )}
-              </div>
-              <div className={styles.artifactActions}>
-                <button
-                  className={styles.revealBtn}
-                  onClick={() => void togglePreview(artifact.name)}
-                  aria-label={isOpen ? `Hide preview of ${artifact.name}` : `Preview ${artifact.name}`}
-                  aria-expanded={isOpen}
-                >
-                  {isOpen ? <ChevronDown size={15} /> : <Eye size={15} />}
-                </button>
-                <button
-                  className={styles.revealBtn}
-                  onClick={() => void reveal(artifact.name)}
-                  aria-label={`Show ${artifact.name} in the file manager`}
-                >
-                  <FolderOpen size={15} />
-                </button>
-              </div>
+                <div className={styles.artifactActions}>
+                  <button
+                    className={styles.revealBtn}
+                    onClick={() => void togglePreview(artifact.name)}
+                    aria-label={isOpen ? `Hide preview of ${artifact.name}` : `Preview ${artifact.name}`}
+                    aria-expanded={isOpen}
+                  >
+                    {isOpen ? <ChevronDown size={15} /> : <Eye size={15} />}
+                  </button>
+                  <button
+                    className={styles.revealBtn}
+                    onClick={() => void reveal(artifact.name)}
+                    aria-label={`Show ${artifact.name} in the file manager`}
+                  >
+                    <FolderOpen size={15} />
+                  </button>
+                </div>
+              </InlineErrorBoundary>
             </li>
           );
         })}
@@ -296,53 +312,48 @@ function ArtifactPreviewPane({
       </div>
     );
   }
-  if (preview.kind === 'unsupported') {
+
+  // Decided once, in `artifactPreview.ts`, against the shape Rust actually
+  // sends. This pane and the one in `AssistantMessageCell` were copies of each
+  // other reading field names the backend has never sent, so both showed an
+  // empty box; sharing the decision is what stops them drifting apart again.
+  const display = previewDisplay(preview);
+
+  if (display.layout === 'notice') {
     return (
       <div className={styles.previewPane}>
         <CircleSlash size={14} />
-        <span>
-          Preview not available for this format ({preview.mime || 'unknown'}). Use
-          the folder button to open it in the file manager.
-        </span>
+        <span>{display.message}</span>
       </div>
     );
   }
-  if (preview.kind === 'image') {
+
+  if (display.layout === 'image') {
     return (
       <div className={styles.previewPane}>
         <img
           className={styles.previewImage}
-          src={preview.dataUrl}
+          src={display.src}
           alt={`Preview of ${name}`}
         />
-        {preview.truncated && (
-          <p className={styles.previewNote}>Preview is truncated to fit.</p>
-        )}
+        {display.note && <p className={styles.previewNote}>{display.note}</p>}
       </div>
     );
   }
-  // text, markdown, docxBody, xlsxFirstSheet, pptxSlideList — all string bodies
-  // with optional truncation.
-  const mono =
-    preview.kind === 'docxBody' ||
-    preview.kind === 'xlsxFirstSheet' ||
-    preview.kind === 'text';
+
   return (
     <div className={styles.previewPane}>
       <pre
-        className={mono ? styles.previewPre : styles.previewMarkdown}
+        className={display.mono ? styles.previewPre : styles.previewMarkdown}
         data-truncated={preview.truncated || undefined}
       >
-        {preview.content}
+        {display.body}
       </pre>
-      {preview.truncated && (
-        <p className={styles.previewNote}>
-          Preview is truncated. Use the folder button for the full file.
-        </p>
-      )}
+      {display.note && <p className={styles.previewNote}>{display.note}</p>}
     </div>
   );
 }
+
 
 /**
  * One row in the Work section.

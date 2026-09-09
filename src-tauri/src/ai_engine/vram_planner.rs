@@ -132,7 +132,64 @@ pub fn plan_gpu_offload(
     context_length: u32,
     total_layers: Option<u32>,
 ) -> GpuOffloadPlan {
-    let ladder = context_ladder(context_length);
+    plan_gpu_offload_with(
+        vram_total_bytes,
+        model_bytes,
+        ContextChoice::Planned(context_length),
+        total_layers,
+        None,
+    )
+}
+
+/// Where the context window came from, which decides whether it may be lowered.
+///
+/// The ladder exists because a window is worth less than the GPU layers it
+/// costs, and on an 8 GB card walking down from 32K to 8K is the difference
+/// between a third of the model on the GPU and all of it. That trade is the
+/// planner's to make only while nobody has made it: a window an operator typed
+/// into Settings is an answer to the same question, already given.
+///
+/// Lowering it anyway is not a smaller version of honouring it. A person who
+/// raised the window because their turns were refused for exceeding it gets the
+/// identical refusal at the identical number, and nothing on screen says the
+/// setting was overruled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextChoice {
+    /// Nobody chose. The planner may lower the window to buy GPU layers.
+    Planned(u32),
+    /// An operator set this window. It is served as asked, and the layer count
+    /// is what gives.
+    Fixed(u32),
+}
+
+/// Plans GPU offload, told where the window came from and what the KV cache
+/// actually costs.
+///
+/// `kv_bytes_per_token` is the model's own geometry from its GGUF header —
+/// `block_count * head_count_kv * (key_length + value_length) * 2`, which
+/// [`super::gguf_meta::GgufMetadata::kv_bytes_per_token`] already computes and
+/// the MoE planner already uses. `None` falls back to
+/// [`estimate_kv_bytes_per_token`], the size band, for a caller that has not
+/// read the header.
+///
+/// The band is deliberately high, and on a card with no room to spare that
+/// conservatism is not free. Qwen3.5-9B is 32 layers x 4 KV heads x 512, so
+/// 128 KB a token; the band charges it 160 KB. At 8 192 tokens that is 0.25 GB
+/// of VRAM reserved for a cache that will never use it — and on a 7.9 GB card
+/// holding a 5.02 GB model it was the whole difference between all 32 layers on
+/// the GPU and 31, with the last one crossing PCIe for every token.
+pub fn plan_gpu_offload_with(
+    vram_total_bytes: u64,
+    model_bytes: u64,
+    context: ContextChoice,
+    total_layers: Option<u32>,
+    kv_bytes_per_token: Option<u64>,
+) -> GpuOffloadPlan {
+    let ladder = match context {
+        // One rung, because the answer is already decided.
+        ContextChoice::Fixed(window) => vec![window.max(1)],
+        ContextChoice::Planned(window) => context_ladder(window),
+    };
 
     // The largest window that still puts the whole model on the GPU.
     //
@@ -141,7 +198,13 @@ pub fn plan_gpu_offload(
     // reserve together — and a closed form here would be a second copy of it
     // that could drift.
     for rung in &ladder {
-        let plan = plan_at_context(vram_total_bytes, model_bytes, *rung, total_layers);
+        let plan = plan_at_context(
+            vram_total_bytes,
+            model_bytes,
+            *rung,
+            total_layers,
+            kv_bytes_per_token,
+        );
         if plan.full_offload {
             return plan;
         }
@@ -149,9 +212,16 @@ pub fn plan_gpu_offload(
 
     // Nothing fits whole. Take the smallest window on the ladder anyway: the
     // model is crossing PCIe either way, and this is the rung that keeps the
-    // most layers on the GPU while staying above `MIN_SERVING_CONTEXT`.
-    let smallest = ladder.last().copied().unwrap_or(context_length);
-    plan_at_context(vram_total_bytes, model_bytes, smallest, total_layers)
+    // most layers on the GPU while staying above `MIN_SERVING_CONTEXT`. A fixed
+    // window has one rung, so this is that window and no reduction happens.
+    let smallest = ladder.last().copied().unwrap_or(1);
+    plan_at_context(
+        vram_total_bytes,
+        model_bytes,
+        smallest,
+        total_layers,
+        kv_bytes_per_token,
+    )
 }
 
 /// The offload arithmetic for one specific context window.
@@ -160,6 +230,7 @@ fn plan_at_context(
     model_bytes: u64,
     context_length: u32,
     total_layers: Option<u32>,
+    kv_bytes_per_token: Option<u64>,
 ) -> GpuOffloadPlan {
     if vram_total_bytes == 0 {
         return GpuOffloadPlan::cpu_only(context_length, "No GPU VRAM detected");
@@ -179,7 +250,12 @@ fn plan_at_context(
         );
     }
 
-    let kv_bytes = estimate_kv_bytes_per_token(model_bytes)
+    // The model's own geometry where the caller read it, the size band where
+    // nobody did. The band errs high on purpose; measured beats conservative
+    // whenever the measurement exists.
+    let kv_bytes = kv_bytes_per_token
+        .filter(|per_token| *per_token > 0)
+        .unwrap_or_else(|| estimate_kv_bytes_per_token(model_bytes))
         .saturating_mul(context_length.max(1) as u64);
 
     // KV cache and compute buffers are charged before any weights.
@@ -595,6 +671,82 @@ mod tests {
         assert_eq!(plan.context_length, MIN_SERVING_CONTEXT);
     }
     use super::*;
+
+    /// This laptop, with the model's own KV geometry.
+    ///
+    /// An RTX 5060 Laptop reports 7 899 MB; Qwen3.5-9B Q4_K_S is 5.02 GiB of
+    /// weights over 32 layers, 4 KV heads and 256-wide keys and values, so
+    /// 128 KB a token. The size band charges it 160 KB, and at 8 192 tokens
+    /// that 25% margin is 0.25 GB — enough, on a card with nothing spare, to
+    /// put the budget under the model and leave the last layer on the CPU.
+    /// The machine that reported this loaded at `gpu_layers=31`.
+    #[test]
+    fn the_real_kv_geometry_buys_the_last_layer_the_size_band_costs() {
+        const VRAM: u64 = 7899 * 1024 * 1024;
+        const WEIGHTS: u64 = 5_394_097_376;
+        const REAL_KV: u64 = 32 * 4 * (256 + 256) * 2;
+
+        let banded = plan_gpu_offload(VRAM, WEIGHTS, 8192, Some(32));
+        assert!(
+            !banded.full_offload,
+            "the size band is what left a layer on the CPU: {}",
+            banded.reason
+        );
+
+        let measured = plan_gpu_offload_with(
+            VRAM,
+            WEIGHTS,
+            ContextChoice::Planned(8192),
+            Some(32),
+            Some(REAL_KV),
+        );
+        assert!(
+            measured.full_offload,
+            "the model's own geometry fits the whole model at the same window: {}",
+            measured.reason
+        );
+        assert_eq!(measured.context_length, 8192, "and does not buy it by shrinking the window");
+    }
+
+    /// A window an operator set is not walked back down.
+    ///
+    /// The ladder trades window for layers, which is the right trade to make
+    /// for somebody who has not made it themselves. Settings writes a per-model
+    /// Context Length; a planner that lowered it anyway would hand back the
+    /// same `exceeds the available context size` refusal at the same number the
+    /// person raised it above.
+    #[test]
+    fn a_window_the_operator_set_is_served_at_the_size_they_set() {
+        const VRAM: u64 = 7899 * 1024 * 1024;
+        const WEIGHTS: u64 = 5_394_097_376;
+
+        let planned = plan_gpu_offload(VRAM, WEIGHTS, 32_768, Some(32));
+        assert_eq!(
+            planned.context_length, 8192,
+            "unchosen, the ladder walks down to buy layers"
+        );
+
+        let fixed = plan_gpu_offload_with(
+            VRAM,
+            WEIGHTS,
+            ContextChoice::Fixed(32_768),
+            Some(32),
+            None,
+        );
+        assert_eq!(
+            fixed.context_length, 32_768,
+            "chosen, it is served as asked"
+        );
+        assert!(
+            !fixed.full_offload,
+            "and the cost is layers on the CPU, reported rather than hidden"
+        );
+        assert!(
+            fixed.gpu_layers < 32,
+            "which is what a window this large costs on this card: {}",
+            fixed.reason
+        );
+    }
 
     const GB: u64 = 1024 * 1024 * 1024;
 

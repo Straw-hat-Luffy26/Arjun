@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Loader2,
   Play,
+  Presentation,
   RotateCcw,
   ShieldCheck,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import {
   fitted,
   ledgerRows,
 } from '../components/run/context-ledger';
+import { artifactPresentation, type ArtifactGlyph } from '../services/artifactKind';
 import { useToast } from '../hooks/useToast';
 import { isBusy } from '../components/run/useRun';
 import { useActiveRun } from '../contexts/ActiveRunContext';
@@ -68,11 +70,18 @@ const STATUS_STYLE: Partial<Record<RunState, string>> = {
   stopped_by_policy: styles.rowInterrupted,
 };
 
-const KIND_ICONS = {
+/**
+ * One icon per glyph. The third copy of this table keyed on the artifact kind
+ * instead, and so had no entry for a briefing deck; `artifactPresentation`
+ * maps every kind — including one from a newer backend — onto a glyph that is
+ * always present here.
+ */
+const GLYPH_ICONS: Record<ArtifactGlyph, typeof FileText> = {
   document: FileText,
   workbook: FileSpreadsheet,
-  text: FileText,
-} as const;
+  deck: Presentation,
+  file: FileText,
+};
 
 /**
  * What a row's tag says.
@@ -143,7 +152,7 @@ function ArtifactRow({
   now: ArtifactReport | undefined;
   onReveal: (name: string) => void;
 }) {
-  const Icon = KIND_ICONS[artifact.kind];
+  const Icon = GLYPH_ICONS[artifactPresentation(artifact.kind).glyph];
   // Only worth calling out when it *changed*. Printing "still sound" on every
   // row would train people to skip the line that matters.
   const changed = now && now.sound !== artifact.sound;

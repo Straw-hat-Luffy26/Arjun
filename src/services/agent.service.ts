@@ -342,7 +342,17 @@ export interface VerificationReport {
   figuresChecked: number;
 }
 
-export type ArtifactKind = 'document' | 'workbook' | 'text';
+/**
+ * What kind of file a run produced, as `Kind` in
+ * `src-tauri/src/agent_runtime/artifacts.rs` serialises it.
+ *
+ * `deck` was missing here, and its absence crashed the page rather than
+ * dropping a row — see `artifactKind.ts`. Nothing on the render path may key a
+ * lookup on this union: it is a description of what Rust sends today, not a
+ * guarantee about what an older surface will be handed by a newer backend. Use
+ * `artifactPresentation`, which is total.
+ */
+export type ArtifactKind = 'document' | 'workbook' | 'deck' | 'text';
 
 /** A file the run produced, re-opened and checked rather than taken on trust. */
 export interface ArtifactReport {
@@ -368,14 +378,8 @@ export interface ArtifactReport {
  * the UI. Previews are capped server-side, and binary formats are converted
  * to a representation the browser can render directly.
  */
-export type ArtifactPreview =
-  | { kind: 'text'; mime: string; content: string; truncated: boolean }
-  | { kind: 'markdown'; mime: string; content: string; truncated: boolean }
-  | { kind: 'docxBody'; mime: string; content: string; truncated: boolean }
-  | { kind: 'xlsxFirstSheet'; mime: string; content: string; truncated: boolean }
-  | { kind: 'pptxSlideList'; mime: string; content: string; truncated: boolean }
-  | { kind: 'image'; mime: string; dataUrl: string; truncated: boolean }
-  | { kind: 'unsupported'; mime: string; reason: string };
+export type { ArtifactPreview, PreviewKind } from './artifactPreview';
+import type { ArtifactPreview } from './artifactPreview';
 
 /**
  * How a run ended.

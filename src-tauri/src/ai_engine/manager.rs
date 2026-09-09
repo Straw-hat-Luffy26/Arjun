@@ -754,7 +754,33 @@ impl InferenceManager {
         // So the context is held at something usable and the layer count is
         // what gives. Partial offload degrades smoothly; a context too small to
         // hold the first message does not.
-        let planned_context = requested_context.min(DEFAULT_WORKING_CONTEXT);
+        //
+        // ## And a number the operator typed is a decision, not a suggestion
+        //
+        // `DEFAULT_WORKING_CONTEXT` is the right default and was the wrong
+        // ceiling. Settings offers a per-model Context Length field, writes it
+        // to `activeUserParams`, and this line then clamped it back to 8 192 —
+        // so the control saved a value, reported success, and changed nothing.
+        // A person who raised it to 32 768 because their turns were being
+        // refused with `400 ... exceeds the available context size (8192
+        // tokens)` got the same refusal at the same number, with no way to see
+        // why.
+        //
+        // The cap still applies to the *advertised* ceiling, which is what it
+        // was written for: a GGUF claiming 262 144 describes what the weights
+        // permit, and budgeting a KV cache for it reserves tens of gigabytes
+        // that will never be allocated. Nobody chose that number, so it is
+        // still capped. Somebody chose the other one.
+        //
+        // Spending it is the planner's business, not this line's: the layer
+        // count is what gives, and partial offload degrades smoothly. Past the
+        // point where the cache no longer fits in VRAM *and* RAM together the
+        // load fails rather than slows, so that case is warned about below with
+        // the arithmetic rather than silently corrected.
+        let planned_context = match profile.active_user_params.as_ref() {
+            Some(chosen) if chosen.context_length > 0 => chosen.context_length,
+            _ => requested_context.min(DEFAULT_WORKING_CONTEXT),
+        };
 
         if planned_context < requested_context {
             log::info!(
@@ -840,11 +866,61 @@ impl InferenceManager {
                                 plan.reason
                             );
                         }
-                        let plan = crate::ai_engine::vram_planner::plan_gpu_offload(
+                        // The window the operator set is served as asked; one
+                        // nobody set may still be lowered to buy GPU layers.
+                        //
+                        // And the KV cache is charged at what this model's own
+                        // header says it costs, not at the size band. The band
+                        // is deliberately high — it has to be, for a caller
+                        // that has not read a header — but this caller has one
+                        // in hand and has had all along: the MoE branch above
+                        // passes the same number. On a card with nothing spare
+                        // the 25% margin is the whole difference between every
+                        // layer on the GPU and one of them on the CPU.
+                        let chosen_window = profile
+                            .active_user_params
+                            .as_ref()
+                            .filter(|chosen| chosen.context_length > 0)
+                            .is_some();
+                        if chosen_window {
+                            // A window can be larger than the machine, and the
+                            // failure then is not slowness — llama.cpp cannot
+                            // allocate the cache and the load fails outright.
+                            // Honouring the number is still right; leaving the
+                            // person to discover the reason from an allocator
+                            // error is not. Said before the attempt, with the
+                            // arithmetic, so the remedy is obvious.
+                            let per_token = gguf_meta
+                                .as_ref()
+                                .map(|m| m.kv_bytes_per_token())
+                                .filter(|bytes| *bytes > 0)
+                                .unwrap_or_else(|| {
+                                    crate::ai_engine::vram_planner::estimate_kv_bytes_per_token(
+                                        model_bytes,
+                                    )
+                                });
+                            let kv_bytes =
+                                per_token.saturating_mul(u64::from(planned_context.max(1)));
+                            if kv_bytes > budget.saturating_add(usable_ram) {
+                                log::warn!(
+                                    "[INFERENCE_MGR] The context length set for {model_id}                                      ({planned_context} tokens) needs about {:.1} GB of KV cache,                                      more than the {:.1} GB of VRAM and {:.1} GB of usable RAM                                      this machine has together. It is being served as set; if the                                      load fails for memory, lower Context Length in Settings.",
+                                    kv_bytes as f64 / 1e9,
+                                    budget as f64 / 1e9,
+                                    usable_ram as f64 / 1e9,
+                                );
+                            }
+                        }
+                        let choice = if chosen_window {
+                            crate::ai_engine::vram_planner::ContextChoice::Fixed(planned_context)
+                        } else {
+                            crate::ai_engine::vram_planner::ContextChoice::Planned(planned_context)
+                        };
+                        let plan = crate::ai_engine::vram_planner::plan_gpu_offload_with(
                             budget,
                             model_bytes,
-                            planned_context,
+                            choice,
                             gguf_meta.as_ref().map(|m| m.block_count),
+                            gguf_meta.as_ref().map(|m| m.kv_bytes_per_token()),
                         );
                         log::info!("[INFERENCE_MGR] Selected {gpu_label}: {}", plan.reason);
                         (plan.gpu_layers, 0)

@@ -261,6 +261,28 @@ function applyStage(
         `${pages} page${pages === 1 ? '' : 's'}`,
         `${group(characters)} characters`,
       ];
+      // Which reader ran. Without it this line reads the same whether the OCR
+      // model transcribed every page or a parser lifted a text layer, and the
+      // OCR readout panel below is empty in the second case for a reason
+      // nothing on screen gives. A person who attached a scan and saw neither
+      // concluded the model was broken.
+      //
+      // Omitted rather than guessed when the run predates these fields: an
+      // older event says nothing about its reader, and "the text layer" would
+      // be a claim about a read nobody recorded.
+      const byModel = num(detail, 'filesReadByModel');
+      const ocrModel = str(detail, 'ocrModelId');
+      if (byModel !== undefined) {
+        if (byModel === 0) {
+          parts.push('read from the text layer, no model needed');
+        } else if (ocrModel) {
+          parts.push(
+            byModel === files
+              ? `read by ${ocrModel}`
+              : `${byModel} of ${files} read by ${ocrModel}, the rest from the text layer`,
+          );
+        }
+      }
       return settle(steps, at, 'reading', 'Read the attachments', parts.join(' · '));
     }
 

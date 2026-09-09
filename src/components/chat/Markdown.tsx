@@ -2,6 +2,7 @@ import React from 'react';
 import { CodeBlock } from './CodeBlock';
 import { isClosingFence, openingFenceLanguage } from './markdownFence';
 import { MermaidGraph } from './MermaidGraph';
+import { WidgetFrame } from './WidgetFrame';
 import { sanitizeSvg } from './svgSanitize';
 import styles from './ChatSurface.module.css';
 
@@ -133,6 +134,14 @@ interface Block {
   level?: number;
   lang?: string;
   text: string;
+  /**
+   * `code` only: whether the closing fence has arrived.
+   *
+   * Code streams, so a block is emitted before it is finished. That is right
+   * for source — the reader watches it arrive — and wrong for a widget, which
+   * would otherwise be built and run once per keystroke, half-written.
+   */
+  closed?: boolean;
   /** `table` only: the header cells. */
   header?: string[];
   /** `table` only: the body rows, already split into cells. */
@@ -193,12 +202,13 @@ function tokenize(input: string): Block[] {
         body.push(lines[i]);
         i += 1;
       }
-      if (i < lines.length) i += 1; // skip closing fence
+      const closed = i < lines.length;
+      if (closed) i += 1; // skip closing fence
       // Emitted even when the closing fence has not arrived, which is what
       // makes code stream. A block that waited for its close would leave the
       // reader watching a blank space for the whole time the model spends
       // writing the code — the part of an answer that takes longest.
-      blocks.push({ kind: 'code', lang, text: body.join('\n') });
+      blocks.push({ kind: 'code', lang, text: body.join('\n'), closed });
       continue;
     }
 
@@ -355,7 +365,14 @@ function MarkdownTable({
   );
 }
 
-export function Markdown({ content }: { content: string }) {
+export function Markdown({
+  content,
+  onPrompt,
+}: {
+  content: string;
+  /** Raised when a widget in this message calls `sendPrompt`. */
+  onPrompt?: (text: string) => void;
+}) {
   const blocks = React.useMemo(() => tokenize(content), [content]);
 
   return (
@@ -394,6 +411,19 @@ export function Markdown({ content }: { content: string }) {
             // markup came from a model, and an SVG has a script model.
             if (block.lang === 'svg') {
               return <InlineSvg key={key} source={block.text} />;
+            }
+            // A widget fence is a page the model wrote to be *run*, not read.
+            // Sandboxed, served its own origin and its own policy; see
+            // `WidgetFrame`. Deliberately not `html`, which stays source.
+            if (block.lang === 'widget') {
+              return (
+                <WidgetFrame
+                  key={key}
+                  html={block.text}
+                  complete={block.closed ?? false}
+                  onPrompt={onPrompt}
+                />
+              );
             }
             return <CodeBlock key={key} code={block.text} lang={block.lang} />;
           case 'table':
