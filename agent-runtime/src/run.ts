@@ -708,7 +708,10 @@ export async function startRun(
        */
       thinkingLevel: request.model.supportsReasoning ? "medium" : "off",
     },
-    beforeToolCall: (context) => authorizeToolCall(peer, ledger, runId, context),
+    // The signal is passed through, not dropped. agent-core hands one to every
+    // `beforeToolCall`, and without it an authorisation begun just before the
+    // user pressed stop carried on regardless of the stop.
+    beforeToolCall: (context, signal) => authorizeToolCall(peer, ledger, runId, context, signal),
     /**
      * A local inference server needs no credential, but the OpenAI client
      * refuses to construct without one. So a placeholder is supplied rather

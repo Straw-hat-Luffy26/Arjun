@@ -78,6 +78,15 @@ const ALLOWED_ATTRIBUTES = new Set([
   'stroke-linecap',
   'stroke-linejoin',
   'transform',
+  // Without these a diagram loses its arrowheads. `diagram.rs` draws every edge
+  // as `marker-end="url(#arw)"`, referring to a `<marker>` defined in the same
+  // document — which `defs` and `marker` are already allowed to carry. Stripping
+  // the reference left the definition in place and nothing pointing at it, so a
+  // flowchart rendered as undirected lines: the same picture, saying something
+  // different.
+  'marker-end',
+  'marker-start',
+  'marker-mid',
   'opacity',
   'class',
   'text-anchor',

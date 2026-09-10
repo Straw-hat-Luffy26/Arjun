@@ -110,11 +110,45 @@ impl ApprovalError {
 #[derive(Default)]
 pub struct ApprovalQueue {
     items: Mutex<Vec<ApprovalItem>>,
+    /// Runs that were stopped while something of theirs was still waiting.
+    ///
+    /// Kept here rather than threaded through as a parameter because this is
+    /// already the one object both sides hold: the command that aborts a run
+    /// has it, and so does the loop that waits on an answer. A run id landing
+    /// here is how the waiter learns there is no longer anybody to wait for.
+    cancelled_runs: Mutex<std::collections::HashSet<String>>,
 }
 
 impl ApprovalQueue {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Says that a run has stopped, so anything of its still waiting can give up.
+    ///
+    /// Without this, aborting a run left its approval request polling until the
+    /// fifteen-minute limit: the person had already navigated away, nobody was
+    /// going to answer, and the run held its place the whole time.
+    pub fn cancel_run(&self, run_id: &str) {
+        if let Ok(mut cancelled) = self.cancelled_runs.lock() {
+            cancelled.insert(run_id.to_string());
+        }
+    }
+
+    /// Whether this run was abandoned while something of its was waiting.
+    pub fn run_cancelled(&self, run_id: &str) -> bool {
+        self.cancelled_runs
+            .lock()
+            .map(|cancelled| cancelled.contains(run_id))
+            .unwrap_or(false)
+    }
+
+    /// Forgets a finished run, so the set does not grow for the life of the
+    /// process and a later run reusing an id is not born cancelled.
+    pub fn forget_run(&self, run_id: &str) {
+        if let Ok(mut cancelled) = self.cancelled_runs.lock() {
+            cancelled.remove(run_id);
+        }
     }
 
     /// Puts requests back that were raised before this process started.

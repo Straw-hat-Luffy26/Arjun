@@ -53,6 +53,12 @@ pub enum Kind {
     Workbook,
     /// A briefing deck.
     Deck,
+    /// A PDF report or note. Not a `Document`: that means a `.docx`, and the
+    /// check for one asks whether the template's sections are present, which a
+    /// PDF has no answer to.
+    Pdf,
+    /// A diagram, written as SVG.
+    Diagram,
     /// A note or draft. Checked for being present and non-empty, no more —
     /// there is no structure to check it against.
     Text,
@@ -64,6 +70,8 @@ impl Kind {
             Kind::Document => "Word document",
             Kind::Workbook => "Workbook",
             Kind::Deck => "Briefing deck",
+            Kind::Pdf => "PDF",
+            Kind::Diagram => "Diagram",
             Kind::Text => "Text file",
         }
     }
@@ -259,7 +267,14 @@ pub fn check(produced: &Produced) -> ArtifactReport {
             };
             report(check.is_sound(), detail, check.problems, bytes)
         }
-        Kind::Text => report(true, format!("Present, {bytes} byte(s)."), Vec::new(), bytes),
+        // A PDF, an SVG and a note are all checked the same way, and the comment
+        // above applies to each: they are re-opened far enough to know a file is
+        // there with content in it. Claiming to have verified a PDF's layout, or
+        // that a diagram says what was asked for, would be inventing a standard
+        // this has no way to hold anything to.
+        Kind::Pdf | Kind::Diagram | Kind::Text => {
+            report(true, format!("Present, {bytes} byte(s)."), Vec::new(), bytes)
+        }
     }
 }
 

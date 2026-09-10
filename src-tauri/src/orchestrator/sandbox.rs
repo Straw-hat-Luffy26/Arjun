@@ -295,7 +295,7 @@ fn container_runtime_usable(name: &str) -> bool {
         return false;
     }
 
-    let Ok(mut child) = create_hidden_command(name)
+    let Ok(child) = create_hidden_command(name)
         .arg("info")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -305,12 +305,34 @@ fn container_runtime_usable(name: &str) -> bool {
         return false;
     };
 
-    let deadline = std::time::Instant::now();
+    succeeded_within(child, RUNTIME_PROBE_TIMEOUT)
+}
+
+/// How long a "is this installed" probe waits.
+///
+/// Shorter than the daemon probe because the question is smaller: `--version`
+/// is answered by the executable itself and needs no service behind it. Three
+/// seconds is generous for reading a version string and short enough that a
+/// wedged one does not hold up the run that asked.
+const COMMAND_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Waits for a probe to finish, killing it if it overruns.
+///
+/// The one place this application waits on a subprocess it only wants an answer
+/// from. `Command::status` has no timeout, so a hung child holds the calling
+/// thread for as long as it likes — and both callers run during
+/// `LocalToolRunner::new`, which is on the path of every tool dispatch.
+///
+/// Errs toward `false`. A probe too slow to answer is treated as absent, which
+/// costs a capability the machine might have had; believing the opposite would
+/// claim a sandbox that is not there.
+fn succeeded_within(mut child: std::process::Child, timeout: Duration) -> bool {
+    let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
             Ok(None) => {
-                if deadline.elapsed() >= RUNTIME_PROBE_TIMEOUT {
+                if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
                     return false;
@@ -326,16 +348,30 @@ fn container_runtime_usable(name: &str) -> bool {
     }
 }
 
+/// Whether a command is on this machine at all.
+///
+/// Spawned and polled rather than run to completion. `wsl --version` is the
+/// case that forced this: on a Windows machine where the WSL service is
+/// starting, or where a distribution is mid-install, it does not fail — it sits
+/// there. `Command::status` would have waited with it, and because this runs
+/// from `LocalToolRunner::new`, the wait was on the path of every tool dispatch
+/// in the application.
 fn command_exists(name: &str) -> bool {
     use crate::system_analyzer::process_utils::create_hidden_command;
 
-    create_hidden_command(name)
+    let Ok(child) = create_hidden_command(name)
         .arg("--version")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .spawn()
+    else {
+        // Not installed, or not executable. Either way the answer is no, and
+        // it is known without waiting.
+        return false;
+    };
+
+    succeeded_within(child, COMMAND_PROBE_TIMEOUT)
 }
 
 /// Decides whether code may run, given what the machine offers.

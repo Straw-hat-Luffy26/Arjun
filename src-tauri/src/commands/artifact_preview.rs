@@ -51,6 +51,15 @@ pub enum PreviewKind {
     PptxSlideList,
     /// An image. Returned as a `data:` URL.
     Image,
+    /// An SVG — a diagram or chart this application drew. Returned as its own
+    /// source, which is text, so the surface can sanitise and draw it inline
+    /// rather than showing a file card for a picture it already has.
+    Svg,
+    /// A PDF. Named rather than lumped in with "unsupported", because a PDF
+    /// this application produced a moment ago is not an unknown format — there
+    /// is simply no in-process reader for one here, and saying so is more use
+    /// than a shrug. Carries no body; the surface offers to open it.
+    Pdf,
     /// A binary or unsupported type. The UI should show "open in app".
     Unsupported,
 }
@@ -97,6 +106,11 @@ pub fn preview(path: &Path, kind_hint: &str) -> anyhow::Result<ArtifactPreview> 
         (_, "xlsx") => PreviewKind::XlsxFirstSheet,
         (_, "pptx") => PreviewKind::PptxSlideList,
         (_, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") => PreviewKind::Image,
+        // Deliberately not `Image`: an SVG is text, and reading it as a `data:`
+        // URL would hand the surface an opaque blob where it could have had
+        // markup it can sanitise, theme and draw.
+        (_, "svg") => PreviewKind::Svg,
+        (_, "pdf") => PreviewKind::Pdf,
         _ => PreviewKind::Unsupported,
     };
 
@@ -106,6 +120,12 @@ pub fn preview(path: &Path, kind_hint: &str) -> anyhow::Result<ArtifactPreview> 
         PreviewKind::XlsxFirstSheet => read_xlsx_first_sheet(path)?,
         PreviewKind::PptxSlideList => read_pptx_slides(path)?,
         PreviewKind::Image => read_image_data_url(path)?,
+        PreviewKind::Svg => read_text(path)?,
+        // No body. There is no PDF reader in this process — PDFs are read by
+        // the Python sidecar, and starting a subprocess to fill a preview pane
+        // would trade a fast local read for the class of hang the rest of this
+        // work exists to remove.
+        PreviewKind::Pdf => (String::new(), false),
         PreviewKind::Unsupported => (String::new(), false),
     };
 
@@ -123,7 +143,10 @@ fn map_kind(hint: &str) -> PreviewKind {
         "markdown" => PreviewKind::Markdown,
         "docx" | "document" => PreviewKind::DocxBody,
         "xlsx" | "workbook" => PreviewKind::XlsxFirstSheet,
-        "pptx" => PreviewKind::PptxSlideList,
+        "pptx" | "deck" => PreviewKind::PptxSlideList,
+        "svg" | "diagram" => PreviewKind::Svg,
+        "pdf" => PreviewKind::Pdf,
+        "image" => PreviewKind::Image,
         _ => PreviewKind::Unsupported,
     }
 }

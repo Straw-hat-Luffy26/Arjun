@@ -3682,6 +3682,7 @@ pub async fn agent_abort_run(
     session: State<'_, CurrentSession>,
     events: State<'_, TaskEvents>,
     cancellations: State<'_, CancellationsState>,
+    approvals: State<'_, Arc<ApprovalQueue>>,
 ) -> Result<AbortOutcome, String> {
     // Aborting your own in-flight run uses the model. The matrix puts
     // that under `UseModel`. The previous fallback to SYSTEM_ACTOR is
@@ -3722,6 +3723,11 @@ pub async fn agent_abort_run(
     // and the registration that arrives a moment later comes back cancelled.
     // See `agent_runtime::cancellation`.
     let stages_reached = cancellations.0.cancel(&run_id);
+    // Anything of this run's still waiting on a person stops waiting now. The
+    // token above stops the loop; this stops the approval poll, which has its
+    // own fifteen-minute clock and would otherwise outlive the run that raised
+    // it.
+    approvals.cancel_run(&run_id);
 
     let runtime = {
         let slot = handle
@@ -4517,6 +4523,8 @@ pub async fn artifact_preview(
         crate::agent_runtime::artifacts::Kind::Document => "docx",
         crate::agent_runtime::artifacts::Kind::Workbook => "xlsx",
         crate::agent_runtime::artifacts::Kind::Deck => "pptx",
+        crate::agent_runtime::artifacts::Kind::Pdf => "pdf",
+        crate::agent_runtime::artifacts::Kind::Diagram => "svg",
         crate::agent_runtime::artifacts::Kind::Text => "text",
     };
     crate::commands::artifact_preview::preview(&path, kind_hint)

@@ -133,6 +133,18 @@ export class GrantLedger {
 }
 
 /**
+ * How long the gateway gets to answer whether a call may proceed.
+ *
+ * `tool.execute` has always been bounded; this was not, and the asymmetry was
+ * the whole bug. Deciding is meant to be quick — it is a policy lookup — but
+ * when the answer is "a person must approve this" the Rust side waits on that
+ * person, and the wait outlives anything the model or the stall guard is
+ * prepared to sit through. Thirty seconds is far longer than a decision takes
+ * and far shorter than the run is willing to appear frozen for.
+ */
+const AUTHORIZE_TIMEOUT_MS = 30_000;
+
+/**
  * Asks Rust whether a call may proceed, and records the grant if it may.
  *
  * Returns a `BeforeToolCallResult` for agent-core: `{ block: true, reason }`
@@ -144,16 +156,34 @@ export async function authorizeToolCall(
   ledger: GrantLedger,
   runId: string,
   context: BeforeToolCallContext,
+  signal?: AbortSignal,
 ): Promise<BeforeToolCallResult | undefined> {
   const { toolCall, args } = context;
+
+  // Checked before the request rather than only after it. A run stopped while
+  // the previous step was running would otherwise open one more authorisation
+  // — and if that one is the call that waits on a person, the turn the user
+  // just cancelled goes on to hold the gateway for as long as the approval
+  // allows.
+  if (signal?.aborted) {
+    return {
+      block: true,
+      reason: "The task was stopped before this call was authorised, so it did not run.",
+    };
+  }
+
   let verdict: Verdict;
   try {
-    verdict = (await peer.request("tool.authorize", {
-      runId,
-      toolCallId: toolCall.id,
-      tool: toolCall.name,
-      args,
-    })) as Verdict;
+    verdict = (await withTimeout(
+      peer.request("tool.authorize", {
+        runId,
+        toolCallId: toolCall.id,
+        tool: toolCall.name,
+        args,
+      }),
+      AUTHORIZE_TIMEOUT_MS,
+      `authorize:${toolCall.name}`,
+    )) as Verdict;
   } catch (error) {
     // A gateway that cannot be reached is a gateway that did not say yes.
     // Failing closed is the only safe reading of silence here.

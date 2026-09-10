@@ -75,11 +75,20 @@ const KNOWN_KINDS: ReadonlyMap<string, ArtifactPresentation> = new Map([
   ['document', { glyph: 'document', label: 'Word document', known: true }],
   ['workbook', { glyph: 'workbook', label: 'Workbook', known: true }],
   ['deck', { glyph: 'deck', label: 'Briefing deck', known: true }],
+  ['pdf', { glyph: 'document', label: 'PDF', known: true }],
+  ['diagram', { glyph: 'file', label: 'Diagram', known: true }],
   ['text', { glyph: 'file', label: 'Text file', known: true }],
 ] as const);
 
 /** The kinds this build recognises, for tests and for exhaustiveness checks. */
-export const ARTIFACT_KINDS: readonly string[] = ['document', 'workbook', 'deck', 'text'];
+export const ARTIFACT_KINDS: readonly string[] = [
+  'document',
+  'workbook',
+  'deck',
+  'pdf',
+  'diagram',
+  'text',
+];
 
 /**
  * How to draw a produced file of this kind.

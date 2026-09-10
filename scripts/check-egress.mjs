@@ -109,6 +109,7 @@ const ALLOWED_HOSTS = new Map([
   ['localhost',                 'loopback'],
   ['ipc.localhost',             'Tauri IPC, never leaves the process'],
   ['asset.localhost',           'Tauri asset protocol, local files'],
+  ['widget.localhost',          'Tauri custom protocol for sandboxed widgets, served in-process'],
   ['tauri.localhost',           'Tauri webview origin'],
   ['schema.tauri.app',          'JSON-schema reference string, never fetched'],
   ['www.w3.org',                'SVG/XML namespace identifier, never fetched'],

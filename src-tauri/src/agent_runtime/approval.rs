@@ -53,6 +53,12 @@ pub enum ApprovalOutcome {
     Rejected { by: String, because: String },
     /// Nobody decided within the limit.
     TimedOut,
+    /// The run was stopped while the question was still on screen.
+    ///
+    /// Distinct from [`Self::TimedOut`]: nobody failed to answer, the thing
+    /// that asked went away. Reporting that as a timeout would tell the person
+    /// their approver was slow when in fact they themselves pressed stop.
+    Cancelled,
 }
 
 impl ApprovalOutcome {
@@ -71,6 +77,9 @@ impl ApprovalOutcome {
             ApprovalOutcome::TimedOut =>
                 "Nobody responded to the approval request in time, so the action did not happen. \
                  Say so plainly rather than describing what it would have produced."
+                    .to_string(),
+            ApprovalOutcome::Cancelled =>
+                "The task was stopped while this action was waiting to be approved, so it did                  not happen."
                     .to_string(),
         }
     }
@@ -133,6 +142,13 @@ pub async fn await_decision(
 
     let deadline = tokio::time::Instant::now() + WAIT_LIMIT;
     loop {
+        // Checked before the decision, and every time round: a run stopped
+        // while this was on screen has nobody left to answer it, and waiting
+        // out the fifteen-minute limit would hold the turn open long past the
+        // point where anything could come of it.
+        if queue.run_cancelled(run_id) {
+            return ApprovalOutcome::Cancelled;
+        }
         if let Some(item) = queue.find(&id) {
             match item.decision {
                 Some(Decision::Approved { by, .. }) => return ApprovalOutcome::Approved { by },

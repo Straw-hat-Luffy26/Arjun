@@ -99,6 +99,16 @@ export const LEGACY_TOOL_NAMES: ReadonlyMap<string, CanonicalToolName> = new Map
   ["create_pptx", "artifact.create_briefing_deck"],
   ["execute_code", "sandbox.run_code"],
   ["validate_artifact", "artifact.verify_docx"],
+  // These four were namespaced from the start, so nothing older holds the bare
+  // spelling — but a model writes it anyway, and an unresolved name used to end
+  // the step or the whole plan. `create_flowchart` was never a name of
+  // anything; it is simply what a model reaches for when it has been asked for
+  // a flowchart, which is the same request as a diagram.
+  ["create_diagram", "artifact.create_diagram"],
+  ["create_flowchart", "artifact.create_diagram"],
+  ["create_pdf", "artifact.create_pdf"],
+  ["create_chart", "artifact.create_chart"],
+  ["create_table", "artifact.create_table"],
 ]);
 
 /**
@@ -143,6 +153,15 @@ const ARTIFACT_PRODUCING: ReadonlySet<CanonicalToolName> = new Set([
   "artifact.create_approval_note",
   "artifact.create_calculation_workbook",
   "artifact.create_briefing_deck",
+  // A diagram writes an SVG, a PDF writes a PDF, a table writes a workbook.
+  // Each leaves a file the run can be asked about afterwards, and each was
+  // missing here — which is why they were produced and then not listed.
+  "artifact.create_diagram",
+  "artifact.create_pdf",
+  "artifact.create_table",
+  // `create_chart` is here for the resumption rule rather than for a file: see
+  // the note in `SIDE_EFFECTING` below.
+  "artifact.create_chart",
 ]);
 
 /**
@@ -158,6 +177,14 @@ const SIDE_EFFECTING: ReadonlySet<CanonicalToolName> = new Set([
   "artifact.create_calculation_workbook",
   "artifact.create_briefing_deck",
   "sandbox.run_code",
+  // Same rule, same reason: each writes a file, and a resumption that ran one
+  // twice would leave two. `create_chart` writes nothing to disk, but a
+  // resumption that redrew it would spend a step and emit a second copy of the
+  // same picture into the transcript, so it is treated the same way.
+  "artifact.create_diagram",
+  "artifact.create_pdf",
+  "artifact.create_table",
+  "artifact.create_chart",
 ]);
 
 /** Whether this tool returns numbered evidence. Accepts either spelling. */

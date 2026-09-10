@@ -1891,7 +1891,18 @@ fn remember_if_produced(
         ToolName::CreateDocx => artifacts::Kind::Document,
         ToolName::CreateXlsx => artifacts::Kind::Workbook,
         ToolName::CreatePptx => artifacts::Kind::Deck,
+        ToolName::CreatePdf => artifacts::Kind::Pdf,
+        ToolName::CreateDiagram => artifacts::Kind::Diagram,
+        // `create_table` writes a `.xlsx`, so it is a workbook — the same file
+        // in the same format that `create_calculation_workbook` produces, and
+        // giving it a kind of its own would describe the tool rather than the
+        // file the person ends up opening.
+        ToolName::CreateTable => artifacts::Kind::Workbook,
         ToolName::WriteScopedFile => artifacts::Kind::Text,
+        // `create_chart` is deliberately absent: it writes no file. The SVG
+        // comes back in the tool result and is drawn in the message, so there
+        // is nothing on disk to re-open and nothing to record. A `Chart` kind
+        // would be a variant nothing could ever produce.
         _ => return,
     };
     let Some(path) = resolved_path else { return };

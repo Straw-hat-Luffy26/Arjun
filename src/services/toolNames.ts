@@ -38,6 +38,10 @@ export const CANONICAL_TOOL_NAMES = [
   'artifact.create_approval_note',
   'artifact.create_calculation_workbook',
   'artifact.create_briefing_deck',
+  'artifact.create_diagram',
+  'artifact.create_pdf',
+  'artifact.create_chart',
+  'artifact.create_table',
   'sandbox.run_code',
   'artifact.verify_docx',
   'capability.search',
@@ -68,6 +72,15 @@ export const LEGACY_TOOL_NAMES: ReadonlyMap<string, CanonicalToolName> = new Map
   ['create_pptx', 'artifact.create_briefing_deck'],
   ['execute_code', 'sandbox.run_code'],
   ['validate_artifact', 'artifact.verify_docx'],
+  // Never a former spelling of anything — these four are namespaced in every
+  // record ever written. They are here because a model writes the bare name,
+  // the runtime now resolves it, and a record of that call must read as the
+  // tool it was rather than as an unknown wire name.
+  ['create_diagram', 'artifact.create_diagram'],
+  ['create_flowchart', 'artifact.create_diagram'],
+  ['create_pdf', 'artifact.create_pdf'],
+  ['create_chart', 'artifact.create_chart'],
+  ['create_table', 'artifact.create_table'],
 ]);
 
 /**
@@ -101,6 +114,10 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'artifact.create_approval_note': 'Producing a Word document',
   'artifact.create_calculation_workbook': 'Producing a workbook',
   'artifact.create_briefing_deck': 'Producing a briefing deck',
+  'artifact.create_diagram': 'Drawing a diagram',
+  'artifact.create_pdf': 'Producing a PDF',
+  'artifact.create_chart': 'Drawing a chart',
+  'artifact.create_table': 'Producing a table',
   'sandbox.run_code': 'Running code',
   'artifact.verify_docx': 'Checking a produced file',
   'capability.search': 'Looking for a relevant skill',

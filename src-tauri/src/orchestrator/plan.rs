@@ -181,6 +181,18 @@ pub enum StopReason {
         /// without re-reading the plan.
         intent: String,
     },
+    /// The model named a tool that does not exist.
+    ///
+    /// Deliberately *not* a halt, for the same reason as [`Self::StepsInFlight`]
+    /// above: a misspelling is a bad step, not a bad run. Ending the plan here
+    /// meant that a model writing `create_diagram` where it should have written
+    /// `artifact.create_diagram` lost the whole task over one character of
+    /// namespace — with nothing in the record telling it what the right name
+    /// was, so a retry would have made the same mistake.
+    ///
+    /// Carries the names the run may actually use, because a refusal the model
+    /// cannot act on is only a slower way to fail.
+    UnknownTool { tool: String, available: Vec<String> },
     /// A step failed and the plan cannot continue past it.
     Failed { detail: String },
 }
@@ -231,6 +243,16 @@ impl StopReason {
                 "Stopped at your decision not to continue past \"{intent}\". The work completed \
                  before that point is below and has been kept."
             ),
+            StopReason::UnknownTool { tool, available } => {
+                if available.is_empty() {
+                    format!("There is no tool called \"{tool}\", and this task has none available.")
+                } else {
+                    format!(
+                        "There is no tool called \"{tool}\". Use one of: {}.",
+                        available.join(", ")
+                    )
+                }
+            }
             StopReason::Failed { detail } => format!("Stopped: {detail}"),
         }
     }
@@ -528,8 +550,18 @@ impl PlanRun {
         // A tool outside the plan is refused even when the person could use it
         // elsewhere. The plan is narrower than the permission, deliberately.
         let Some(tool) = ToolName::from_str(&call.tool) else {
-            return self.halt(StopReason::Failed {
-                detail: format!("the model asked for a tool that does not exist: {:?}", call.tool),
+            // `Continuation::Stop` rather than `self.halt`, which is the
+            // difference between refusing this call and ending the run: `halt`
+            // records the reason in `self.stopped`, and every later call replays
+            // it. The model is told the name is wrong and which names are right,
+            // and its next call is judged on its own merits.
+            return Continuation::Stop(StopReason::UnknownTool {
+                tool: call.tool.clone(),
+                available: self.budget
+                    .permitted_tools
+                    .iter()
+                    .map(|t| t.as_str().to_string())
+                    .collect(),
             });
         };
 

@@ -46,6 +46,8 @@ export const PREVIEW_KINDS = [
   'xlsxFirstSheet',
   'pptxSlideList',
   'image',
+  'svg',
+  'pdf',
   'unsupported',
 ] as const;
 
@@ -82,7 +84,13 @@ const TRUNCATED_NOTE = 'Preview is truncated. Use the folder button for the full
  * Kinds whose body is not prose, and so is drawn monospaced: text files, an
  * extracted `.docx` body, and a sheet rendered as a markdown table.
  */
-const MONOSPACED: ReadonlySet<string> = new Set(['text', 'docxBody', 'xlsxFirstSheet']);
+const MONOSPACED: ReadonlySet<string> = new Set([
+  'text',
+  'docxBody',
+  'xlsxFirstSheet',
+  // An SVG preview is its own source, which is markup and reads as code.
+  'svg',
+]);
 
 /**
  * How to draw this preview.
@@ -98,6 +106,18 @@ export function previewDisplay(preview: ArtifactPreview): PreviewDisplay {
       layout: 'notice',
       message:
         'Preview is not available for this format. Use the folder button to open it in the file manager.',
+    };
+  }
+
+  // A PDF is named rather than shrugged at. There is no PDF reader in the Rust
+  // process — PDFs are read by the Python sidecar — so the backend sends the
+  // kind and no body, and saying "PDF, open it to read it" is more use to
+  // somebody looking at a file this app produced a moment ago than the generic
+  // unsupported-format sentence.
+  if (preview.kind === 'pdf') {
+    return {
+      layout: 'notice',
+      message: 'This is a PDF. Use the folder button to open it.',
     };
   }
 

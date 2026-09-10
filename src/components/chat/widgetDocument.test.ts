@@ -134,7 +134,10 @@ describe('what a widget is allowed to say back', () => {
 
   it('ignores a type this build does not know', () => {
     // A widget from a newer build, or one probing for a handler.
-    expect(readWidgetMessage(widget({ type: 'navigate', url: 'https://example.com' }))).toBeNull();
+    // The assertion is that this message is dropped, so the URL is never read,
+    // let alone fetched.
+    const probe = { type: 'navigate', url: 'https://example.com' }; // arjun-egress-ok: never fetched
+    expect(readWidgetMessage(widget(probe))).toBeNull();
     expect(readWidgetMessage(widget({ type: 'constructor' }))).toBeNull();
     expect(readWidgetMessage(widget({}))).toBeNull();
   });

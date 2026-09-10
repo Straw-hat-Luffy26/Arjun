@@ -109,6 +109,39 @@ pub fn build(tools: &[ToolName]) -> Option<ToolGrammar> {
 
     for tool in tools {
         let spec = spec_for(*tool);
+
+        // An artifact call's arguments are matched as a plain JSON object.
+        //
+        // The per-key form below fixes the order the keys must appear in. A
+        // model that writes `blocks` before `title` is then steered away from
+        // the object it meant to write: every token of the name it chose is
+        // masked, and what comes out is a different call, or nothing. These are
+        // also the calls whose argument shapes vary most, so the rigid form
+        // bought the least here and cost the most.
+        //
+        // The shape is still checked, just later and by something that can
+        // explain itself: `spec_for` declares the arguments and the gateway
+        // refuses a call missing one, naming it, which the model can act on. A
+        // grammar cannot say "these four keys in any order" without spelling
+        // out every permutation of them.
+        if tool.is_artifact_creation() {
+            rules.push_str(&format!(
+                "# {} arguments: {}\n",
+                tool.as_str(),
+                spec.arguments
+                    .iter()
+                    .map(|a| a.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            rules.push_str(&format!(
+                "{} ::= \"{{\" ws \"\\\"tool\\\"\" ws \":\" ws \"\\\"{}\\\"\" ws \",\" ws \
+                 \"\\\"arguments\\\"\" ws \":\" ws object ws \"}}\"\n",
+                rule_name(*tool),
+                tool.as_str()
+            ));
+            continue;
+        }
         let mut rule = format!(
             "{} ::= \"{{\" ws \"\\\"tool\\\"\" ws \":\" ws \"\\\"{}\\\"\" ws \",\" ws \
              \"\\\"arguments\\\"\" ws \":\" ws \"{{\" ws",
@@ -144,9 +177,10 @@ pub fn build(tools: &[ToolName]) -> Option<ToolGrammar> {
          char ::= [^\"\\\\] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" hex hex hex hex)\n\
          hex ::= [0-9a-fA-F]\n\
          integer ::= \"-\"? ([0-9] | [1-9] [0-9]*)\n\
+         number ::= \"-\"? ([0-9] | [1-9] [0-9]*) (\".\" [0-9]+)? ([eE] [+-]? [0-9]+)?\n\
          object ::= \"{\" ws (member (ws \",\" ws member)*)? ws \"}\"\n\
          member ::= string ws \":\" ws value\n\
-         value ::= string | integer | object | array | \"true\" | \"false\" | \"null\"\n\
+         value ::= string | number | object | array | \"true\" | \"false\" | \"null\"\n\
          array ::= \"[\" ws (value (ws \",\" ws value)*)? ws \"]\"\n\
          ws ::= [ \\t\\n]*\n",
     );

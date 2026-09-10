@@ -313,20 +313,60 @@ impl ToolName {
             | ToolName::NotebookDelete
             | ToolName::NotebookSources
             | ToolName::NotebookAddSource
-            | ToolName::NotebookRemoveSource
-            | ToolName::CreateChart
-            | ToolName::CreateDiagram
-            | ToolName::CreatePdf
-            | ToolName::CreateTable => None,
+            | ToolName::NotebookRemoveSource => None,
+            // These four were introduced namespaced, but a model that has seen
+            // the bare spellings elsewhere writes them anyway, and an
+            // unrecognised name used to end the run rather than the step. The
+            // alias costs nothing and turns a dead run into a drawn diagram.
+            ToolName::CreateChart => Some("create_chart"),
+            ToolName::CreateDiagram => Some("create_diagram"),
+            ToolName::CreatePdf => Some("create_pdf"),
+            ToolName::CreateTable => Some("create_table"),
         }
     }
 
     /// Resolves a wire name, accepting the current spelling or the legacy one.
     pub fn from_str(raw: &str) -> Option<Self> {
+        if let Some(aliased) = Self::alias(raw) {
+            return Some(aliased);
+        }
         Self::ALL
             .iter()
             .copied()
             .find(|t| t.as_str() == raw || t.legacy_str() == Some(raw))
+    }
+
+    /// Spellings a model reaches for that are not this tool's own name.
+    ///
+    /// Separate from `legacy_str`, which answers "what was this tool called
+    /// before" and can only hold one answer per tool. This is the other
+    /// direction: several names, one tool. `create_flowchart` is not a former
+    /// name of anything — it is simply what a model writes when it has been
+    /// asked for a flowchart, and refusing it ended the run.
+    fn alias(raw: &str) -> Option<Self> {
+        match raw {
+            "create_flowchart" | "artifact.create_flowchart" => Some(ToolName::CreateDiagram),
+            _ => None,
+        }
+    }
+
+    /// Whether this call produces a deliverable file.
+    ///
+    /// Used by the grammar, which matches these calls' arguments as a plain
+    /// JSON object rather than as a fixed sequence of keys. `ValidateArtifact`
+    /// carries the same entitlement but creates nothing, so it is not one of
+    /// these.
+    pub const fn is_artifact_creation(self) -> bool {
+        matches!(
+            self,
+            ToolName::CreateDocx
+                | ToolName::CreateXlsx
+                | ToolName::CreatePptx
+                | ToolName::CreateChart
+                | ToolName::CreateDiagram
+                | ToolName::CreatePdf
+                | ToolName::CreateTable
+        )
     }
 
     /// Whether this call only reads.
@@ -792,6 +832,14 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         // because the grammar admits only what is listed.
         ToolName::CreateDiagram => ToolSpec {
             permission: GenerateArtifact,
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
             arguments: &[
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "direction", kind: Text },
@@ -805,6 +853,14 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         },
         ToolName::CreatePdf => ToolSpec {
             permission: GenerateArtifact,
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
             arguments: &[
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "classification", kind: Text },
@@ -817,6 +873,14 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         },
         ToolName::CreateTable => ToolSpec {
             permission: GenerateArtifact,
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
             arguments: &[
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "header", kind: Text },
@@ -831,6 +895,14 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         },
         ToolName::CreateChart => ToolSpec {
             permission: GenerateArtifact,
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
             arguments: &[
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "kind", kind: Text },
@@ -932,13 +1004,62 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             timeout: Duration::from_secs(5),
             ..defaults(name)
         },
-        ToolName::CreateDocx | ToolName::CreateXlsx | ToolName::CreatePptx => ToolSpec {
+        // One arm each, because the three do not take the same arguments and
+        // sharing an arm made the gateway demand fields two of them never had.
+        // A workbook is written from what the calculation engine computed, so
+        // it takes no `content`; a deck has no template to render against. The
+        // shared spec refused both with "needs a 'template' argument, which was
+        // missing", and the model retried until its budget ran out.
+        ToolName::CreateDocx => ToolSpec {
             permission: GenerateArtifact,
             arguments: &[
                 ArgumentSpec { name: "path", kind: Path },
                 ArgumentSpec { name: "template", kind: Text },
                 ArgumentSpec { name: "content", kind: Object },
             ],
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            max_bytes: Some(64 * 1024 * 1024),
+            timeout: Duration::from_secs(120),
+            scoped_to_workspace: true,
+            ..defaults(name)
+        },
+        ToolName::CreateXlsx => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "path", kind: Path }],
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            max_bytes: Some(64 * 1024 * 1024),
+            timeout: Duration::from_secs(120),
+            scoped_to_workspace: true,
+            ..defaults(name)
+        },
+        ToolName::CreatePptx => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[
+                ArgumentSpec { name: "path", kind: Path },
+                ArgumentSpec { name: "content", kind: Object },
+            ],
+            // Automatic, for the reason `NotebookCreate` records above: the
+            // gateway held every one of these calls waiting for an approval
+            // nothing surfaced, and the run sat there until the request timed
+            // out. Producing the deliverable a person just asked for is the
+            // instruction, not a proposal needing ratification — and the effect
+            // is one file inside the run's own workspace.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
             max_bytes: Some(64 * 1024 * 1024),
             timeout: Duration::from_secs(120),
             scoped_to_workspace: true,

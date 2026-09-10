@@ -859,7 +859,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       "Use it for the deliverable a person will actually be handed. " +
       "Do not use it for working notes, and do not describe the document as final: the result is " +
       "marked DRAFT until somebody signs it. " +
-      "Effects: creates a file. A person must approve it before it happens, so expect a pause. " +
+      "Effects: creates a file in the task's own workspace; it happens straight away. " +
       "Limits: every field the template asks for must be present, as text; a missing required " +
       "field fails the render rather than producing a document with a gap in it. Available " +
       "templates: approval_note. " +
@@ -890,7 +890,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       "Use it when somebody needs to check the arithmetic rather than take it on trust. " +
       "Do not use it to pass figures directly: it draws on the calculation.evaluate_with_units calls " +
       "already made, so run the calculations first or the workbook will be empty. " +
-      "Effects: creates a file. A person must approve it before it happens, so expect a pause. " +
+      "Effects: creates a file in the task's own workspace; it happens straight away. " +
       "Limits: it can only show what was actually calculated through the engine. Arithmetic you " +
       "did in your head does not appear, because there is no working to show. " +
       "If it comes out empty: you have not run any calculations. Run them, then call this again.",
@@ -911,7 +911,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       "deck of full paragraphs is neither. You supply the bullets; you do not choose the " +
       "headings, and each of the four needs at least one. Evidence is required for the reason a " +
       "citation is: a briefing whose findings have no source is not a briefing. " +
-      "Effects: creates a file. A person must approve it before it happens, so expect a pause. " +
+      "Effects: creates a file in the task's own workspace; it happens straight away. " +
       "Limits: the deck is marked DRAFT until somebody signs it, and the word is printed on the " +
       "slide rather than only stored. " +
       "If it refuses a section as empty: that section had nothing under it. A heading with no " +
