@@ -710,6 +710,9 @@ fn tool_catalogue(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireE
             json!({
                 "name": tool.as_str(),
                 "summary": tool.describe(),
+                // What the arguments must actually carry, where the names alone
+                // do not say. Null for most tools; see `argument_guidance`.
+                "argumentNotes": tool.argument_guidance(),
                 // What decides whether the runtime may run it beside another.
                 "readOnly": tool.is_read_only(),
                 "approvalClass": spec.approval_class,
@@ -1635,6 +1638,22 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // needs the run's accumulated state — its calculations, its evidence, the
     // files it has produced — and the runner is built fresh per call, so it
     // cannot hold any of it.
+    // Where a producer that names its own file wrote it.
+    //
+    // `resolved_path` comes from the gateway, which fills it by resolving a
+    // `path` *argument*. Three producers have no such argument — `create_pdf`,
+    // `create_diagram` and `create_table` compose their own name from the title
+    // and the run's workspace — so for those the gateway has nothing to resolve
+    // and hands back `None`.
+    //
+    // That was silently dropping them. `remember_if_produced` returns early
+    // without a path, so a PDF was written to disk, reported to the model as
+    // "in this run's artifacts, where it can be previewed and opened", and then
+    // never recorded — leaving the chat with no file to draw and the promise in
+    // the tool's own reply unkept. The file was there the whole time; nothing
+    // had written down where.
+    let mut written: Option<std::path::PathBuf> = None;
+
     let outcome = match tool {
         ToolName::CreateDocx => {
             artifacts::create_docx(&call, resolved_path.as_deref(), &session, &tool_call)
@@ -1727,9 +1746,9 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         ToolName::NotebookAddSource => notebook_add_source(deps, &call, &session, &tool_call),
         ToolName::NotebookRemoveSource => notebook_remove_source(deps, &session, &tool_call),
         ToolName::CreateChart => create_chart(deps, &call, &tool_call),
-        ToolName::CreateDiagram => create_diagram(deps, &call, &tool_call),
-        ToolName::CreatePdf => create_pdf(deps, &call, &tool_call),
-        ToolName::CreateTable => create_table(deps, &call, &tool_call),
+        ToolName::CreateDiagram => create_diagram(deps, &call, &tool_call, &mut written),
+        ToolName::CreatePdf => create_pdf(deps, &call, &tool_call, &mut written),
+        ToolName::CreateTable => create_table(deps, &call, &tool_call, &mut written),
         _ => {
             // Built with everything the run has, rather than with the index
             // alone.
@@ -1807,7 +1826,16 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     }
 
     if outcome.is_ok() {
-        remember_if_produced(deps, &call.run_id, tool, resolved_path.as_deref(), &tool_call);
+        // The gateway's path when there was an argument to resolve, otherwise
+        // the one the producer wrote down itself. Neither is a guess: both name
+        // a file this process has just written.
+        remember_if_produced(
+            deps,
+            &call.run_id,
+            tool,
+            resolved_path.as_deref().or(written.as_deref()),
+            &tool_call,
+        );
     }
     record_call(deps, &call.run_id, tool.as_str(), &outcome);
     remember_outcome(deps, &call, tool, resolved_path.as_deref(), &outcome);
@@ -2682,6 +2710,9 @@ fn create_diagram(
     deps: &Arc<RuntimeDeps>,
     call: &CallParams,
     tool_call: &ToolCall,
+    // Set to the file this wrote. See the note at the `written` binding in
+    // `dispatch`.
+    written: &mut Option<std::path::PathBuf>,
 ) -> Result<String, String> {
     use crate::artifacts::diagram::{DiagramSpec, Direction, Edge, Node, Shape};
 
@@ -2761,6 +2792,8 @@ fn create_diagram(
     let (path, name) = artifact_path(deps, call, &title, "svg")?;
     std::fs::write(&path, svg.as_bytes())
         .map_err(|error| format!("the diagram could not be written: {error}"))?;
+    // After the write, for the reason given in `create_pdf`.
+    *written = Some(path);
 
     Ok(format!(
         "Drew \"{title}\" and saved it as {name}. Include the fence below in your reply so \
@@ -2860,6 +2893,10 @@ fn create_pdf(
     deps: &Arc<RuntimeDeps>,
     call: &CallParams,
     tool_call: &ToolCall,
+    // Set to the file this wrote, so the caller can record it. See the note at
+    // the `written` binding in `dispatch`: this tool takes no `path` argument,
+    // so the gateway has nothing to resolve and cannot report the path itself.
+    written: &mut Option<std::path::PathBuf>,
 ) -> Result<String, String> {
     use crate::artifacts::pdf::{Block, PdfSpec};
 
@@ -2880,6 +2917,9 @@ fn create_pdf(
     let size = bytes.len();
     std::fs::write(&path, bytes)
         .map_err(|error| format!("the PDF could not be written: {error}"))?;
+    // After the write, not before: a path recorded for a file that failed to
+    // write is a row in the chat pointing at nothing.
+    *written = Some(path);
 
     Ok(format!(
         "Wrote \"{title}\" as {name} ({size} bytes). It is in this run's artifacts, where it \
@@ -2892,6 +2932,9 @@ fn create_table(
     deps: &Arc<RuntimeDeps>,
     call: &CallParams,
     tool_call: &ToolCall,
+    // Set to the file this wrote. See the note at the `written` binding in
+    // `dispatch`.
+    written: &mut Option<std::path::PathBuf>,
 ) -> Result<String, String> {
     let title = tool_call.text("title").unwrap_or_default().trim().to_string();
     let header: Vec<String> = tool_call
@@ -2918,6 +2961,8 @@ fn create_table(
         .trim()
         .to_string();
     crate::artifacts::xlsx::write_table(&path, &title, &header, &rows, &classification)?;
+    // After the write, for the reason given in `create_pdf`.
+    *written = Some(path);
 
     // The same table as markdown, so the reader sees it in the reply rather
     // than only as a file they have to open.

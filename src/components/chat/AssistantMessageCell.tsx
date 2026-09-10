@@ -7,6 +7,7 @@ import {
   ChevronDown,
   CircleSlash,
   Copy,
+  Download,
   Eye,
   FileSpreadsheet,
   FileText,
@@ -16,6 +17,8 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { PdfView } from './PdfView';
 import {
   agentService,
   messageStatus,
@@ -173,6 +176,14 @@ interface AssistantMessageCellProps {
   }[];
   runSummary?: RunSummary | null;
   /**
+   * The files this message's run produced.
+   *
+   * Separate from `runSummary` deliberately: that arrives only while this
+   * message's inspector is open, and a deliverable must not depend on the
+   * inspector being open to be visible.
+   */
+  artifacts?: ArtifactReport[];
+  /**
    * What this turn has been doing, newest last.
    *
    * Keyed to this message by the reducer, never matched by position in the
@@ -209,6 +220,7 @@ export function AssistantMessageCell({
   isLive,
   activity,
   runSummary,
+  artifacts,
   progress,
   // Renamed on the way in. `reasoning` is already spoken for in this
   // component: `parseThinking` returns the inline <think> block under that
@@ -434,8 +446,20 @@ export function AssistantMessageCell({
             </button>
           )}
 
-          {runSummary && runSummary.artifacts.length > 0 && (
-            <ArtifactList runId={runSummary.runId} artifacts={runSummary.artifacts} />
+          {/*
+            Drawn from `artifacts`, which `ChatSurface` fetches for every run,
+            rather than from `runSummary`, which it supplies only while this
+            message's inspector is open. Conditioned on the summary, a produced
+            file appeared only after a click nothing prompted — the model would
+            say "saved as sum-of-2-numbers.pdf" and the chat would show no file.
+
+            The id comes from `message.runId` — the same field the "View
+            details" button below uses — for the same reason: the summary is
+            usually null here, so reading the id off it would leave the list
+            undrawable exactly when it is needed.
+          */}
+          {message.runId && artifacts && artifacts.length > 0 && (
+            <ArtifactList runId={message.runId} artifacts={artifacts} />
           )}
 
           {message.runId && onOpenInspector && (
@@ -565,6 +589,8 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<ArtifactPreview | 'loading' | 'error' | undefined>(undefined);
   const [problem, setProblem] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
   const presentation = artifactPresentation(artifact.kind);
   const Icon = GLYPH_ICONS[presentation.glyph];
 
@@ -573,6 +599,38 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
       await agentService.revealArtifact(runId, artifact.name);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  /**
+   * Saves a copy where the person chooses.
+   *
+   * The platform's own dialog decides the destination. This application never
+   * enumerates the filesystem to offer a list, and never picks a folder on the
+   * person's behalf — a produced file belongs to them, and where it goes is
+   * their decision to make in the picker their operating system already gives
+   * them for exactly this.
+   *
+   * A cancelled dialog returns null, which is not a failure and says nothing.
+   */
+  const saveAs = async () => {
+    setProblem(null);
+    try {
+      const destination = await save({
+        defaultPath: artifact.name,
+        title: `Save ${artifact.name}`,
+      });
+      if (!destination) return;
+
+      setSaving(true);
+      const bytes = await agentService.exportArtifact(runId, artifact.name, destination);
+      // Named rather than a bare tick: "saved" with no destination leaves the
+      // person hunting for a file they were just told exists somewhere.
+      setSaved(`Saved ${size(bytes)} to ${destination}`);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -607,12 +665,34 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
           <button type="button" className={styles.iconBtn} onClick={togglePreview} aria-label={open ? 'Hide preview' : 'Preview'} title={open ? 'Hide preview' : 'Preview'}>
             {open ? <ChevronDown size={12} /> : <Eye size={12} />}
           </button>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            onClick={saveAs}
+            disabled={saving}
+            aria-label={`Save ${artifact.name} as…`}
+            title="Save as…"
+          >
+            {saving ? <Loader2 size={12} className={styles.spin} /> : <Download size={12} />}
+          </button>
           <button type="button" className={styles.iconBtn} onClick={reveal} aria-label="Show in file manager" title="Show in file manager">
             <FolderOpen size={12} />
           </button>
         </div>
       </div>
-      {open && <ArtifactPreviewPane preview={preview} name={artifact.name} />}
+      {open && (
+        <ArtifactPreviewPane
+          preview={preview}
+          name={artifact.name}
+          runId={runId}
+        />
+      )}
+      {saved && (
+        <p className={styles.savedLine} role="status">
+          <Check size={12} />
+          <span>{saved}</span>
+        </p>
+      )}
       {problem && (
         <p className={styles.errorLine} role="alert">
           <AlertTriangle size={12} />
@@ -623,7 +703,77 @@ function ArtifactRow({ runId, artifact }: { runId: string; artifact: ArtifactRep
   );
 }
 
-function ArtifactPreviewPane({ preview, name }: { preview: ArtifactPreview | 'loading' | 'error' | undefined; name: string }) {
+/**
+ * A PDF, fetched as bytes and rendered.
+ *
+ * Its own component because it is the one preview whose payload does not come
+ * from `artifact_preview`. That command answers a PDF with no body on purpose
+ * — there is no PDF reader in the Rust process — so the pane asks for the file
+ * itself instead, and `PdfView` draws it.
+ *
+ * The fetch is deferred to the moment the pane opens rather than done with the
+ * preview, so a message listing four PDFs does not pull four documents over
+ * IPC for previews nobody expanded.
+ */
+function PdfPane({ runId, name }: { runId: string; name: string }) {
+  const [state, setState] = useState<
+    { status: 'loading' } | { status: 'ready'; base64: string } | { status: 'failed'; reason: string }
+  >({ status: 'loading' });
+
+  React.useEffect(() => {
+    let live = true;
+    setState({ status: 'loading' });
+
+    agentService
+      .artifactBytes(runId, name)
+      .then(bytes => {
+        if (live) setState({ status: 'ready', base64: bytes.base64 });
+      })
+      .catch(error => {
+        // The message carries the real reason — a file over the transfer cap
+        // reports its actual size and what to do instead — so it is shown
+        // rather than replaced with a generic line.
+        if (live) {
+          setState({
+            status: 'failed',
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [runId, name]);
+
+  if (state.status === 'loading') {
+    return (
+      <div className={styles.previewPane} aria-busy="true">
+        <Loader2 size={12} className={styles.spin} />
+        <span>Reading {name}…</span>
+      </div>
+    );
+  }
+  if (state.status === 'failed') {
+    return (
+      <div className={styles.previewPane}>
+        <CircleSlash size={12} />
+        <span>{state.reason}</span>
+      </div>
+    );
+  }
+  return <PdfView base64={state.base64} name={name} />;
+}
+
+function ArtifactPreviewPane({
+  preview,
+  name,
+  runId,
+}: {
+  preview: ArtifactPreview | 'loading' | 'error' | undefined;
+  name: string;
+  runId: string;
+}) {
   if (preview === undefined || preview === 'loading') {
     return (
       <div className={styles.previewPane} aria-busy="true">
@@ -639,6 +789,13 @@ function ArtifactPreviewPane({ preview, name }: { preview: ArtifactPreview | 'lo
         <span>Could not load a preview of {name}.</span>
       </div>
     );
+  }
+
+  // A PDF is the exception to the line below: `previewDisplay` can only decide
+  // what to do with the payload it is given, and Rust gives a PDF none. The
+  // file itself is fetched instead and rendered by pdf.js.
+  if (preview.kind === 'pdf') {
+    return <PdfPane runId={runId} name={name} />;
   }
 
   // What to draw is decided in `artifactPreview.ts`, against the shape Rust

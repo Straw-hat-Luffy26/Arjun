@@ -382,6 +382,21 @@ export type { ArtifactPreview, PreviewKind } from './artifactPreview';
 import type { ArtifactPreview } from './artifactPreview';
 
 /**
+ * A produced file's own bytes, exactly as `ArtifactBytes` in
+ * `commands/agent.rs` serialises it.
+ *
+ * Base64 rather than a `data:` URL, and rather than an array of numbers: the
+ * destination is a renderer that wants a typed array, a URL would only have to
+ * be parsed back off again, and Tauri renders `Vec<u8>` as a JSON array of
+ * integers — several times the wire cost of the same bytes encoded.
+ */
+export interface ArtifactBytes {
+  base64: string;
+  /** The size of the whole file on disk. */
+  sizeBytes: number;
+}
+
+/**
  * How a run ended.
  *
  * Mirrors `RunOutcome` in `src-tauri/src/agent_runtime/outcome.rs`, which is
@@ -1761,6 +1776,42 @@ export const agentService = {
    */
   previewArtifact(runId: string, name: string): Promise<ArtifactPreview> {
     return getBackendService().invoke<ArtifactPreview>('artifact_preview', { runId, name });
+  },
+
+  /**
+   * Copies a produced file to a destination the person picked themselves.
+   *
+   * `destination` comes from the platform's own save dialog, opened by the
+   * caller. It is not composed here and not derived from anything a model
+   * wrote: the only two strings this sends that a tool call could have
+   * influenced are `runId` and `name`, and Rust resolves those against the
+   * task record rather than against the filesystem.
+   *
+   * Resolves with the number of bytes written, so the caller can say what it
+   * saved rather than only that it finished.
+   */
+  exportArtifact(runId: string, name: string, destination: string): Promise<number> {
+    return getBackendService().invoke<number>('agent_export_artifact', {
+      runId,
+      name,
+      destination,
+    });
+  },
+
+  /**
+   * Fetches a produced file's own bytes, for a viewer that renders the file
+   * rather than a text extraction of it.
+   *
+   * Distinct from `previewArtifact`, which answers "what does this say" with
+   * text. This answers "give me the file", and exists for PDF: there is no PDF
+   * reader in the Rust process, so a preview of one carries no body at all.
+   *
+   * Rejects rather than resolving empty when the file is over the transfer cap,
+   * and the message carries the actual size. A viewer handed nothing cannot
+   * tell "too large" from "failed to read".
+   */
+  artifactBytes(runId: string, name: string): Promise<ArtifactBytes> {
+    return getBackendService().invoke<ArtifactBytes>('artifact_bytes', { runId, name });
   },
 
   // ─── Conversation methods (chat) ────────────────────────────────────

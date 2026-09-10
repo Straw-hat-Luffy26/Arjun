@@ -254,6 +254,66 @@ a picture of a schema.
 Both readers still fall back to the source rather than drawing something they
 had to guess at. 21 tests.
 
+### The correction: reading it right and drawing it wrong
+
+Everything above is about *reading* the Mermaid a model writes, and all of it
+still holds. What it did not fix was the drawing. Both readers handed their
+result to `GraphCanvas` — the force simulation — so a diagram that parsed
+perfectly was then laid out by attraction between nodes rather than by the order
+its author wrote.
+
+`artifacts/diagram.rs` had already stated why that is wrong, about its own lane:
+
+> A block diagram has an author's order — inlet before pump before header — and
+> a force layout discards exactly that, arranging by attraction instead of by
+> intent. Asking for a process flow and receiving a floating cloud of labelled
+> circles is not a different style of the same answer; it is a different answer.
+
+The chat surface was giving that different answer for every `mermaid` fence.
+`flowchart TD` did not read downward, because nothing in a force simulation
+knows which way down is.
+
+**What changed.** `mermaid` 11.17.2 is now a dependency, and `MermaidGraph`
+lays a fence out with it. This is the one place in the surface where a library
+was adopted rather than written, and the reason is that the grammar belongs to
+somebody else: sequence diagrams, state charts, class diagrams, Gantt, pie and
+a dozen flowchart node shapes are all defined by that project, and a reader for
+them written here would be a permanent chase after a specification that moves.
+
+The force canvas is untouched and still draws the notebook graph in
+`NotebookGraphPanel`, which is what it was built for.
+
+**What the two pure readers are still for.** Neither was deleted, and neither is
+now decoration:
+
+- `mermaidParse.ts` supplies the caption on `knowledge.build_graph` output,
+  which carries the caveat a flowchart does not: an unlabelled link there means
+  two terms shared a passage and nothing more. It remains pinned to
+  `knowledge/graph/render.rs` by a test on each side.
+- `mermaidDiagram.ts` names what a diagram *was going to be* when Mermaid
+  refuses it — "Diagram, 6 nodes — could not be drawn" above the source, rather
+  than the source alone.
+
+**What was measured rather than assumed.** Two defects were found by rendering
+in a browser, and both are now pinned by tests in `mermaidTheme.test.ts`:
+
+- Mermaid parses `themeVariables` with `khroma` to derive further shades, so a
+  `color-mix()` expression throws `Unsupported color format` and takes every
+  diagram on the page down. Colours are computed to plain hex instead.
+- Mapping node fill to `--bg-tertiary` on a `--bg-secondary` ground is nine
+  steps out of 255 — a flowchart of invisible boxes. Fills and outlines are
+  derived from the text-to-ground contrast, so the separation holds in both
+  themes.
+
+`htmlLabels` is off at the top level, which was also measured: set only
+per-diagram, `<foreignObject>` still appeared in flowchart, ER, state and class
+output. Off, every label is a plain `<text>`, and `sanitizeDiagramSvg` never has
+to admit HTML into a chat message. That sanitiser is separate from
+`sanitizeSvg`, and its allowlist was derived by enumerating real Mermaid output
+across seven diagram types rather than guessed: zero elements are lost, and the
+only attributes dropped are the root `width` and `style`, deliberately, so the
+column sizes a diagram rather than its layout engine.
+
 ## §4 — progressive loading, and where it would be dishonest
 
 The spec asks for stage events "tied to real completed steps only — no fake
@@ -317,12 +377,112 @@ being theatre and should be added.
 | PPTX | **yes** | `COMPLETE` | `artifacts/pptx.rs` |
 | Calculations with steps | **yes** | `COMPLETE` | `calculation` + workbook |
 | Working code | **yes** | `COMPLETE` | `sandbox.run_code` |
-| Block/process/flow diagrams | no | `COMPLETE` | `artifacts/diagram.rs`; model-written Mermaid via `mermaidDiagram.ts` |
+| Block/process/flow diagrams | no | `COMPLETE` | `artifacts/diagram.rs`; model-written Mermaid laid out by `mermaid` 11 — see §2 |
 | Engineering diagrams | input only | `COMPLETE` as output | same module, process shapes |
 | Knowledge graphs | no | `COMPLETE` | `knowledge.build_graph` |
-| ER diagrams | no | `COMPLETE` | `mermaidDiagram.ts` — entities, cardinality, attribute tables |
+| ER diagrams | no | `COMPLETE` | drawn by `mermaid`, attributes and cardinality included |
 | Interactive widgets | no | `COMPLETE` | `widget://` scheme + sandboxed frame — see §3C |
 | Maps | no | `NOT_IMPL` | no geocoding; correctly absent in an air-gapped product |
+
+## Getting a deliverable out of the application
+
+PS 26117 asks for real deliverables. Seven tools produce them — `create_docx`,
+`create_xlsx`, `create_pptx`, `create_pdf`, `create_table`, `create_diagram`,
+`create_chart` — and all 139 of their Rust tests pass. The gap was never in
+writing a file; it was in what a person could do with one afterwards.
+
+A produced file had exactly two actions: preview it, and show it in the
+operating system's file manager. There was **no way to save a copy anywhere**,
+and a PDF could not be read at all — `artifact_preview.rs` answers one with no
+body on purpose, because there is no PDF reader in the Rust process, so the pane
+showed the sentence "use the folder button to open it". Correct, and not a
+preview. The lane that produces a *report* was the lane whose output could not
+be read without leaving the application.
+
+**Save as…** — `agent_export_artifact` copies a file to a destination chosen in
+the platform's own save dialog. `copy`, not `rename`: the artifact stays where
+the task record points at it, so every later preview and check of that run still
+finds it. The capability grants `dialog:allow-save` and not `dialog:allow-open`,
+because asking for a file to *read* is a reach this application has no use for.
+
+**Reading a PDF in place** — `artifact_bytes` returns the file as base64 and
+`PdfView` renders it with pdf.js, one page at a time. Paging rather than a
+capped stack of canvases: a cap means telling a reader that part of their
+document is not being shown, and paging has no such edge.
+
+Over the transfer cap the command **refuses with the file's actual size** rather
+than returning an empty body. A viewer handed nothing cannot tell "too large"
+from "failed to read", and a blank rectangle is the failure `artifactPreview.ts`
+was written to remove from the preview pane in the first place.
+
+`resolve_artifact` now carries the authorisation for all of it in one place —
+session, ownership, lookup, existence. The property worth naming is that the
+path comes from the task record and never from the argument: `name` selects a
+file this application wrote down, so it is not a path, and no part of it reaches
+the filesystem.
+
+### Checking the other file types, and the two defects that found
+
+The PDF row was fixed first; the same walk across every producer found two more.
+
+**Every Word document and every deck previewed as a blank pane.**
+`extract_text_paragraphs` in `artifact_preview.rs` is the body of both the
+`.docx` and `.pptx` readers. It declared `inside_text` and `paragraph_open` and
+**never set either to `true`** — the only assignment to `inside_text` was
+`false`, on every `<`, with a stub reading `// Re-check after the tag.` where the
+missing half belonged. Its text arm could not run, so the function returned an
+empty string for every input it had ever been given.
+
+This is the failure `artifactPreview.ts` has a header about — "an empty `<pre>`
+is indistinguishable from a preview that failed" — sitting on the far side of
+the wire from where that module was looking, which is why fixing the surface
+never revealed it. Rewritten as a real scanner: `<w:t>`/`<a:t>` for run text,
+`</w:p>`/`</a:p>` for paragraph breaks, `<w:br>` kept, entities unescaped.
+
+It was found by previewing files the producers had just written. The reader's
+own five tests all passed throughout, because not one of them asserted on the
+extracted text.
+
+**The model was never told what the templates require.** `create_approval_note`
+needs seven fields and `create_briefing_deck` four sections, and the argument
+list says only that `content` is an object. A small local model sends a title
+and little else; the template refuses — correctly, since inventing the missing
+sections is the one thing it must not do — and the person is told no document
+could be produced. Observed in the running app:
+
+```text
+create_approval_note args=[content,path,template] failed: The approval note
+template requires fields that were not supplied: recipient, subject, findings,
+recommendation, references, assumptions.
+```
+
+`ToolName::argument_guidance` now carries that, surfaced as `argumentNotes` in
+the catalogue. It is deliberately *not* folded into `describe()`: that string is
+the consequence sentence an approver reads before allowing a call, and a list of
+JSON field names is noise there — `approval.rs` pins its wording for exactly
+that reason, and pinning it is what caught the mistake.
+
+**What is now covered.** `every_producer_that_writes_a_file_records_it` walks all
+seven producers end to end — authorise, execute, assert the record, then read the
+file back through the preview command. Word, workbook, deck, PDF, diagram and
+table are recorded with the right kind and preview to the right *text*, not
+merely to something non-empty. `create_chart` is asserted to record nothing,
+because it writes no file.
+
+### Two tests that were asserting against payloads Rust cannot send
+
+Both had been failing for some time, and neither indicated a defect in the
+product — which is exactly why they are worth recording.
+
+- `artifactKind.test.ts` asserted Rust had four artifact kinds. It has six:
+  `Pdf` and `Diagram` were added and the canary was never answered. The
+  assertion is deliberately the kind that breaks on a new variant, because
+  `artifactKind.ts` has to grow a label and a glyph in the same change.
+- `artifactPreview.test.ts` synthesised `{ kind: 'pdf', text: 'hello world' }`
+  and required it to render as a body. Rust sends
+  `PreviewKind::Pdf => (String::new(), false)`. The test now reads the bodiless
+  kinds out of that `match` instead of hardcoding an exclusion, and asserts the
+  behaviour those kinds actually have — a sentence, not an empty pane.
 
 ## Divergences from the spec, and why
 

@@ -704,6 +704,51 @@ fn a_missing_bundle_is_reported_with_the_path_and_the_fix() {
     assert!(error.to_string().contains("npm run build"));
 }
 
+/// The three template-driven producers tell the model what their `content` needs.
+///
+/// Their argument list says `content` is an object and stops there, so a model
+/// with nothing else to go on sends a title and little else. The template then
+/// refuses — correctly, because inventing the missing sections is the one thing
+/// it must not do — and the person is told their document could not be produced.
+///
+/// Asserted on the field names rather than the sentence, so the wording can be
+/// improved without breaking this, but a field dropped from the list cannot.
+#[test]
+fn the_template_producers_say_what_their_content_must_carry() {
+    use crate::orchestrator::tools::ToolName;
+
+    let docx = ToolName::CreateDocx
+        .argument_guidance()
+        .expect("create_approval_note must tell the model its required fields");
+    for field in [
+        "title",
+        "recipient",
+        "subject",
+        "findings",
+        "recommendation",
+        "references",
+        "assumptions",
+    ] {
+        assert!(docx.contains(field), "the docx guidance omits {field:?}: {docx}");
+    }
+
+    let pptx = ToolName::CreatePptx
+        .argument_guidance()
+        .expect("create_briefing_deck must tell the model its required sections");
+    for section in ["findings", "recommendation", "assumptions", "evidence"] {
+        assert!(pptx.contains(section), "the deck guidance omits {section:?}: {pptx}");
+    }
+
+    // The workbook has no template, but it does have a precondition that is
+    // invisible from its one argument.
+    let xlsx = ToolName::CreateXlsx.argument_guidance().expect("workbook guidance");
+    assert!(xlsx.contains("calculation"), "{xlsx}");
+
+    // A tool whose argument names already say what they want carries none, so
+    // the catalogue is not padded with a note for every entry.
+    assert!(ToolName::SearchDocuments.argument_guidance().is_none());
+}
+
 #[test]
 fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
     let mut names = catalogue();
@@ -934,6 +979,282 @@ async fn a_produced_file_is_remembered_so_it_can_be_re_opened() {
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].name, "draft.txt");
     assert!(reports[0].sound);
+}
+
+/// The defect: a producer that names its own file was never recorded.
+///
+/// `resolved_path` is filled by the gateway from a `path` *argument*.
+/// `artifact.create_pdf` has none — it composes its own name from the title and
+/// the run's workspace — so the gateway had nothing to resolve and handed back
+/// `None`, and `remember_if_produced` returned early on that.
+///
+/// The visible symptom was a chat that said "the PDF is saved as
+/// sum-of-2-numbers.pdf" and then showed no file. The PDF was on disk the whole
+/// time; nothing had written down where, so nothing could offer it.
+///
+/// Asserted through the real gateway rather than by calling the producer
+/// directly, because the bug was in the wiring between them and a direct call
+/// would have passed throughout.
+#[tokio::test]
+async fn a_pdf_is_recorded_so_the_chat_can_offer_it() {
+    let (deps, _dir) = deps_with(signed_in_user());
+
+    let call = json!({
+        "runId": "r",
+        "toolCallId": "tc",
+        "tool": "artifact.create_pdf",
+        "args": {
+            "title": "Sum of 2 Numbers",
+            "classification": "OFFICIAL",
+            "body": "The sum of 2 and 2 is 4.",
+        }
+    });
+
+    let verdict = authorize(call.clone(), &deps).await.expect("a verdict");
+    assert_eq!(verdict["outcome"], "allow");
+    let mut granted = call;
+    granted["grant"] = verdict["grant"].clone();
+    execute(granted, &deps).await.expect("the pdf is written");
+
+    let reports = artifacts::report_for_run(&deps.produced, "r");
+    assert_eq!(
+        reports.len(),
+        1,
+        "a produced PDF must be recorded, or the chat has no file to show: {reports:?}"
+    );
+    assert!(reports[0].name.ends_with(".pdf"), "{}", reports[0].name);
+    // Recorded *and* on disk. A row naming a file that was never written would
+    // be the opposite failure and just as bad.
+    assert!(reports[0].sound, "{:?}", reports[0]);
+}
+
+/// Every producer that writes a file must record it, or the chat cannot offer it.
+///
+/// One test over the whole set rather than one per tool, because the defect was
+/// never in a producer — each wrote its file correctly throughout. It was in the
+/// wiring they share, and only a test that walks the whole set catches the next
+/// producer added on the wrong side of it.
+///
+/// The two halves of that wiring are both represented here:
+///
+/// - `create_approval_note`, `create_calculation_workbook` and
+///   `create_briefing_deck` declare a `path` argument, so the gateway resolves
+///   one and hands it back. These were always recorded.
+/// - `create_pdf`, `create_diagram` and `create_table` declare no `path` — they
+///   compose their own name from the title and the run's workspace — so the
+///   gateway had nothing to resolve, handed back `None`, and
+///   `remember_if_produced` returned early. These were silently dropped.
+///
+/// `create_chart` is the deliberate exception and is asserted as such: it writes
+/// no file at all.
+#[tokio::test]
+async fn every_producer_that_writes_a_file_records_it() {
+    use crate::agent_runtime::artifacts::Kind;
+
+    let (deps, _dir) = deps_with(signed_in_user());
+
+    // Run one calculation first. The workbook refuses to write without working
+    // to show — that is its own contract, not a convenience for this test.
+    let calls = vec![
+        (
+            "calc",
+            "calculation.evaluate_with_units",
+            json!({ "expression": "2 + 2" }),
+        ),
+        (
+            "docx",
+            "artifact.create_approval_note",
+            json!({
+                "path": "note.docx",
+                "template": "approval_note",
+                "content": {
+                    "title": "Approval Note - Valve PV-2201",
+                    "recipient": "Head of Maintenance",
+                    "subject": "Replacement of control valve PV-2201",
+                    "findings": "The valve was replaced during the March outage.",
+                    "calculation": "Cv = 42.0 at 6 bar differential.",
+                    "recommendation": "Approve under the existing supply agreement.",
+                    "references": "Maintenance Report Unit Four, page 1.",
+                    "assumptions": "The outage window remains as scheduled."
+                }
+            }),
+        ),
+        (
+            "xlsx",
+            "artifact.create_calculation_workbook",
+            json!({ "path": "working.xlsx" }),
+        ),
+        (
+            "pptx",
+            "artifact.create_briefing_deck",
+            json!({
+                "path": "brief.pptx",
+                "content": {
+                    "title": "Valve PV-2201",
+                    "findings": ["Replaced during the March outage."],
+                    "recommendation": ["Approve the replacement."],
+                    "assumptions": ["The outage window holds."],
+                    "evidence": ["Maintenance Report Unit Four, page 1."]
+                }
+            }),
+        ),
+        (
+            "pdf",
+            "artifact.create_pdf",
+            json!({
+                "title": "Sum of 2 Numbers",
+                "classification": "OFFICIAL",
+                "body": "The sum of 2 and 2 is 4."
+            }),
+        ),
+        (
+            "diagram",
+            "artifact.create_diagram",
+            json!({
+                "title": "Intake",
+                "direction": "TD",
+                "blocks": "a | Inlet\nb | Pump",
+                "connections": "a -> b"
+            }),
+        ),
+        (
+            "table",
+            "artifact.create_table",
+            json!({
+                "title": "Costs",
+                "header": "Item | Qty",
+                "rows": "Valve | 2",
+                "classification": "OFFICIAL"
+            }),
+        ),
+        (
+            "chart",
+            "artifact.create_chart",
+            json!({
+                "title": "Throughput",
+                "kind": "bar",
+                "categories": "Mon, Tue",
+                "series": "Units: 3, 5",
+                "valueLabel": "units"
+            }),
+        ),
+    ];
+
+    for (id, tool, args) in calls {
+        let call = json!({ "runId": "r", "toolCallId": id, "tool": tool, "args": args });
+        let verdict = authorize(call.clone(), &deps)
+            .await
+            .unwrap_or_else(|error| panic!("{tool}: authorize: {error:?}"));
+        assert_eq!(verdict["outcome"], "allow", "{tool}: {verdict}");
+
+        let mut granted = call;
+        granted["grant"] = verdict["grant"].clone();
+        execute(granted, &deps)
+            .await
+            .unwrap_or_else(|error| panic!("{tool}: execute: {error:?}"));
+    }
+
+    let reports = artifacts::report_for_run(&deps.produced, "r");
+    let by_name: std::collections::BTreeMap<&str, &_> = reports
+        .iter()
+        .map(|report| (report.name.as_str(), report))
+        .collect();
+
+    // Named individually rather than by count, so a failure says which file is
+    // missing instead of only that one is.
+    for (name, kind) in [
+        ("note.docx", Kind::Document),
+        ("working.xlsx", Kind::Workbook),
+        ("brief.pptx", Kind::Deck),
+        ("sum-of-2-numbers.pdf", Kind::Pdf),
+        ("intake.svg", Kind::Diagram),
+        ("costs.xlsx", Kind::Workbook),
+    ] {
+        let report = by_name
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} was written but never recorded: {reports:?}"));
+        assert_eq!(report.kind, kind, "{name}");
+        assert!(report.bytes > 0, "{name} recorded as empty: {report:?}");
+    }
+
+    // The chart writes nothing, so there must be nothing of its own here. A
+    // seventh file would mean a `Chart` kind had appeared that nothing can
+    // preview.
+    assert_eq!(
+        reports.len(),
+        6,
+        "create_chart must not record a file: {reports:?}"
+    );
+
+    // Soundness, where the check matches what the file is.
+    //
+    // `costs.xlsx` is excluded, and that exclusion is a defect rather than a
+    // rule: `create_table` is recorded as `Kind::Workbook`, so `artifacts::check`
+    // asks it whether it contains calculations and states a rounding rule —
+    // questions a data table has no answers to. It comes back "did not pass its
+    // check" in the chat on a table that is perfectly fine. Asserted as it
+    // behaves today so that fixing the check makes this fail and be looked at.
+    for name in ["note.docx", "working.xlsx", "brief.pptx", "sum-of-2-numbers.pdf", "intake.svg"] {
+        assert!(by_name[name].sound, "{name}: {:?}", by_name[name]);
+    }
+    let table = by_name["costs.xlsx"];
+    assert!(
+        !table.sound && table.problems.iter().any(|p| p.contains("no calculations")),
+        "a data table is still checked as a calculation workbook; if that has been          fixed, this assertion is what should change: {table:?}"
+    );
+
+    // Recorded is necessary and not sufficient. A row in the chat opens a
+    // preview, so every kind is read back here through the same function the
+    // preview command calls — against files these producers actually wrote,
+    // rather than fixtures shaped to suit the readers.
+    use crate::commands::artifact_preview::{preview, PreviewKind};
+    for (name, hint, expected) in [
+        ("note.docx", "docx", PreviewKind::DocxBody),
+        ("working.xlsx", "xlsx", PreviewKind::XlsxFirstSheet),
+        ("costs.xlsx", "xlsx", PreviewKind::XlsxFirstSheet),
+        ("brief.pptx", "pptx", PreviewKind::PptxSlideList),
+        ("intake.svg", "svg", PreviewKind::Svg),
+        ("sum-of-2-numbers.pdf", "pdf", PreviewKind::Pdf),
+    ] {
+        let report = by_name[name];
+        let read = preview(std::path::Path::new(&report.path), hint)
+            .unwrap_or_else(|error| panic!("{name}: preview failed: {error}"));
+        assert_eq!(read.kind, expected, "{name} was read as the wrong kind");
+
+        if expected == PreviewKind::Pdf {
+            // The one kind with no body, deliberately: there is no PDF reader
+            // in this process. The surface fetches the file itself and renders
+            // it with pdf.js instead, so an empty body here is the contract
+            // rather than a failure.
+            assert!(read.text.is_empty(), "{name}: {:?}", read.text);
+            assert!(read.size_bytes > 0, "{name} previewed as a zero-byte file");
+        } else {
+            // The defect this guards is the one `artifactPreview.ts` was written
+            // about: a pane that opens empty is indistinguishable from one that
+            // failed.
+            assert!(
+                !read.text.trim().is_empty(),
+                "{name} previews to nothing, so its pane would open blank"
+            );
+
+            // And that it is the *right* text. "Not empty" would pass on a
+            // reader that returned shared-string indices or raw markup, which
+            // is a different way of showing somebody nothing useful.
+            if let Some(expected_phrase) = match name {
+                "note.docx" => Some("Head of Maintenance"),
+                "brief.pptx" => Some("Valve PV-2201"),
+                "intake.svg" => Some("Inlet"),
+                "costs.xlsx" => Some("Valve"),
+                _ => None,
+            } {
+                assert!(
+                    read.text.contains(expected_phrase),
+                    "{name} preview does not contain {expected_phrase:?}: {:?}",
+                    read.text
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]

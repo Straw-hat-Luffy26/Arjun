@@ -46,10 +46,13 @@
   "dependencies": {
     "@react-three/fiber": "^9.7.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "2.6.0",
     "@tauri-apps/plugin-log": "^2.9.0",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-sql": "^2.4.0",
     "lucide-react": "^1.28.0",
+    "mermaid": "^11.17.2",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.18.2",

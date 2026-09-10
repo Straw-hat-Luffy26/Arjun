@@ -50,6 +50,26 @@ function rustPreviewFields(): string[] {
   );
 }
 
+/**
+ * The kinds Rust deliberately answers with no body at all.
+ *
+ * Read out of the `match` in `preview()` rather than listed here, because a
+ * list here would be a second copy of a decision Rust owns — the drift this
+ * whole file exists to catch.
+ *
+ * `PreviewKind::Pdf => (String::new(), false)` is the interesting one. There is
+ * no PDF reader in the Rust process, so a PDF preview carries its kind and its
+ * size and nothing else, and the surface offers to open it instead. A test that
+ * synthesised `{ kind: 'pdf', text: 'hello world' }` and demanded a body was
+ * asserting against a payload Rust cannot produce.
+ */
+function rustBodilessKinds(): string[] {
+  const source = readFileSync(PREVIEW_RS, 'utf8');
+  return [
+    ...source.matchAll(/PreviewKind::(\w+) => \(String::new\(\), false\)/g),
+  ].map(match => camel(match[1]));
+}
+
 function preview(over: Partial<ArtifactPreview> = {}): ArtifactPreview {
   return { kind: 'text', text: 'hello world', truncated: false, sizeBytes: 11, ...over };
 }
@@ -73,14 +93,43 @@ describe('artifact previews: the surface reads the fields Rust sends', () => {
     expect([...PREVIEW_KINDS].sort()).toEqual(rustPreviewKinds().sort());
   });
 
-  it('draws the body of every kind Rust can send', () => {
-    // Not one of them may come back empty-handed for a preview that has text.
+  it('draws the body of every kind Rust sends one for', () => {
+    const bodiless = new Set(rustBodilessKinds());
+
     for (const kind of rustPreviewKinds()) {
-      if (kind === 'unsupported' || kind === 'image') continue;
+      // An image's `text` is a `data:` URL rather than a body, and has its own
+      // test below. The rest are skipped on Rust's own authority: it sends them
+      // with no body, so there is nothing here for this assertion to be about.
+      if (kind === 'image' || bodiless.has(kind)) continue;
+
       const display = previewDisplay(preview({ kind: kind as PreviewKind }));
       expect(display.layout, kind).toBe('body');
       if (display.layout === 'body') {
         expect(display.body, kind).toBe('hello world');
+      }
+    }
+  });
+
+  it('says in words what a kind with no body is, rather than showing a blank pane', () => {
+    const bodiless = rustBodilessKinds();
+
+    // The guard on the parser above. If that regex stopped matching, the loop
+    // in the previous test would skip nothing and this would skip everything —
+    // so both directions are pinned, and the two kinds Rust sends bodiless
+    // today are named.
+    expect(bodiless).toContain('pdf');
+    expect(bodiless).toContain('unsupported');
+
+    for (const kind of bodiless) {
+      // Empty text, which is what Rust actually puts on the wire for these.
+      const display = previewDisplay(
+        preview({ kind: kind as PreviewKind, text: '', sizeBytes: 4096 }),
+      );
+      expect(display.layout, kind).toBe('notice');
+      if (display.layout === 'notice') {
+        // An empty `<pre>` is indistinguishable from a preview that failed;
+        // a sentence is not. This is the defect the module header describes.
+        expect(display.message.length, kind).toBeGreaterThan(0);
       }
     }
   });

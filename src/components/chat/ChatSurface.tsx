@@ -37,11 +37,13 @@ import {
   useAdoptedRun,
   useContextLedger,
   useConversationActivity,
+  useRunArtifacts,
   useTaskRecord,
 } from '../run/runAdopt';
 import { ChatHeader } from './ChatHeader';
 import { TaskPanel } from './TaskPanel';
 import {
+  type ArtifactReport,
   type ChatMessage,
   type Classification,
   type RunSummary,
@@ -308,6 +310,14 @@ export function ChatSurface({
     return null;
   }, [activeRunId, conversation]);
   const activityByRun = useConversationActivity(runIds, liveRunId);
+  /*
+    Fetched for every run, not only the inspected one. The artifact list used to
+    hang off `runSummary`, which is supplied below only while an inspector is
+    open — so a produced file was invisible until somebody clicked "View
+    details" on that exact message. A deliverable is part of the answer, so it
+    is fetched like one.
+  */
+  const artifactsByRun = useRunArtifacts(runIds, liveRunId);
 
   // The newest assistant message is the only one that carries the orb.
   // One avatar per screen reads as the assistant speaking; one per cell
@@ -448,6 +458,7 @@ export function ChatSurface({
                   ? taskSummary ?? null
                   : null
               }
+              artifacts={artifactsByRun.get(runsByMessageId.get(m.id) ?? '')}
               onOpenInspector={runId => setInspectorRunId(runId)}
               /*
                * A widget asking for a turn. Routed through the same `send` the
@@ -582,6 +593,8 @@ interface MessageRowProps {
   runId: string | null;
   activity?: Activity[];
   runSummary?: RunSummary | null;
+  /** The files this message's run produced. Drawn regardless of the inspector. */
+  artifacts?: ArtifactReport[];
   /** Only the newest assistant cell draws the orb. */
   showAvatar?: boolean;
   onOpenInspector: (runId: string) => void;
@@ -600,6 +613,7 @@ function MessageRow({
   runId,
   activity,
   runSummary,
+  artifacts,
   showAvatar,
   onOpenInspector,
   onRetry,
@@ -631,6 +645,7 @@ function MessageRow({
       reasoning={reasoning}
       activity={runId ? activity : undefined}
       runSummary={runSummary ?? null}
+      artifacts={artifacts}
       showAvatar={showAvatar}
       onOpenInspector={runId ? () => onOpenInspector(runId) : undefined}
       onRetry={composerDisabled ? undefined : onRetry}

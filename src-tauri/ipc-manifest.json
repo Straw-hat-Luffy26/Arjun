@@ -57,6 +57,11 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "agent_export_artifact": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called from src/. Copies a produced file to a destination the person chose in the OS save dialog."
+    },
     "agent_get_conversation": {
       "owner": "chat",
       "consumer": "frontend",
@@ -166,6 +171,11 @@
       "owner": "platform",
       "consumer": "frontend",
       "note": "Called from src/."
+    },
+    "artifact_bytes": {
+      "owner": "agent",
+      "consumer": "frontend",
+      "note": "Called from src/. Returns a produced file's bytes as base64 so the chat can render a PDF in place."
     },
     "artifact_preview": {
       "owner": "agent",
@@ -427,25 +437,20 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "notebook_rename": {
-      "owner": "notebook",
-      "consumer": "frontend",
-      "note": "Called from src/. Renames a notebook the signed-in person owns."
-    },
     "notebook_delete": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. Deletes a notebook and the graph built over it; the documents are untouched."
     },
-    "notebook_remove_document": {
-      "owner": "notebook",
-      "consumer": "frontend",
-      "note": "Called from src/. Takes one document out of a notebook, with the graph evidence that came from it."
-    },
     "notebook_documents": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/."
+    },
+    "notebook_extract_relations": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Names a notebook's edges with Babelscape/rebel-large in a CPU sidecar. It may only name an edge the statistical pass already found, never add one, and a relation outside a curated Wikidata subset is dropped and counted."
     },
     "notebook_graph": {
       "owner": "notebook",
@@ -462,15 +467,20 @@
       "consumer": "frontend",
       "note": "Called from src/. The passages behind one node, so the interface can answer 'why do you think that?'."
     },
+    "notebook_remove_document": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Takes one document out of a notebook, with the graph evidence that came from it."
+    },
+    "notebook_rename": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Renames a notebook the signed-in person owns."
+    },
     "notebook_render_subgraph": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. Renders a chosen subgraph as Markdown; the frontend attaches it to a chat turn through the ordinary attachment path, which gives it a content address, a budget and pinning."
-    },
-    "notebook_extract_relations": {
-      "owner": "notebook",
-      "consumer": "frontend",
-      "note": "Called from src/. Names a notebook's edges with Babelscape/rebel-large in a CPU sidecar. It may only name an edge the statistical pass already found, never add one, and a relation outside a curated Wikidata subset is dropped and counted."
     },
     "notebook_type_graph": {
       "owner": "notebook",

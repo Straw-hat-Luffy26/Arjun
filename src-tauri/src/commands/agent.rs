@@ -4531,6 +4531,158 @@ pub async fn artifact_preview(
         .map_err(|e| format!("could not preview {name}: {e}"))
 }
 
+/// Finds one of a finished task's files, with the checks every caller needs.
+///
+/// The important property is the one `agent_reveal_artifact` states in its own
+/// words and this makes structural: **the path comes from the record, never
+/// from the argument.** `name` selects a file the application already wrote
+/// down; it is not a path, and no part of it reaches the filesystem. A caller
+/// passing `../../../etc/passwd` as `name` gets "is not one of that task's
+/// files", because nothing is composed — a lookup either matches a recorded
+/// name or it does not.
+///
+/// Written when the export and viewer commands were added. Three commands each
+/// repeating a four-step authorisation dance is three chances for one of them
+/// to be written with only three of the steps.
+fn resolve_artifact(
+    app: &AppHandle,
+    run_id: &str,
+    name: &str,
+    session: &State<'_, CurrentSession>,
+) -> Result<(std::path::PathBuf, crate::agent_runtime::artifacts::Kind), String> {
+    let signed_in = require_session(session)?;
+    let record = tasks::load(&app_data_dir(app)?, run_id, None)?;
+    if !may_read(&signed_in, &record.user_id) {
+        return Err("That task was run by somebody else.".to_string());
+    }
+    let artifact = record
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.name == name)
+        .ok_or_else(|| format!("{name} is not one of that task's files."))?;
+
+    let path = std::path::PathBuf::from(&artifact.path);
+    if !path.exists() {
+        return Err(format!("{name} is no longer where the task wrote it."));
+    }
+    Ok((path, artifact.kind))
+}
+
+/// Copies a produced file to a destination the person chose themselves.
+///
+/// ## Why the destination is not validated against an allowlist
+///
+/// It arrives from the operating system's own save dialog, opened by the
+/// surface in response to a click. The person picked that folder; refusing it
+/// because it sits outside some directory this application prefers would be
+/// overriding the one party entitled to decide where their own file goes.
+///
+/// What *is* checked is that the destination names a file rather than a
+/// directory, and that its folder still exists — both of which produce a
+/// clearer failure here than an `io::Error` would after the fact.
+///
+/// The source is resolved by [`resolve_artifact`], so the file being copied is
+/// always one this application recorded writing.
+#[tauri::command]
+pub async fn agent_export_artifact(
+    app: AppHandle,
+    run_id: String,
+    name: String,
+    destination: String,
+    session: State<'_, CurrentSession>,
+) -> Result<u64, String> {
+    let (source, _) = resolve_artifact(&app, &run_id, &name, &session)?;
+
+    if destination.trim().is_empty() {
+        return Err("No destination was chosen.".to_string());
+    }
+    let target = std::path::PathBuf::from(&destination);
+    if target.is_dir() {
+        return Err(format!(
+            "{destination} is a folder. Choose a file name to save {name} as."
+        ));
+    }
+    match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() && !parent.exists() => {
+            return Err(format!("{} no longer exists.", parent.display()));
+        }
+        _ => {}
+    }
+
+    // `copy` rather than `rename`: the artifact stays in the run's workspace,
+    // where the task record still points at it. Moving it would leave every
+    // later preview and check of that run looking at a file that is gone.
+    std::fs::copy(&source, &target)
+        .map_err(|error| format!("{name} could not be saved: {error}"))
+}
+
+/// A produced file's own bytes, for a viewer that renders the file rather than
+/// a text extraction of it.
+///
+/// Separate from [`artifact_preview`], which answers "what does this say" with
+/// text a `<pre>` can hold. This answers "give me the file", and exists because
+/// a PDF has no useful text-extraction path in this process — the preview says
+/// so in words, which was honest and still left a produced report unreadable
+/// without leaving the application.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactBytes {
+    /// Standard base64, with no `data:` prefix.
+    ///
+    /// Not a data URL: the surface hands these bytes to a renderer as a typed
+    /// array, and a URL would only have to be parsed back off again. The image
+    /// preview does return a data URL, because there the destination really is
+    /// an `<img src>`.
+    pub base64: String,
+    /// The size of the whole file, which is what the caller reports on refusal.
+    pub size_bytes: u64,
+}
+
+/// How large a file may be before it is refused rather than sent over IPC.
+///
+/// Every byte here is base64-encoded into a JSON string and passed through the
+/// webview bridge, so the wire cost is about a third more than the file itself.
+/// Sixteen megabytes is far beyond anything `create_pdf` produces and still well
+/// short of the size at which the bridge becomes the slowest thing on screen.
+const ARTIFACT_BYTES_MAX: u64 = 16 * 1024 * 1024;
+
+/// Returns a produced file's bytes so the surface can render it in place.
+///
+/// Refuses a file over [`ARTIFACT_BYTES_MAX`] with its actual size, rather than
+/// returning an empty body. A viewer handed nothing cannot tell a file that was
+/// too large from one that failed to read, and the person is left looking at a
+/// blank rectangle — the exact failure `artifactPreview.ts` was written to
+/// remove from the preview pane.
+#[tauri::command]
+pub async fn artifact_bytes(
+    app: AppHandle,
+    run_id: String,
+    name: String,
+    session: State<'_, CurrentSession>,
+) -> Result<ArtifactBytes, String> {
+    use base64::Engine as _;
+
+    let (path, _) = resolve_artifact(&app, &run_id, &name, &session)?;
+
+    let size_bytes = std::fs::metadata(&path)
+        .map_err(|error| format!("{name} could not be read: {error}"))?
+        .len();
+    if size_bytes > ARTIFACT_BYTES_MAX {
+        return Err(format!(
+            "{name} is {:.1} MB, which is too large to open in the chat. Use Save as… to \
+             write it somewhere and open it there.",
+            size_bytes as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("{name} could not be read: {error}"))?;
+    Ok(ArtifactBytes {
+        base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        size_bytes,
+    })
+}
+
 /// Opens a directory in the platform's file manager.
 fn open_folder(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]

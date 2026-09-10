@@ -52,10 +52,26 @@ function rustLabels(): Map<string, string> {
 }
 
 describe('artifact kinds: the surface can draw everything Rust produces', () => {
-  it('finds the four kinds in the Rust source', () => {
-    // If this fails the parser below is wrong, and every other test in this
-    // file would pass for the wrong reason.
-    expect(rustKinds()).toEqual(['Document', 'Workbook', 'Deck', 'Text']);
+  it('finds every kind in the Rust source', () => {
+    const kinds = rustKinds();
+
+    // Two assertions doing different jobs.
+    //
+    // The first is the parser guard: a regex that matched nothing, or that
+    // matched every capitalised line in the file, would make every other test
+    // here pass for the wrong reason.
+    expect(kinds.length).toBeGreaterThanOrEqual(4);
+    expect(kinds).toContain('Document');
+    expect(kinds).toContain('Text');
+
+    // The second is the canary, and it is meant to break. A variant added in
+    // Rust should be looked at by a person here rather than absorbed silently,
+    // because `artifactKind.ts` has to grow a label and a glyph for it in the
+    // same change — that pairing is the whole reason this file exists.
+    //
+    // It has already done its job once: `Pdf` and `Diagram` were added in Rust
+    // and this failed, which is the correct outcome. The list is now six.
+    expect(kinds).toEqual(['Document', 'Workbook', 'Deck', 'Pdf', 'Diagram', 'Text']);
   });
 
   it('knows every kind Rust can send', () => {

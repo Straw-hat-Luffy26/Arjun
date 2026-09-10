@@ -3,6 +3,7 @@ import {
   agentService,
   listenAttachmentContext,
   type AgentEventEnvelope,
+  type ArtifactReport,
   type AttachmentContextEvent,
   type CompactionRecord,
   type ContextLedgerRecord,
@@ -208,6 +209,91 @@ export function useConversationActivity(
       teardown?.();
     };
   }, [liveRunId]);
+
+  return byRun;
+}
+
+/**
+ * The files every run in a conversation produced, keyed by run id.
+ *
+ * ## Why this exists rather than reading `runSummary`
+ *
+ * The chat cell already had an artifact list, and it drew nothing. It was
+ * conditioned on `runSummary`, which `ChatSurface` supplies only for the run
+ * whose inspector is open:
+ *
+ * ```tsx
+ * runSummary={
+ *   inspectorRunId && runsByMessageId.get(m.id) === inspectorRunId
+ *     ? taskSummary ?? null : null
+ * }
+ * ```
+ *
+ * So a produced file could only ever appear *after* somebody clicked "View
+ * details" on that particular message — and a person who has just been told
+ * "the PDF is saved as sum-of-2-numbers.pdf" has no reason to go hunting in an
+ * inspector for it. The deliverable was on disk, recorded, and unreachable
+ * without a click nothing prompted.
+ *
+ * Artifacts are not inspector detail. They are part of the answer, the same way
+ * the reply text is, so they are fetched for every run in the conversation
+ * independently of whether anything is being inspected.
+ *
+ * ## Shaped after `useConversationActivity`
+ *
+ * The same two costs and the same treatment: the live run is skipped, because
+ * its record is not written until it ends, and each finished run is read once
+ * for the life of the surface rather than once per render. When the live run
+ * ends `liveRunId` becomes null, the effect runs again, and the run that was
+ * live is picked up on that pass — which is what makes a file appear as soon as
+ * the turn finishes.
+ *
+ * A failed read leaves the run's entry alone rather than writing an empty list,
+ * so a transient backend error shows the rows we already had instead of
+ * blanking them.
+ */
+export function useRunArtifacts(
+  runIds: string[],
+  liveRunId: string | null,
+): Map<string, ArtifactReport[]> {
+  const [byRun, setByRun] = useState<Map<string, ArtifactReport[]>>(new Map());
+  const fetched = useRef<Set<string>>(new Set());
+
+  const runKey = runIds.join(',');
+
+  useEffect(() => {
+    const pending = runIds.filter(id => id !== liveRunId && !fetched.current.has(id));
+    if (pending.length === 0) return;
+    for (const id of pending) fetched.current.add(id);
+
+    let cancelled = false;
+    void (async () => {
+      const results = await Promise.all(
+        pending.map(
+          async id =>
+            [id, await agentService.taskArtifacts(id).catch(() => null)] as const,
+        ),
+      );
+      if (cancelled) return;
+      setByRun(prev => {
+        const next = new Map(prev);
+        let changed = false;
+        for (const [id, artifacts] of results) {
+          // Null is "the read failed"; an empty array is "this run produced
+          // nothing", and each is recorded as itself. Storing the empty list
+          // matters: it is what distinguishes the two on a later render.
+          if (!artifacts) continue;
+          next.set(id, artifacts);
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey, liveRunId]);
 
   return byRun;
 }

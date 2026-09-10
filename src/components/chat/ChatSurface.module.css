@@ -2372,6 +2372,75 @@
   border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
 }
 
+/* A diagram laid out by Mermaid from a `mermaid` fence.
+
+   Separate from `.mdGraph` above, which frames the force-simulation canvas in
+   the notebook panel. That one needs a fixed 320px height because a canvas with
+   no height collapses to nothing; this one must NOT have a fixed height — a
+   laid-out diagram has an aspect ratio of its own, and forcing it into a
+   letterbox would either crop a tall flowchart or strand a wide one in empty
+   space. The SVG keeps its viewBox and the figure takes the height that implies. */
+.mdDiagram {
+  margin: 12px 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+/* Scrolls rather than shrinks past a point. A twenty-node flowchart squeezed to
+   the width of a chat column renders its labels at two or three pixels, which is
+   a picture of a diagram rather than a diagram; below `min-width` the reader
+   pans instead. */
+.mdDiagramSurface {
+  padding: 12px;
+  /* Both axes, and the cap lives here rather than on the SVG.
+
+     A `max-height` on the SVG itself does not clip it — an SVG with a viewBox
+     scales uniformly to fit whatever box it is given, so a 180x2000 flowchart
+     capped at 560px is not cropped, it is shrunk to 50px wide and letterboxed
+     into illegibility. Capping the container instead lets the drawing keep its
+     size and the reader scroll down it. */
+  overflow: auto;
+  max-height: 560px;
+}
+
+.mdDiagramSurface svg {
+  display: block;
+  /* Centred, because a diagram narrower than the column looks misplaced pinned
+     to the left edge of a bordered figure. */
+  margin: 0 auto;
+  width: 100%;
+
+  /* `--diagram-width` is the width Mermaid laid this diagram out at, set inline
+     by `MermaidGraph`. As a ceiling it stops a small diagram being stretched to
+     fill the column — scaling a 647px graph to 1214px adds no detail, it just
+     draws every stroke at twice the intended weight. Falls back to the column
+     when the viewBox could not be read. */
+  max-width: var(--diagram-width, 100%);
+
+  /* And a floor, so the opposite failure is bounded too: a diagram far wider
+     than the column would otherwise be squeezed until its labels are three
+     pixels tall, which is a picture of a diagram rather than a diagram. Below
+     this the figure scrolls sideways instead. `min()` keeps the floor from
+     applying to a diagram that is genuinely narrower than it. */
+  min-width: min(var(--diagram-width, 100%), 420px);
+
+  /* Derived from the viewBox, so the drawing keeps its aspect ratio at whatever
+     width it settles on. The height cap is on the container above, not here. */
+  height: auto;
+}
+
+.mdDiagramCaption {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}
+
 /* A widget fence: a page the model wrote, running in its own sandbox.
 
    The frame is bordered like the other figures in a message so it reads as an
@@ -2496,4 +2565,67 @@
   display: block;
   width: 100%;
   max-height: 420px;
+}
+
+/* A produced PDF, rendered in the message by pdf.js.
+
+   The frame is what the canvas measures itself against, so it must have a
+   definite width before a page is drawn — a canvas sized from a zero-width
+   parent renders the page at one pixel and reports success. */
+.pdfView {
+  margin: 6px 0 0;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.pdfFrame {
+  padding: 10px;
+  /* A page is taller than it is wide, so a whole one rarely fits a chat column.
+     Capped and scrolled rather than shrunk to fit: a page scaled down until it
+     fits vertically is a page nobody can read. */
+  max-height: 520px;
+  overflow: auto;
+}
+
+.pdfCanvas {
+  display: block;
+  margin: 0 auto;
+  /* The width and height are set inline from the viewport pdf.js measured, in
+     CSS pixels, with the backing store drawn at device resolution. */
+  box-shadow: var(--shadow-sm);
+  background: #ffffff;
+}
+
+.pdfPager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}
+
+.pdfPageCount {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  /* Fixed enough that stepping pages does not shift the buttons under the
+     cursor as the number widens from 9 to 10. */
+  min-width: 96px;
+  text-align: center;
+}
+
+/* Confirmation that a file was written, and where. Green is not available in
+   this palette, so the tick plus the destination carries it. */
+.savedLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }

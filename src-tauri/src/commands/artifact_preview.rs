@@ -274,52 +274,89 @@ fn write_base64_chunk(out: &mut String, chunk: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Walks an OOXML body and pulls the text content out, in document
-/// order. Treats every `<w:p>` (or `<a:p>` in PowerPoint) as a
-/// paragraph; everything else is joined with no separator because
-/// XML elements do not break text in the user's model.
+/// Undoes the five escapes an OOXML writer emits.
+///
+/// `&amp;` is replaced last. Any other order turns `&amp;lt;` — which is a
+/// literal "&lt;" in the document — into a "<", and the reader would show
+/// markup the author never wrote.
+fn unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Walks an OOXML body and pulls the text content out, in document order.
+///
+/// Every `<w:p>` (Word) or `<a:p>` (PowerPoint) is a paragraph and becomes its
+/// own line. Runs inside one paragraph are joined with no separator, because a
+/// run boundary is a formatting change and not a break in the words.
+///
+/// ## The defect this replaces
+///
+/// The previous implementation declared `inside_text` and `paragraph_open` and
+/// never set either to `true`. The only assignment to `inside_text` was
+/// `false`, on every `<`, and a stub reading `// Re-check after the tag.`
+/// marked where the missing half should have gone. Its `_ if inside_text` arm
+/// could therefore never run, the buffer was never filled, and the function
+/// returned an empty string **for every input**.
+///
+/// This is the body of both the `.docx` and the `.pptx` preview, so every Word
+/// document and every deck this application has ever produced previewed as a
+/// blank pane. That is the precise failure `artifactPreview.ts` was written
+/// about — "an empty `<pre>` is indistinguishable from a preview that failed" —
+/// sitting on the other side of the wire from where that module was looking,
+/// which is why fixing the surface did not reveal it.
+///
+/// Found by previewing files the producers had just written, rather than
+/// fixtures: nothing in the reader's own tests had ever asserted on the text.
 fn extract_text_paragraphs(xml: &str) -> String {
-    let mut out = String::new();
-    let mut inside_text = false;
-    let mut paragraph_open = false;
-    let mut buffer = String::new();
-    let mut chars = xml.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '<' => {
-                if paragraph_open && !buffer.is_empty() {
-                    if !out.is_empty() && !out.ends_with('\n') {
-                        out.push('\n');
-                    }
-                    out.push_str(buffer.trim());
-                    buffer.clear();
-                }
-                inside_text = false;
-                // Skip the rest of the tag.
-                while let Some(&next) = chars.peek() {
-                    if next == '>' {
-                        chars.next();
-                        break;
-                    }
-                    chars.next();
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut rest = xml;
+
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open..];
+        let Some(close) = rest.find('>') else { break };
+        let tag = &rest[1..close];
+        rest = &rest[close + 1..];
+
+        let closing = tag.starts_with('/');
+        let name = tag
+            .trim_start_matches('/')
+            .split([' ', '\t', '\n', '\r', '/'])
+            .next()
+            .unwrap_or("");
+
+        match (closing, name) {
+            // The text of a run. A self-closing `<w:t/>` holds nothing.
+            (false, "w:t" | "a:t") if !tag.ends_with('/') => {
+                if let Some(next) = rest.find('<') {
+                    current.push_str(&unescape(&rest[..next]));
                 }
             }
-            _ if inside_text => {
-                buffer.push(c);
+            // An explicit line break inside a paragraph is a break the author
+            // typed, so it is kept rather than closing the paragraph.
+            (false, "w:br" | "a:br") => current.push('\n'),
+            // End of a paragraph. Empty ones are dropped rather than becoming
+            // blank lines: a template leaves several behind for spacing.
+            (true, "w:p" | "a:p") => {
+                if !current.trim().is_empty() {
+                    lines.push(current.trim().to_string());
+                }
+                current.clear();
             }
             _ => {}
         }
-        // We don't have lookahead for the tag-end so we use a small state
-        // machine. The downside: we treat attributes naively, but they
-        // do not appear in <w:t> bodies.
-        if !inside_text && !paragraph_open {
-            // Re-check after the tag.
-        }
     }
-    if !buffer.is_empty() {
-        out.push_str(buffer.trim());
+
+    // A body that ends without closing its last paragraph still said something.
+    if !current.trim().is_empty() {
+        lines.push(current.trim().to_string());
     }
-    out
+
+    lines.join("\n")
 }
 
 /// Very small XML walker that turns a sheet's `<row>` and `<c>` cells

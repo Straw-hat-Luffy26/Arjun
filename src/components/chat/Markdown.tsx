@@ -403,8 +403,19 @@ export function Markdown({
             // A mermaid fence is a picture the model was handed, not source it
             // wrote. Drawn rather than printed; `MermaidGraph` falls back to a
             // code block for any diagram it cannot read.
+            //
+            // `complete` matters here for the same reason it does for a widget:
+            // Mermaid parses a diagram whole or not at all, so a fence that is
+            // still streaming is shown as its source until it closes rather
+            // than failing to render once per token.
             if (block.lang === 'mermaid') {
-              return <MermaidGraph key={key} source={block.text} />;
+              return (
+                <MermaidGraph
+                  key={key}
+                  source={block.text}
+                  complete={block.closed ?? false}
+                />
+              );
             }
             // An SVG fence is a picture too - a chart, or a diagram the model
             // was handed. Drawn rather than printed, and sanitised first: this

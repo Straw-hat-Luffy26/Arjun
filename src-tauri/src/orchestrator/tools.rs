@@ -482,6 +482,48 @@ impl ToolName {
             ToolName::CreateTable => "write a table as a spreadsheet",
         }
     }
+
+    /// What a tool's arguments must carry, for the model that has to fill them.
+    ///
+    /// Separate from [`describe`] on purpose. That string is the *consequence*
+    /// sentence an approver reads before allowing a call, and a list of JSON
+    /// field names is noise in that context — `approval.rs` pins its wording for
+    /// exactly that reason.
+    ///
+    /// This is the other audience. Three producers are driven by a template
+    /// whose required fields appear nowhere the model can see: the argument
+    /// list says `content` is an object and stops there. A small local model
+    /// then sends a title and little else, the template refuses — correctly,
+    /// because inventing the missing sections is the one thing it must not do —
+    /// and the person is told their document could not be produced. Observed:
+    ///
+    /// ```text
+    /// create_approval_note args=[content,path,template] failed: The approval
+    /// note template requires fields that were not supplied: recipient,
+    /// subject, findings, recommendation, references, assumptions.
+    /// ```
+    ///
+    /// `None` for every tool whose argument names already say what they want.
+    pub const fn argument_guidance(self) -> Option<&'static str> {
+        match self {
+            ToolName::CreateDocx => Some(concat!(
+                "`content` is an object of field name to text. The approval_note ",
+                "template requires title, recipient, subject, findings, ",
+                "recommendation, references and assumptions; calculation is optional. ",
+                "Supply every required field or nothing is written.",
+            )),
+            ToolName::CreatePptx => Some(concat!(
+                "`content` is an object with a title and one list of bullet strings ",
+                "for each of findings, recommendation, assumptions and evidence. ",
+                "Supply every section or nothing is written.",
+            )),
+            ToolName::CreateXlsx => Some(concat!(
+                "Writes the calculations already run in this task, so run at least ",
+                "one calculation first. It refuses rather than writing an empty workbook.",
+            )),
+            _ => None,
+        }
+    }
 }
 
 /// One required argument, and what it has to be.

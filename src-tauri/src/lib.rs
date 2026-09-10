@@ -133,6 +133,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Opens the operating system's own save dialog, and nothing else. The
+        // capability in `capabilities/default.json` grants `dialog:allow-save`
+        // alone — not `open`, which would let the surface ask for a file to
+        // *read*, a reach this application has no use for and should not hold.
+        //
+        // Choosing where a produced file goes is the person's decision, and the
+        // platform picker is the only control that can make it without this
+        // process enumerating their filesystem to offer them a list.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(sql_plugin)
         .plugin(log_plugin)
         // A scheme of its own, because a widget needs a CSP of its own and a
@@ -996,6 +1005,8 @@ pub fn run() {
             commands::agent::agent_task_artifacts,
             commands::agent::agent_reveal_artifact,
             commands::agent::artifact_preview,
+            commands::agent::agent_export_artifact,
+            commands::agent::artifact_bytes,
 
             // Chat conversations: persistent ordered transcripts that own
             // one or more runs. The chat surface calls these to create a
