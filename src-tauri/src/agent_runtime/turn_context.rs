@@ -123,6 +123,85 @@ pub fn is_eligible(message: &Message) -> bool {
     !message.content.trim().is_empty()
 }
 
+/// Rewrites this-run-only evidence markers so a later turn cannot reuse them.
+///
+/// ## The hazard
+///
+/// `[E1]…[En]` are handed out by `retrieval::record`, numbered from one, into a
+/// table keyed by **run id** — and every chat turn is its own run. So the `[E2]`
+/// in an assistant message from turn 3 does not merely dangle in turn 4: turn 4
+/// does its own searching, is handed its own `[E1]`, `[E2]`, and the verifier
+/// resolves markers against *that* table. A model that copies the earlier
+/// marker forward, which is exactly what a model reading its own last answer
+/// does, produces a claim the verifier then confirms against a completely
+/// different passage. A wrong citation that passes checking is worse than a
+/// missing one.
+///
+/// ## Why this is not solved by scoping the table to the conversation
+///
+/// That is the fuller fix and it is a bigger change than it looks: the
+/// numbering would have to continue across turns rather than restart, the table
+/// would have to be bounded so a long thread does not accumulate every passage
+/// it ever retrieved, and the verifier would have to agree with both. It is
+/// worth doing and it is not this. What is done here removes the hazard
+/// outright: a marker that cannot be resolved in this turn is not offered to
+/// the model as though it could be.
+///
+/// The fact that the claim *was* grounded survives — `[cited earlier]` says so
+/// — and this turn can still search for itself.
+fn neutralise_evidence_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(open) = rest.find("[E") {
+        let after = &rest[open + 2..];
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        let closes = !digits.is_empty() && after[digits.len()..].starts_with(']');
+
+        out.push_str(&rest[..open]);
+        if closes {
+            out.push_str("[cited earlier]");
+            rest = &after[digits.len() + 1..];
+        } else {
+            // Not a marker — `[Every`, `[E]`, a stray bracket. Left alone.
+            out.push_str("[E");
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One turn's text, with a line saying what its tools did.
+///
+/// ## Why the tools have to be in the text
+///
+/// [`ContextTurn`] carries a role and words, and that is all that crosses to
+/// the model. Nothing writes tool calls or tool results into the transcript, so
+/// a turn that searched three documents and produced an approval note reached
+/// the *next* turn as whatever sentence it happened to end with. A person then
+/// asking "add the vendor figures to it" was asking about a file the model had
+/// no record of existing.
+///
+/// The summary is one line — `[this turn used: artifact.create_approval_note,
+/// knowledge.search_authorized ×3]` — written where the calls were known, at
+/// the end of the run. Appending it here rather than storing it inside
+/// `content` keeps the message the person sees exactly what the model wrote.
+///
+/// A message with no summary is returned unchanged, which is every user turn,
+/// every turn that called no tool, and every message written before the field
+/// existed.
+fn with_tool_summary(message: &Message) -> String {
+    // Markers first: they belong to the run that issued them, and this message
+    // is from an earlier one. See `neutralise_evidence_markers`.
+    let content = neutralise_evidence_markers(message.content.trim());
+    match message.tool_summary.as_deref().map(str::trim) {
+        Some(summary) if !summary.is_empty() => format!("{content}
+{summary}"),
+        _ => content,
+    }
+}
+
 /// The wire role for a message that passed [`is_eligible`].
 fn role_of(message: &Message) -> Option<&'static str> {
     match message.role {
@@ -201,7 +280,8 @@ pub fn fit(
         let Some(role) = role_of(message) else {
             continue;
         };
-        let content = message.content.trim();
+        let content = with_tool_summary(message);
+        let content = content.as_str();
         let cost = estimate_tokens(content);
         let held = is_pinned(message, content, pinned);
 
@@ -256,8 +336,28 @@ pub fn fit(
 
     kept.reverse();
     rescued.reverse();
+
     // Pinned survivors go ahead of the contiguous tail, which is where they were
     // said: everything rescued is older than everything kept.
+    //
+    // And the join between them is marked, because it is a hole. The kept tail
+    // is contiguous by construction, so a model reading this sees one
+    // conversation — but between a rescued pin from turn 1 and the tail
+    // starting at turn 9 there are seven turns that were dropped. The runtime
+    // prepends a note saying *how many* messages did not fit; nothing said
+    // *where*, so the ordering the model was shown is one that never happened.
+    //
+    // A `user` turn for the same reason the runtime's own marker is one: a
+    // system-role message can be reordered away from the thing it describes,
+    // and this has to stay exactly between the two stretches it separates.
+    if !rescued.is_empty() && !kept.is_empty() {
+        rescued.push(ContextTurn {
+            role: "user",
+            content: "[The message(s) above were kept because they were pinned. What follows                       is a later, continuous part of the conversation — the turns in between                       did not fit and are not shown.]"
+                .to_string(),
+        });
+    }
+
     rescued.extend(kept);
     FittedContext {
         turns: rescued,
@@ -344,6 +444,7 @@ mod tests {
             tokens_out: None,
             outcome: None,
             verification: None,
+            tool_summary: None,
         }
     }
 
@@ -358,6 +459,8 @@ mod tests {
             runs: Vec::new(),
             compactions: 0,
             pinned_context: Vec::new(),
+            routed_role: None,
+            routed_model_id: None,
         }
     }
 
@@ -723,5 +826,108 @@ mod tests {
         let fitted = fit(&convo, "a1", 10_000, &[]);
         assert!(fitted.is_empty());
         assert_eq!(fitted.dropped, 0);
+    }
+}
+
+#[cfg(test)]
+mod tool_summary_tests {
+    use super::*;
+
+    fn assistant(content: &str, summary: Option<&str>) -> Message {
+        Message {
+            id: "a-1".to_string(),
+            conversation_id: "c1".to_string(),
+            role: MessageRole::Assistant,
+            content: content.to_string(),
+            status: MessageStatus::Done,
+            run_id: Some("run-1".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            completed_at: None,
+            elapsed_ms: None,
+            error: None,
+            model_name: None,
+            model_role: None,
+            used_fallback: None,
+            tokens_in: None,
+            tokens_out: None,
+            outcome: None,
+            verification: None,
+            tool_summary: summary.map(str::to_string),
+        }
+    }
+
+    /// The defect this closes.
+    ///
+    /// History crossing to the model is `{role, content}`. A turn that wrote an
+    /// approval note reached the next turn as the sentence it ended with, so
+    /// "add the vendor figures to it" was a question about a file the model had
+    /// no record of.
+    #[test]
+    fn a_turns_tools_travel_with_its_words() {
+        let carried = with_tool_summary(&assistant(
+            "I've prepared the note.",
+            Some("[this turn used: artifact.create_approval_note]"),
+        ));
+
+        assert!(carried.contains("I've prepared the note."), "{carried}");
+        assert!(
+            carried.contains("artifact.create_approval_note"),
+            "the next turn cannot tell a file was written: {carried}"
+        );
+    }
+
+    /// A marker from an earlier turn must not read as one this turn can use.
+    ///
+    /// `[E1]…[En]` are numbered from one, per run, and every chat turn is its
+    /// own run. So turn 3's `[E2]` does not merely dangle in turn 4 — turn 4
+    /// has its own `[E2]`, pointing at a different passage, and the verifier
+    /// resolves against that one. A model copying its own last answer forward
+    /// would produce a citation that passes checking and is wrong.
+    #[test]
+    fn an_earlier_turns_citations_cannot_be_reused_by_this_one() {
+        let carried = with_tool_summary(&assistant(
+            "The seal is rated to 65 mm [E2], and the SOP requires annual inspection [E11].",
+            None,
+        ));
+
+        assert!(!carried.contains("[E2]"), "{carried}");
+        assert!(!carried.contains("[E11]"), "{carried}");
+        // The claim was grounded, and saying so is not the same as offering a
+        // number this turn can resolve.
+        assert_eq!(carried.matches("[cited earlier]").count(), 2, "{carried}");
+        assert!(carried.contains("rated to 65 mm"), "{carried}");
+    }
+
+    /// Only actual markers. A bracket is not a citation.
+    #[test]
+    fn text_that_merely_looks_like_a_marker_is_left_alone() {
+        for text in ["[Every] valve", "[E] alone", "[E2x] not a marker", "an [Edge] case"] {
+            let carried = with_tool_summary(&assistant(text, None));
+            assert_eq!(carried, text, "rewrote {text:?}");
+        }
+    }
+
+    /// A turn that only talked adds nothing.
+    ///
+    /// A line saying "no tools were used" would cost window on every turn of
+    /// every conversation to say nothing, which is how a signal becomes noise.
+    #[test]
+    fn a_turn_that_used_no_tool_is_unchanged() {
+        assert_eq!(
+            with_tool_summary(&assistant("Yes, that is right.", None)),
+            "Yes, that is right."
+        );
+        assert_eq!(
+            with_tool_summary(&assistant("Yes, that is right.", Some("   "))),
+            "Yes, that is right."
+        );
+    }
+
+    /// And the person's own view of the message is untouched.
+    #[test]
+    fn the_summary_is_added_for_the_model_not_stored_in_the_message() {
+        let message = assistant("Done.", Some("[this turn used: sandbox.run_code]"));
+        assert_eq!(message.content, "Done.", "the transcript was rewritten");
+        assert!(with_tool_summary(&message).contains("sandbox.run_code"));
     }
 }

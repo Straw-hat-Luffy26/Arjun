@@ -129,6 +129,56 @@ describe("provider identity", () => {
   });
 });
 
+/**
+ * The four combinations Rust can report, pinned.
+ *
+ * `RunRequest.model.reasoning` is `emits_reasoning` and
+ * `RunRequest.model.hasReasoningToggle` is `supports_toggled_reasoning`, and
+ * `startRun` passes them to `payloadPolicy(reasoningWanted, supportsToggle)` in
+ * that order. They used to arrive under names ambiguous enough that they were
+ * read the other way round, so the gate was "does it reason" and the value was
+ * "does it have a switch". Nothing failed loudly: reasoning was simply always
+ * on for switchable models, and always-reasoning models were sent a kwarg their
+ * template does not branch on.
+ *
+ * A table rather than prose, because the defect was that two booleans looked
+ * interchangeable.
+ */
+describe("the two reasoning capabilities are not interchangeable", () => {
+  const payload = { messages: [] };
+  const kwargs = (emitsReasoning: boolean, hasToggle: boolean) =>
+    (payloadPolicy(emitsReasoning, hasToggle)(payload, { id: "unpatterned-model-8b" }) as {
+      chat_template_kwargs?: Record<string, unknown>;
+    }).chat_template_kwargs;
+
+  it("asks a switchable reasoning model to think", () => {
+    // Qwen3: template branches on the variable, and reasons when it is on.
+    expect(kwargs(true, true)?.enable_thinking).toBe(true);
+  });
+
+  it("sends nothing to a model that always reasons but has no switch", () => {
+    // Nemotron. This is the case the old wiring got wrong: the gate was
+    // `emits_reasoning`, which is true here, so it sent `enable_thinking:
+    // false` — a variable the template does not read, and one vLLM can refuse
+    // the whole request over.
+    expect(kwargs(true, false)).toBeUndefined();
+  });
+
+  it("sends nothing to a model that does not reason at all", () => {
+    expect(kwargs(false, false)).toBeUndefined();
+  });
+
+  it("never lets the two booleans be swapped without a test noticing", () => {
+    // The swap, expressed directly: reading the pair in the wrong order turns
+    // the "always reasons, no switch" case into a kwarg being sent.
+    const correct = kwargs(true, false);
+    const swapped = kwargs(false, true);
+    expect(correct).toBeUndefined();
+    expect(swapped?.enable_thinking).toBe(false);
+    expect(correct).not.toEqual(swapped);
+  });
+});
+
 describe("applyThinkingPolicy: the capability comes from the model, not its name", () => {
   const payload = { messages: [] };
 

@@ -9,4 +9,3 @@ export * from './Toggle';
 export * from './Tooltip';
 export * from './ErrorBoundary';
 export * from './InlineErrorBoundary';
-export * from './DownloadBar';

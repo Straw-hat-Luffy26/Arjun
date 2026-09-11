@@ -24,23 +24,3 @@ export async function getAppPaths(): Promise<AppPaths> {
 export async function resetConfig(): Promise<void> {
   return getBackendService().invoke<void>('reset_config');
 }
-/**
- * Whether HuggingFace requests are authenticated, and by what.
- *
- * The token itself is never returned — only whether one is set, so the Settings
- * field can say "configured" without echoing a secret back into the page.
- */
-export interface HfTokenStatus {
-  configured: boolean;
-  /** `'settings'`, `'environment'`, or `'none'`. */
-  source: 'settings' | 'environment' | 'none';
-}
-
-export async function getHfTokenStatus(): Promise<HfTokenStatus> {
-  return getBackendService().invoke<HfTokenStatus>('get_hf_token_status');
-}
-
-/** Saves the token; an empty string clears it. Also drops the browse cache. */
-export async function setHfToken(token: string): Promise<HfTokenStatus> {
-  return getBackendService().invoke<HfTokenStatus>('set_hf_token', { token });
-}

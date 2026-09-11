@@ -1,185 +1,205 @@
-/// Real-World Production Model Switching & Memory Engine Validation Test
-/// Performs actual LLM inference loading real 4.2GB GGUF models across model switches & app restarts.
+//! A fact learned once is still known after the model changes, and after the
+//! app restarts.
+//!
+//! This is the end-to-end form of the thing this product is asked for: the
+//! conversation belongs to the person, not to whichever model happened to be
+//! resident when they said something. Real weights, real inference, no stubs —
+//! a mock memory provider would answer from the fixture rather than from
+//! anything the model was told.
+//!
+//! ## Three things were wrong with the version this replaces
+//!
+//! It named `huggingface` models nobody has, so it failed everywhere and read
+//! like the loader was broken (see `common::installed_models`).
+//!
+//! It wrote into `%APPDATA%/com.sarathi.app` — the **live** profile database
+//! of whoever ran it. A test that seeds a fact into a person's real memory
+//! store and leaves it there is not a test, it is a side effect. The memory
+//! manager takes its own directory, so it now gets a temporary one; only the
+//! weights come from the real app data.
+//!
+//! And it asserted on a real person's name as the remembered fact, which meant
+//! a model could pass by having read that name somewhere rather than by being
+//! told it here. The fact is now one no model can know.
 
-use std::path::PathBuf;
+mod common;
+
 use std::sync::Arc;
+
 use sarathi_lib::ai_engine::manager::InferenceManager;
 use sarathi_lib::ai_engine::traits::{ChatMessage, GenerationParams};
 use sarathi_lib::memory_engine::MemoryManager;
 
-fn get_app_data_dir() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| r"C:\Users\lenovo\AppData\Roaming".to_string());
-    PathBuf::from(appdata).join("com.sarathi.app")
+/// Nothing in any training set says this. A model that produces it was told it
+/// by the memory engine on this turn; a model that guesses a plausible answer
+/// fails, which is the point.
+const SECRET_KEY: &str = "commissioning_tag";
+const SECRET_VALUE: &str = "VX-7741-QRT";
+const QUESTION: &str = "What is the commissioning tag? Answer with the tag only.";
+
+fn asked() -> Vec<ChatMessage> {
+    vec![ChatMessage {
+        role: "user".to_string(),
+        content: QUESTION.to_string(),
+        timestamp: None,
+    }]
 }
 
-#[tokio::test]
-async fn test_real_world_model_switching_memory_persistence() {
-    println!("\n========================================================================");
-    println!("   SARATHI REAL-WORLD PRODUCTION MODEL SWITCHING MEMORY VALIDATION       ");
-    println!("========================================================================\n");
+/// Whether the model said the thing it was told, however it wrapped it.
+fn recalled(answer: &str) -> bool {
+    let normalised: String = answer
+        .to_ascii_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    normalised.contains(SECRET_VALUE)
+}
 
-    let app_data = get_app_data_dir();
-    println!("[TEST SETUP] App Data Dir: {:?}", app_data);
-
-    let inference_mgr = Arc::new(InferenceManager::new());
-    let memory_mgr = Arc::new(MemoryManager::new(&app_data));
-
-    // Ensure test profile fact exists
-    let _ = memory_mgr.set_user_profile_fact("name", "Shreyash Patil", "user_fact");
-    println!("[TEST SETUP] Initialized user_profile with key 'name' = 'Shreyash Patil'");
-
-    // ========================================================================
-    // TEST A: Load Model A (Qwen 2.5 7B) & Perform Real Inference
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [TEST A] Loading Model A: Qwen/Qwen2.5-7B...");
-    println!("------------------------------------------------------------------------");
-
-    let model_a_info = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-7B", "Q4_K_M")
-        .expect("Failed to load Model A (Qwen/Qwen2.5-7B)");
-
-    println!("[TEST A SUCCESS] Model A loaded: {} (template='{}')", model_a_info.model_name, model_a_info.chat_template);
-
-    let user_msg = ChatMessage {
-        role: "user".to_string(),
-        content: "What is my name?".to_string(),
-        timestamp: None,
+/// Why this is `#[test]` with a hand-built runtime rather than `#[tokio::test]`
+///
+/// `MemoryManager` owns a Tokio runtime of its own, through the Python sidecar
+/// provider. Dropping one runtime from inside another panics:
+///
+/// ```text
+/// Cannot drop a runtime in a context where blocking is not allowed.
+/// This happens when a runtime is dropped from within an asynchronous context.
+/// ```
+///
+/// So the managers are built and dropped out here, where blocking is allowed,
+/// and only the async work happens inside `block_on`. The restart is a scope
+/// ending rather than a `drop()` call, which is also a truer model of it.
+#[test]
+fn a_remembered_fact_survives_a_model_switch_and_a_restart() {
+    let Some(models) = common::need_models(2, "the model-switch memory test") else {
+        return;
     };
-    let messages = vec![user_msg.clone()];
+    let app_data = common::app_data_dir();
+    let rt = tokio::runtime::Runtime::new().expect("a runtime for the async calls");
 
-    // Process turn through Memory Engine (extract + inject)
-    let _ = memory_mgr.process_user_turn(&user_msg.content, None).await;
-    let injected_messages = memory_mgr
-        .prepare_injected_messages(&messages, &user_msg.content)
-        .await
-        .expect("Failed to inject memory for Model A");
+    // The memory store lives here and is deleted with it. The weights still
+    // come from the real app data directory, which is only ever read.
+    let store = tempfile::tempdir().expect("a temporary directory for the memory store");
+    let store_path = store.path().to_path_buf();
 
-    println!("[TEST A INJECTION] Injected {} message(s). System Prompt:\n{}", injected_messages.len(), injected_messages[0].content);
-
-    let mut response_text = String::new();
     let params = GenerationParams {
-        temperature: 0.2, // Low temp for factual memory recall
+        // Low, because this is a recall question with one right answer.
+        temperature: 0.2,
         max_tokens: 100,
         ..Default::default()
     };
 
-    let gen_res = inference_mgr.generate_direct(&injected_messages, &params, |chunk| {
-        response_text.push_str(&chunk.text);
-    });
+    // --- the first session -------------------------------------------------
+    let answered = {
+        let inference = Arc::new(InferenceManager::new());
+        let memory = Arc::new(MemoryManager::new(&store_path));
 
-    println!("[TEST A RESPONSE] Model A Output:\n\"{}\"", response_text.trim());
-    assert!(gen_res.is_ok(), "Model A generation failed: {:?}", gen_res);
+        memory
+            .set_user_profile_fact(SECRET_KEY, SECRET_VALUE, "user_fact")
+            .expect("the fact is written before anything is asked");
 
-    let lower_resp_a = response_text.to_lowercase();
-    let has_name_a = lower_resp_a.contains("shreyash") || lower_resp_a.contains("patil");
-    println!("[TEST A VERIFICATION] Model A remembered name: {}", has_name_a);
-    assert!(has_name_a, "Model A failed to answer user's name! Output: '{}'", response_text);
+        // Ask the same question of two different models in turn. Whatever the
+        // first one is told, the second must be told too.
+        let mut answered: Vec<String> = Vec::new();
+        for model in models.iter().take(2) {
+            inference.unload_active_model_direct().ok();
 
-    // ========================================================================
-    // TEST B: Unload Model A -> Load Model B (Qwen 2.5 Coder 7B) & Perform Real Inference
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [TEST B] Unloading Model A & Loading Model B: Qwen/Qwen2.5-Coder-7B...");
-    println!("------------------------------------------------------------------------");
+            let info = inference
+                .load_installed_model_direct(
+                    &app_data,
+                    &model.provider,
+                    &model.id,
+                    &model.quantization,
+                )
+                .unwrap_or_else(|e| panic!("{} is installed and did not load: {e:?}", model.id));
+            println!(
+                "\n--- {} ({}, template '{}') ---",
+                info.model_name, info.quantization, info.chat_template
+            );
 
-    let _ = inference_mgr.unload_active_model_direct();
+            let injected = rt.block_on(async {
+                memory.process_user_turn(QUESTION, None).await.ok();
+                memory
+                    .prepare_injected_messages(&asked(), QUESTION)
+                    .await
+                    .unwrap_or_else(|e| panic!("memory injection failed: {e:?}"))
+            });
 
-    let model_b_info = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-Coder-7B", "Q4_0")
-        .expect("Failed to load Model B (Qwen/Qwen2.5-Coder-7B)");
+            // The fact must be in what the model is handed. If it is not, the
+            // model cannot possibly answer, and the failure belongs to the
+            // memory engine rather than to the model — worth separating here,
+            // because the assertion below cannot tell them apart.
+            let prompt = injected
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                prompt.contains(SECRET_VALUE),
+                "the memory engine did not put the fact in front of {}; \
+                 nothing about the model is being tested here",
+                model.id
+            );
 
-    println!("[TEST B SUCCESS] Model B loaded: {} (template='{}')", model_b_info.model_name, model_b_info.chat_template);
+            let mut answer = String::new();
+            inference
+                .generate_direct(&injected, &params, |chunk| answer.push_str(&chunk.text))
+                .unwrap_or_else(|e| panic!("{} failed to generate: {e:?}", model.id));
 
-    let injected_messages_b = memory_mgr
-        .prepare_injected_messages(&messages, &user_msg.content)
-        .await
-        .expect("Failed to inject memory for Model B");
+            println!("  answered: {}", answer.trim());
+            assert!(
+                recalled(&answer),
+                "{} was given the fact and did not repeat it back: {answer:?}",
+                model.id
+            );
+            answered.push(model.id.clone());
+        }
+        inference.unload_active_model_direct().ok();
+        answered
+        // Both managers drop here, outside `block_on`.
+    };
 
-    let mut response_text_b = String::new();
-    let gen_res_b = inference_mgr.generate_direct(&injected_messages_b, &params, |chunk| {
-        response_text_b.push_str(&chunk.text);
-    });
+    assert_eq!(answered.len(), 2, "both models answered");
+    assert_ne!(
+        answered[0], answered[1],
+        "the switch must be between two different models, or nothing was switched"
+    );
 
-    println!("[TEST B RESPONSE] Model B Output:\n\"{}\"", response_text_b.trim());
-    assert!(gen_res_b.is_ok(), "Model B generation failed: {:?}", gen_res_b);
+    // --- after a restart ---------------------------------------------------
+    // New managers, same store on disk. The fact went to SQLite and must
+    // still be there.
+    println!("\n--- after a restart ---");
+    {
+        let inference = Arc::new(InferenceManager::new());
+        let memory = Arc::new(MemoryManager::new(&store_path));
 
-    let lower_resp_b = response_text_b.to_lowercase();
-    let has_name_b = lower_resp_b.contains("shreyash") || lower_resp_b.contains("patil");
-    println!("[TEST B VERIFICATION] Model B remembered name: {}", has_name_b);
-    assert!(has_name_b, "Model B failed to recall user's name after model switch! Output: '{}'", response_text_b);
+        let model = &models[0];
+        let info = inference
+            .load_installed_model_direct(&app_data, &model.provider, &model.id, &model.quantization)
+            .unwrap_or_else(|e| panic!("{} did not load after the restart: {e:?}", model.id));
+        println!("  reloaded {}", info.model_name);
 
-    // ========================================================================
-    // TEST C: Unload Model B -> Load Model C (meta-llama/Llama-3.2-1B)
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [TEST C] Unloading Model B & Loading Model C: meta-llama/Llama-3.2-1B...");
-    println!("------------------------------------------------------------------------");
+        let injected = rt.block_on(async {
+            memory
+                .prepare_injected_messages(&asked(), QUESTION)
+                .await
+                .expect("memory injection after the restart")
+        });
+        assert!(
+            injected.iter().any(|m| m.content.contains(SECRET_VALUE)),
+            "the fact did not survive the restart: it is not in the prompt at all"
+        );
 
-    let _ = inference_mgr.unload_active_model_direct();
+        let mut answer = String::new();
+        inference
+            .generate_direct(&injected, &params, |chunk| answer.push_str(&chunk.text))
+            .expect("generation after the restart");
 
-    let model_c_info = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "meta-llama/Llama-3.2-1B", "Q4_K_M")
-        .expect("Failed to load Model C (meta-llama/Llama-3.2-1B)");
+        println!("  answered: {}", answer.trim());
+        assert!(
+            recalled(&answer),
+            "the fact did not survive the restart: {answer:?}"
+        );
 
-    println!("[TEST C SUCCESS] Model C loaded: {} (template='{}')", model_c_info.model_name, model_c_info.chat_template);
-
-    let injected_messages_c = memory_mgr
-        .prepare_injected_messages(&messages, &user_msg.content)
-        .await
-        .expect("Failed to inject memory for Model C");
-
-    let mut response_text_c = String::new();
-    let gen_res_c = inference_mgr.generate_direct(&injected_messages_c, &params, |chunk| {
-        response_text_c.push_str(&chunk.text);
-    });
-
-    println!("[TEST C RESPONSE] Model C Output:\n\"{}\"", response_text_c.trim());
-    assert!(gen_res_c.is_ok(), "Model C generation failed: {:?}", gen_res_c);
-
-    let lower_resp_c = response_text_c.to_lowercase();
-    let has_name_c = lower_resp_c.contains("shreyash") || lower_resp_c.contains("patil");
-    println!("[TEST C VERIFICATION] Model C remembered name: {}", has_name_c);
-    assert!(has_name_c, "Model C failed to recall user's name after 2nd model switch! Output: '{}'", response_text_c);
-
-    // ========================================================================
-    // TEST D: Re-initialize Memory & Inference Managers (App Restart Simulation)
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [TEST D] Simulating Complete App Restart (New Manager Instances)...");
-    println!("------------------------------------------------------------------------");
-
-    drop(inference_mgr);
-    drop(memory_mgr);
-
-    let fresh_inference_mgr = Arc::new(InferenceManager::new());
-    let fresh_memory_mgr = Arc::new(MemoryManager::new(&app_data));
-
-    let model_restart_info = fresh_inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-Coder-7B", "Q4_0")
-        .expect("Failed to load model after app restart");
-
-    println!("[TEST D SUCCESS] Loaded model after restart: {}", model_restart_info.model_name);
-
-    let injected_messages_d = fresh_memory_mgr
-        .prepare_injected_messages(&messages, &user_msg.content)
-        .await
-        .expect("Failed to inject memory after app restart");
-
-    let mut response_text_d = String::new();
-    let gen_res_d = fresh_inference_mgr.generate_direct(&injected_messages_d, &params, |chunk| {
-        response_text_d.push_str(&chunk.text);
-    });
-
-    println!("[TEST D RESPONSE] Model Output After Restart:\n\"{}\"", response_text_d.trim());
-    assert!(gen_res_d.is_ok(), "Generation failed after restart: {:?}", gen_res_d);
-
-    let lower_resp_d = response_text_d.to_lowercase();
-    let has_name_d = lower_resp_d.contains("shreyash") || lower_resp_d.contains("patil");
-    println!("[TEST D VERIFICATION] Memory survived application restart: {}", has_name_d);
-    assert!(has_name_d, "Memory failed to survive app restart! Output: '{}'", response_text_d);
-
-    println!("\n========================================================================");
-    println!("   ALL 4 REAL-WORLD MODEL SWITCHING TESTS PASSED 100%!                   ");
-    println!("========================================================================\n");
+        inference.unload_active_model_direct().ok();
+    }
 }

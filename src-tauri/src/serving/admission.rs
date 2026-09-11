@@ -184,8 +184,17 @@ pub async fn admit(
         }
     }
 
+    // Least recently used first.
+    //
+    // This was `running_model_ids()`, which returns `HashMap` keys — so the
+    // server reclaimed first was whichever the hasher happened to yield. On the
+    // two-model turn this product runs constantly (read the attachment with the
+    // OCR model, answer with the chat model) that is a coin toss between the
+    // model just used and the model about to be used, and losing the toss costs
+    // a cold start and a destroyed prompt cache. Twice per message, on a
+    // constrained card.
     let others: Vec<String> = servers
-        .running_model_ids()
+        .eviction_order()
         .into_iter()
         .filter(|id| id != &entry.id)
         .collect();
@@ -229,11 +238,17 @@ pub async fn admit(
 
 /// Free VRAM where the driver will say, the installed total where it will not.
 ///
+/// Public because routing has to ask the same question. The router used to plan
+/// against `installed_gpus().max()` while admission planned against this, so on
+/// a card already holding a server the router would pick the largest model that
+/// fits a budget that does not exist, and admission would then partially
+/// offload it — the exact failure this module's header describes.
+///
 /// Falling back to the installed figure rather than to zero is deliberate: a
 /// machine whose driver reports no free figure — an AMD card, a headless box
 /// without `nvidia-smi` — still has VRAM, and refusing to use it would be a
 /// worse answer than the over-optimistic plan that was there before.
-fn measure_budget(installed: u64) -> VramBudget {
+pub fn measure_budget(installed: u64) -> VramBudget {
     match gpu_collector::free_vram_bytes() {
         Some(free) => VramBudget::Free(free),
         None => VramBudget::InstalledOnly(installed),

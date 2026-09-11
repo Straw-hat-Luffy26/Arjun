@@ -81,7 +81,7 @@ use crate::orchestrator::tools::{ToolCall, ToolName};
 use crate::policy::ApprovalState;
 use grants::GrantLedger;
 use protocol::{code, Frame, Outgoing, WireError};
-use recording::{refused, remember_loop_event, remember_outcome, remember_refusal};
+use recording::{refused, refused_terminally, remember_loop_event, remember_outcome, remember_refusal};
 
 /// Event name the UI listens on for the loop's own progress.
 ///
@@ -502,11 +502,40 @@ async fn dispatch(
 ) {
     match frame {
         Frame::Request { id, method, params } => {
-            let reply = match handle(&method, params, deps).await {
-                Ok(result) => Outgoing::Result { id, result },
-                Err(error) => Outgoing::Error { id, error },
-            };
-            let _ = outbound.send(reply.encode());
+            // Spawned, not awaited here.
+            //
+            // This arm used to be awaited inline, on the single reader task
+            // that interprets *every* inbound frame — so for as long as one
+            // request took, nothing else was read. The consequences were not
+            // subtle:
+            //
+            // - `toolExecution: "parallel"` in the runtime was a fiction. The
+            //   child fired N `tool.execute` frames at once and this side
+            //   served them strictly one at a time, which is also why the
+            //   `Lease` / `reserve_at` machinery in `orchestrator::plan` —
+            //   written for "four searches arrive together" — was guarding a
+            //   race this channel could not produce.
+            // - A slow tool blocked everything. `create_docx` has a 120-second
+            //   ceiling, and for those two minutes no `run.event` notification
+            //   and no `Frame::Result` was read: token streaming stopped dead.
+            // - Worst, `tool.authorize` blocks on a person for up to fifteen
+            //   minutes (`approval::WAIT_LIMIT`). For that whole time the
+            //   channel was deaf, including to the `run.abort` the operator's
+            //   Stop button sends.
+            //
+            // Replies are matched by `id` on both sides, so answering out of
+            // order is what the protocol already expects. Concurrency is
+            // bounded where it should be — by the plan's step leases — rather
+            // than by the transport happening to be serial.
+            let deps = Arc::clone(deps);
+            let outbound = outbound.clone();
+            tokio::spawn(async move {
+                let reply = match handle(&method, params, &deps).await {
+                    Ok(result) => Outgoing::Result { id, result },
+                    Err(error) => Outgoing::Error { id, error },
+                };
+                let _ = outbound.send(reply.encode());
+            });
         }
         Frame::Result { id, result } => {
             if let Some(sender) = pending.lock().ok().and_then(|mut p| p.remove(&id)) {
@@ -777,10 +806,47 @@ fn capability_search(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wi
     };
 
     let found = deps.skills.search(query, &context);
+
+    // A quarantined skill is kept out of the model's listing. The operator's
+    // `skill_search` still shows it and says why — that is a person's problem
+    // to fix — but `skill.load` would refuse it, so offering it here only
+    // spends context and earns a refusal.
+    let mut usable: Vec<_> = found.iter().filter(|card| card.is_available()).collect();
+    let matched = usable.len();
+
+    // The skills written for this deployment come first.
+    //
+    // Not favouritism — an accident of the alphabet. Sixty-five skills sorted
+    // by name put `accessibility`, `api-design` and `article-writing` on the
+    // first page and left `pid-reader`, `hazop-analyzer` and
+    // `safety-compliance` at positions 40, 30 and 57, so a model asking a
+    // refinery what it can do would have been shown twelve software-
+    // engineering skills and concluded that is what this machine is for.
+    //
+    // Within each group the order is still alphabetical, so the listing stays
+    // predictable. This only affects the model's paged view; the operator's
+    // `skill_search` is unpaged and unchanged.
+    usable.sort_by_key(|card| (card.imported, card.name.clone()));
+    let listed: Vec<Value> = usable
+        .iter()
+        .take(crate::skills::CAPABILITY_PAGE)
+        .map(|card| card.for_model())
+        .collect();
+
+    let note = if matched > listed.len() {
+        format!(
+            "Metadata only. Ask for a skill by name to read its instructions.              Showing {} of {matched}; pass `query` to narrow the list.",
+            listed.len()
+        )
+    } else {
+        "Metadata only. Ask for a skill by name to read its instructions.".to_string()
+    };
+
     Ok(json!({
-        "skills": found,
+        "skills": listed,
+        "matched": matched,
         // Said explicitly so a caller does not have to infer it from the shape.
-        "note": "Metadata only. Ask for a skill by name to read its instructions.",
+        "note": note,
     }))
 }
 
@@ -1043,8 +1109,16 @@ async fn authorize(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wire
     // should not be asking about permissions, and "you have run out of steps"
     // is a more useful thing to tell a model than "that path is fine, but
     // nothing further will happen".
-    if let Some(reason) = plan_refusal(&call, deps) {
-        return Ok(refused(deps, &call, reason));
+    if let Some(PlanRefusal { reason, halted }) = plan_refusal(&call, deps) {
+        // A halted plan ends the turn rather than refusing one call at a time.
+        //
+        // `plan.reserve` answered with a refusal string and the loop treated it
+        // as an ordinary error tool result, so the model was free to try again
+        // — and every retry emitted events, which rearmed the four-minute stall
+        // guard, so a run whose budget was gone spun to the thirty-minute
+        // deadline producing nothing but refusals. `plan_stopped` was published
+        // to the UI and nothing told the loop.
+        return Ok(refused_terminally(deps, &call, reason, halted));
     }
 
     // The deployment's own checks, before the gateway and outside anything the
@@ -1257,18 +1331,20 @@ fn durability_refusal(call: &CallParams, deps: &Arc<RuntimeDeps>) -> Option<Stri
     ))
 }
 
-fn plan_refusal(call: &CallParams, deps: &Arc<RuntimeDeps>) -> Option<String> {
+fn plan_refusal(call: &CallParams, deps: &Arc<RuntimeDeps>) -> Option<PlanRefusal> {
     let stopped = {
         // A poisoned table is a panic that happened while the budget was being
         // read, and carrying on would mean running with no budget at all. That
         // is the one case here that fails closed: an unbounded run is worse
         // than a stopped one.
         let Ok(mut plans) = deps.plans.lock() else {
-            return Some(
-                "This task's plan cannot be read, so there is no budget to hold the work to and \
-                 nothing further will be run. Start the task again."
+            return Some(PlanRefusal {
+                reason: "This task's plan cannot be read, so there is no budget to hold the \
+                         work to and nothing further will be run. Start the task again."
                     .to_string(),
-            );
+                // Nothing further will be run, and the sentence says so.
+                halted: true,
+            });
         };
         // A missing plan is not reachable here: `authorize` refuses a run it has
         // no plan for before this is called, and `execute` does the same. The
@@ -1289,12 +1365,19 @@ fn plan_refusal(call: &CallParams, deps: &Arc<RuntimeDeps>) -> Option<String> {
                 .iter()
                 .map(|tool| tool.as_str())
                 .collect();
-            return Some(format!(
-                "{} is not one of the tools this task was planned to use. The plan allows: {}. \
-                 Do what you can with those, and say plainly what you could not do.",
-                call.tool,
-                allowed.join(", ")
-            ));
+            return Some(PlanRefusal {
+                reason: format!(
+                    "{} is not one of the tools this task was planned to use. The plan \
+                     allows: {}. Do what you can with those, and say plainly what you \
+                     could not do.",
+                    call.tool,
+                    allowed.join(", ")
+                ),
+                // One refused call, not the end of the run: the next call may
+                // name a tool the plan does permit. `may_call` would halt the
+                // whole plan here, which is why this is checked before it.
+                halted: false,
+            });
         }
 
         // Reserved, not merely checked.
@@ -1331,7 +1414,29 @@ fn plan_refusal(call: &CallParams, deps: &Arc<RuntimeDeps>) -> Option<String> {
         events::TaskEventType::PlanStopped,
         json!({ "reason": stopped.explain(), "tool": call.tool }),
     );
-    Some(stopped.explain())
+    Some(PlanRefusal {
+        reason: stopped.explain(),
+        // `halt` records the reason in `self.stopped`, and every later call
+        // replays it. That replay is the signal: this run will refuse
+        // everything from here, so there is nothing for the loop to do but
+        // report what it has.
+        halted: plan_is_halted(deps, &call.run_id),
+    })
+}
+
+/// Why a call was refused, and whether the plan will refuse everything after it.
+struct PlanRefusal {
+    reason: String,
+    halted: bool,
+}
+
+/// Whether this run's plan has stopped for good.
+fn plan_is_halted(deps: &Arc<RuntimeDeps>, run_id: &str) -> bool {
+    deps.plans
+        .lock()
+        .ok()
+        .and_then(|plans| plans.get(run_id).map(|plan| plan.stopped().is_some()))
+        .unwrap_or(false)
 }
 
 /// Renders arguments the way an approver will read them.
@@ -1986,6 +2091,32 @@ fn record_call(
     }
 }
 
+/// Records a call the gateway, the plan or a person stopped before it ran.
+///
+/// ## Why refusals were missing from the record entirely
+///
+/// `record_call` is reached only from `execute`, and a refused call never gets
+/// there — `authorize` answers `refuse` and the run moves on. So
+/// `TaskRecord.tool_calls`, whose own doc comment promises "every tool the run
+/// called, in order, with how each one went", silently omitted every budget
+/// refusal, every gateway refusal and every declined approval. A person reading
+/// the record of a run that produced no document could not tell whether the
+/// model never tried or whether the model tried and was stopped.
+///
+/// Typed rather than sniffed. `record_call` classifies by looking for phrases
+/// in the reason — "not permitted", "was not approved" — which is why
+/// `ApprovalOutcome::Rejected` ("{by} did not approve this action, because …")
+/// and `TimedOut` ("Nobody responded to the approval request in time") were
+/// both being filed as ordinary failures: neither sentence contains the phrase
+/// being looked for. Here the caller already knows it refused, so nothing has
+/// to be inferred from prose.
+fn record_refusal(deps: &Arc<RuntimeDeps>, run_id: &str, tool: &str, reason: &str) {
+    let record = tasks::ToolCallRecord::new(tool, tasks::CallOutcome::Refused, reason);
+    if let Ok(mut table) = deps.calls.lock() {
+        table.entry(run_id.to_string()).or_default().push(record);
+    }
+}
+
 /// Marks a step spent and publishes how far through the plan the run is.
 /// Gives back a slot reserved for a call that will not run.
 ///
@@ -2115,10 +2246,18 @@ fn inherited_policy_for(
 
 /// Turns the skill cards into the prose the model reads.
 ///
-/// Metadata only, and said so: a card carries a name, a description, a version
-/// and a tool list, never a skill's instructions. Loading those is the separate
+/// Metadata only, and said so: a card carries a name, a description and a tool
+/// list, never a skill's instructions. Loading those is the separate
 /// `skill.load` step, and a model told the difference here does not have to
 /// infer it.
+///
+/// The shape rendered is [`crate::skills::SkillCard::for_model`], which is
+/// deliberately narrower than the card an operator sees. Two fields this used
+/// to read — `version` and `available` — are gone: a version number never
+/// changed which skill a model asked for, and `available` was never a field on
+/// the card at all (the card carries `quarantined`), so that branch had always
+/// been dead. Quarantined skills are now filtered out before they reach here,
+/// because `skill.load` refuses them and offering one only earns a refusal.
 fn render_capabilities(value: &Value) -> String {
     let cards = value.get("skills").and_then(Value::as_array);
     let Some(cards) = cards.filter(|cards| !cards.is_empty()) else {
@@ -2128,6 +2267,11 @@ fn render_capabilities(value: &Value) -> String {
                 tools this task already has."
             .to_string();
     };
+
+    let matched = value
+        .get("matched")
+        .and_then(Value::as_u64)
+        .unwrap_or(cards.len() as u64) as usize;
 
     let mut out = String::from(
         "These installed skills match. This is their description only; ask for one by name to \
@@ -2139,20 +2283,24 @@ fn render_capabilities(value: &Value) -> String {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or("no description");
-        let version = card.get("version").and_then(Value::as_str).unwrap_or("?");
-        out.push_str(&format!("- {name} (v{version}): {description}"));
-        // Whether it can actually be used right now. A card for a quarantined
-        // skill is still worth showing -- a model that cannot see it will keep
-        // looking for it -- but presenting it as usable would waste a step.
-        if card.get("available").and_then(Value::as_bool) == Some(false) {
-            let why = card
-                .get("unavailableBecause")
-                .and_then(Value::as_str)
-                .unwrap_or("it is not available");
-            out.push_str(&format!(" — not usable: {why}"));
+        out.push_str(&format!("- {name}: {description}"));
+        // What using it would cost. A skill whose output stops for a reviewer
+        // is still the right choice sometimes, and a model that finds out only
+        // after the run has halted cannot say so in its plan.
+        if card.get("needsApproval").and_then(Value::as_bool) == Some(true) {
+            out.push_str(" — its output waits for a reviewer");
         }
-        out.push_str("
-");
+        out.push('\n');
+    }
+
+    // Paged, and said so. A model shown twelve of sixty-five and not told the
+    // rest exist will conclude the machine has twelve skills.
+    if matched > cards.len() {
+        out.push_str(&format!(
+            "\n{} of {matched} shown. Search again with a word from what you need to see \
+             the rest.\n",
+            cards.len()
+        ));
     }
     out
 }
@@ -2886,6 +3034,37 @@ fn parse_document_body(body: &str) -> Vec<crate::artifacts::pdf::Block> {
     blocks
 }
 
+/// Drops a leading heading that only repeats the document's own title.
+///
+/// `paginate` draws `spec.title` at the top of the first page, and a model
+/// writing the body almost always opens it with `# <the same title>` — which is
+/// the correct shape for a Markdown document and produces the title twice in a
+/// row here, once large and once slightly less large.
+///
+/// Only the *first* block, and only an exact match once case and surrounding
+/// punctuation are set aside. A heading further down that happens to repeat the
+/// title is a section of the document and is left alone.
+fn drop_repeated_title(
+    title: &str,
+    mut blocks: Vec<crate::artifacts::pdf::Block>,
+) -> Vec<crate::artifacts::pdf::Block> {
+    use crate::artifacts::pdf::Block;
+
+    let normalise = |text: &str| {
+        text.trim()
+            .trim_matches(|c: char| c == '#' || c == '.' || c == ':')
+            .trim()
+            .to_lowercase()
+    };
+
+    if let Some(Block::Heading(first)) = blocks.first() {
+        if !title.trim().is_empty() && normalise(first) == normalise(title) {
+            blocks.remove(0);
+        }
+    }
+    blocks
+}
+
 /// Writes a PDF from a title, a classification banner and a body.
 ///
 /// The body grammar, including its fenced-code rule, is [`parse_document_body`].
@@ -2901,7 +3080,10 @@ fn create_pdf(
     use crate::artifacts::pdf::{Block, PdfSpec};
 
     let title = tool_call.text("title").unwrap_or_default().trim().to_string();
-    let blocks = parse_document_body(&tool_call.text("body").unwrap_or_default());
+    let blocks = drop_repeated_title(
+        &title,
+        parse_document_body(&tool_call.text("body").unwrap_or_default()),
+    );
 
     let bytes = crate::artifacts::pdf::render(&PdfSpec {
         title: title.clone(),
@@ -3456,7 +3638,83 @@ mod notebook_choice_tests {
 /// The grammar every generated document's body is read with.
 #[cfg(test)]
 mod document_body_tests {
-    use super::parse_document_body;
+    use super::{drop_repeated_title, parse_document_body};
+
+    /// The title is drawn once, not twice.
+    ///
+    /// `paginate` puts `spec.title` at the top of the first page, and a model
+    /// writing Markdown opens the body with `# <the same title>` because that
+    /// is the correct shape for a Markdown document. The two together produced
+    /// the title twice in a row, which is what a generated PDF actually looked
+    /// like.
+    #[test]
+    fn a_body_that_opens_by_repeating_the_title_does_not_print_it_twice() {
+        let blocks = drop_repeated_title(
+            "Even-Odd Number Algorithm",
+            parse_document_body("# Even-Odd Number Algorithm
+
+The algorithm determines parity."),
+        );
+        let shapes = describe(blocks);
+        assert_eq!(shapes, vec!["P:The algorithm determines parity."], "{shapes:?}");
+    }
+
+    /// Case and trailing punctuation do not make it a different heading.
+    #[test]
+    fn the_match_is_not_defeated_by_case_or_a_colon() {
+        for opening in ["# even-odd number algorithm", "# Even-Odd Number Algorithm:"] {
+            let blocks = drop_repeated_title(
+                "Even-Odd Number Algorithm",
+                parse_document_body(&format!("{opening}
+
+Body.")),
+            );
+            assert_eq!(describe(blocks), vec!["P:Body."], "{opening}");
+        }
+    }
+
+    /// A heading that repeats the title further down is a section, not a
+    /// duplicate, and is left where it is.
+    #[test]
+    fn only_the_opening_heading_is_dropped() {
+        let blocks = drop_repeated_title(
+            "Pump Report",
+            parse_document_body("Intro.
+
+# Pump Report
+
+Detail."),
+        );
+        assert_eq!(
+            describe(blocks),
+            vec!["P:Intro.", "H:Pump Report", "P:Detail."]
+        );
+    }
+
+    /// A heading that is genuinely a different section survives.
+    #[test]
+    fn a_different_opening_heading_is_kept() {
+        let blocks = drop_repeated_title(
+            "Pump Report",
+            parse_document_body("# Findings
+
+Detail."),
+        );
+        assert_eq!(describe(blocks), vec!["H:Findings", "P:Detail."]);
+    }
+
+    fn describe(blocks: Vec<crate::artifacts::pdf::Block>) -> Vec<String> {
+        use crate::artifacts::pdf::Block;
+        blocks
+            .iter()
+            .map(|block| match block {
+                Block::Heading(text) => format!("H:{text}"),
+                Block::Paragraph(text) => format!("P:{text}"),
+                Block::Bullet(text) => format!("B:{text}"),
+                Block::Fixed(text) => format!("F:{text}"),
+            })
+            .collect()
+    }
 
     /// Blocks in a comparable shape. `Block` carries no `PartialEq`, and giving
     /// it one for a test would be the test changing the type it is testing.

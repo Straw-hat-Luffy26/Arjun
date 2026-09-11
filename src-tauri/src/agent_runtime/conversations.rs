@@ -96,6 +96,26 @@ pub struct Message {
     /// readings the old surface conflated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<String>,
+    /// What this turn actually did, in one line, for the *next* turn to read.
+    ///
+    /// ## Why prose alone was not enough
+    ///
+    /// The history a later turn is given is `{role, content}` and nothing else
+    /// — no tool calls, no tool results. So turn 2 saw the sentence "I've
+    /// prepared the approval note" and had no way to know a file exists, what
+    /// it is called, or that a search returned three passages and not thirty.
+    /// Asked to "add the vendor figures to it", the model had to guess what
+    /// "it" was.
+    ///
+    /// One line, not the results themselves: the results can be tens of
+    /// kilobytes and the window is the thing under pressure. What a follow-up
+    /// needs is the *fact* that a tool ran and what it produced, which is small
+    /// and stays useful for the life of the thread.
+    ///
+    /// Absent on messages written before this existed, and on turns that called
+    /// no tool — both of which read as "nothing to add".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_summary: Option<String>,
 }
 
 /// What is known about an assistant message once its run has ended.
@@ -121,6 +141,8 @@ pub struct MessageCompletion<'a> {
     pub outcome: Option<&'a str>,
     /// What the verifier concluded. See [`Message::verification`].
     pub verification: Option<&'a str>,
+    /// One line naming what this turn's tools did. See [`Message::tool_summary`].
+    pub tool_summary: Option<&'a str>,
     /// Whether the run finished the work it set out to do.
     ///
     /// False for every ending except `completed` — a stopped run and a run cut
@@ -211,6 +233,34 @@ pub struct Conversation {
     /// Absent in files written before this existed, which read as no pins.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned_context: Vec<String>,
+    /// What the router settled on for this thread, and what it chose.
+    ///
+    /// ## Why the model belongs to the conversation
+    ///
+    /// Routing is a classification of one prompt, and it ran on every turn. So
+    /// a thread that opened with "write a Python script to size this pump" and
+    /// continued "now check it against the vendor curve" was answered by a
+    /// coding model and then by a general one — a different model, a cold
+    /// server, and a dropped prompt cache, because the wording moved rather
+    /// than because the work did. Follow-ups are the worst case: "yes, go
+    /// ahead" carries no signal at all, so it classified as nothing in
+    /// particular and re-routed away from whatever had been doing the job.
+    ///
+    /// Held here, the first turn's decision stands for the thread. A later turn
+    /// only overturns it by classifying *confidently* into a different role —
+    /// which is the case where the person really has changed the kind of work,
+    /// and is exactly what an unconfident follow-up cannot do.
+    ///
+    /// Two fields rather than one: the role is what a re-route is judged
+    /// against, and the model is what is actually kept. A model that has since
+    /// been removed from the registry falls back to routing the role afresh.
+    ///
+    /// Absent in files written before this existed, which read as "not yet
+    /// routed" — so an existing conversation settles on its next turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routed_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routed_model_id: Option<String>,
 }
 
 /// The on-disk envelope. Carries a schema version so an older client can
@@ -387,6 +437,8 @@ impl ConversationStore {
                         // No file old enough to be v1 can carry pins: the
                         // control did not reach the runtime until long after.
                         pinned_context: Vec::new(),
+                        routed_role: None,
+                        routed_model_id: None,
                     },
                 })
             }
@@ -523,6 +575,7 @@ impl ConversationStore {
             tokens_out: None,
             outcome: None,
             verification: None,
+            tool_summary: None,
         };
         let conversation = Conversation {
             id: id.clone(),
@@ -536,6 +589,8 @@ impl ConversationStore {
             // A new thread protects nothing, because nothing has been said in
             // it yet. Pins are added by the person, one row at a time.
             pinned_context: Vec::new(),
+            routed_role: None,
+            routed_model_id: None,
         };
         self.save(&conversation)?;
         Ok(conversation)
@@ -580,6 +635,7 @@ impl ConversationStore {
             tokens_out: None,
             outcome: None,
             verification: None,
+            tool_summary: None,
         };
         let assistant_msg = Message {
             id: assistant_message_id.to_string(),
@@ -599,6 +655,7 @@ impl ConversationStore {
             tokens_out: None,
             outcome: None,
             verification: None,
+            tool_summary: None,
         };
         conversation.messages.push(user_msg);
         conversation.messages.push(assistant_msg);
@@ -692,6 +749,50 @@ impl ConversationStore {
         Ok(Some(conversation))
     }
 
+    /// What the person has asked for in this thread, most recent last.
+    ///
+    /// ## Why the plan needs more than one turn
+    ///
+    /// `planning::derive` reads one prompt and fixes the tools the run may
+    /// reach. That is fine for a first turn and wrong for every follow-up: "now
+    /// turn that into a deck" and "yes, go ahead" carry almost none of the
+    /// request, so the plan derived from them permits neither `create_pptx` nor
+    /// anything else the thread had earned — and the gateway then refuses a
+    /// call the person plainly asked for one message ago. `planning`'s own
+    /// module notes record `create_pptx` having been unreachable for exactly
+    /// this class of reason, found the hard way.
+    ///
+    /// User turns only. An assistant's own words are not a request, and folding
+    /// them in would let a model widen its next turn's plan by describing tools
+    /// it would like to have.
+    ///
+    /// Bounded: a long thread should not make the keyword scan read a
+    /// megabyte, and a request from forty turns ago is not what this turn is
+    /// about.
+    pub fn recent_requests(
+        &self,
+        id: &str,
+        owner_user_id: &str,
+        limit: usize,
+    ) -> std::io::Result<Vec<String>> {
+        Ok(self
+            .get(id, Some(owner_user_id))?
+            .map(|conversation| {
+                let mut recent: Vec<String> = conversation
+                    .messages
+                    .iter()
+                    .filter(|message| message.role == MessageRole::User)
+                    .filter(|message| !message.content.trim().is_empty())
+                    .rev()
+                    .take(limit)
+                    .map(|message| message.content.clone())
+                    .collect();
+                recent.reverse();
+                recent
+            })
+            .unwrap_or_default())
+    }
+
     /// The entries this conversation's owner has asked to keep.
     ///
     /// An unknown conversation, or one belonging to somebody else, holds no
@@ -706,6 +807,54 @@ impl ConversationStore {
             .get(id, Some(owner_user_id))?
             .map(|conversation| conversation.pinned_context)
             .unwrap_or_default())
+    }
+
+    /// What this conversation last routed to, if anything.
+    ///
+    /// An unknown conversation, or one belonging to somebody else, reads as
+    /// unrouted — the same answer, so a caller cannot learn that a conversation
+    /// exists by asking what answers it.
+    pub fn routed_model(
+        &self,
+        id: &str,
+        owner_user_id: &str,
+    ) -> std::io::Result<Option<(String, String)>> {
+        Ok(self.get(id, Some(owner_user_id))?.and_then(|conversation| {
+            match (conversation.routed_role, conversation.routed_model_id) {
+                (Some(role), Some(model_id)) => Some((role, model_id)),
+                // Half a decision is not one. Routing afresh is the safe
+                // reading, and it is what a file written before this field
+                // existed produces anyway.
+                _ => None,
+            }
+        }))
+    }
+
+    /// Records the model this conversation is answering with.
+    ///
+    /// Deliberately does not touch `last_activity_at`: the turn that caused
+    /// this is about to update it for its own reasons, and a second write with
+    /// a different timestamp would reorder the sidebar twice.
+    pub fn set_routed_model(
+        &self,
+        id: &str,
+        role: &str,
+        model_id: &str,
+        owner_user_id: &str,
+    ) -> std::io::Result<()> {
+        let Some(mut conversation) = self.get(id, Some(owner_user_id))? else {
+            return Ok(());
+        };
+        if conversation.routed_role.as_deref() == Some(role)
+            && conversation.routed_model_id.as_deref() == Some(model_id)
+        {
+            // Unchanged, and a rewrite that changes nothing still rewrites the
+            // file. This is the common case: every turn after the first.
+            return Ok(());
+        }
+        conversation.routed_role = Some(role.to_string());
+        conversation.routed_model_id = Some(model_id.to_string());
+        self.save(&conversation)
     }
 
     /// Corrects a reserved turn's run id to the one the runtime actually minted.
@@ -805,6 +954,7 @@ impl ConversationStore {
             error,
             outcome,
             verification,
+            tool_summary,
             failed,
             tokens_in,
             tokens_out,
@@ -868,6 +1018,9 @@ impl ConversationStore {
             // Same rule as the outcome: only a writer that knows says
             // anything. A `message_end` writer knows nothing about the
             // verifier and must not clear what the run recorded.
+            if tool_summary.is_some() {
+                msg.tool_summary = tool_summary.map(str::to_string);
+            }
             if verification.is_some() {
                 msg.verification = verification.map(str::to_string);
             }

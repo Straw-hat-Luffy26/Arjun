@@ -253,6 +253,11 @@ pub fn agent_complete_message(
                 error: error.as_deref(),
                 outcome: outcome.as_deref(),
                 verification: verification.as_deref(),
+                // Not written from this side. The tool summary is built where
+                // the tool calls are known — at the end of the run in
+                // `commands::agent` — and `None` here means "I do not know
+                // this", never "clear it".
+                tool_summary: None,
                 failed,
                 tokens_in,
                 tokens_out,

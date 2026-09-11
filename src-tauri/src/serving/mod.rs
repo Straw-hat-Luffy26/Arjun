@@ -395,6 +395,15 @@ struct Spawned {
 struct Managed {
     child: Child,
     endpoint: Endpoint,
+    /// When this server was last handed to a caller.
+    ///
+    /// Read by `admission::admit` to evict the *least recently used* server
+    /// first. Without it the candidates came out of a `HashMap` in whatever
+    /// order the hasher produced, so a turn that attached a document could stop
+    /// the chat model to make room for the OCR model and then, moments later,
+    /// stop the OCR model to make room for the chat model again — two cold
+    /// starts and two destroyed prompt caches, on every message.
+    last_used: std::time::Instant,
     /// Whether this server has already answered a readiness probe.
     ///
     /// Set once, by the call that started it and waited. Every later run for
@@ -691,6 +700,7 @@ impl ModelServers {
         table.insert(
             entry.id.clone(),
             Managed {
+                last_used: std::time::Instant::now(),
                 child,
                 endpoint: endpoint.clone(),
                 ready: Arc::clone(&ready),
@@ -754,6 +764,25 @@ impl ModelServers {
             .unwrap_or_default()
     }
 
+    /// Running servers, least recently used first.
+    ///
+    /// The order eviction should follow. `running_model_ids` returns `HashMap`
+    /// keys, so the server `admission` reclaimed first was whichever the hasher
+    /// happened to yield — which on a two-model turn is a coin toss between the
+    /// model just used and the one about to be. Deterministic as well as
+    /// sensible: the same machine in the same state now makes the same choice.
+    pub fn eviction_order(&self) -> Vec<String> {
+        let Ok(table) = self.managed.lock() else {
+            return Vec::new();
+        };
+        let mut rows: Vec<(&String, std::time::Instant)> =
+            table.iter().map(|(id, m)| (id, m.last_used)).collect();
+        // Oldest first, and by id where two are indistinguishable so the order
+        // does not depend on iteration.
+        rows.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+        rows.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
     /// Whether this model's server is already up and has answered a probe.
     ///
     /// Asked *before* [`Self::endpoint_for`] so a caller can tell the person
@@ -785,13 +814,27 @@ impl ModelServers {
     /// first token, to re-derive a plan for a server that is not going to be
     /// started.
     pub fn warm_endpoint(&self, model_id: &str) -> Option<Endpoint> {
-        self.managed.lock().ok().and_then(|table| {
-            let server = table.get(model_id)?;
+        self.managed.lock().ok().and_then(|mut table| {
+            let server = table.get_mut(model_id)?;
             if !server.ready.load(Ordering::Acquire) {
                 return None;
             }
+            server.last_used = std::time::Instant::now();
             Some(server.endpoint.clone())
         })
+    }
+
+    /// Marks a server as used now, so eviction sees it as recent.
+    ///
+    /// Called wherever an endpoint is handed out by a path that does not go
+    /// through `warm_endpoint`. Silent when the model is not managed here — an
+    /// external endpoint has nothing to evict.
+    pub fn touch(&self, model_id: &str) {
+        if let Ok(mut table) = self.managed.lock() {
+            if let Some(server) = table.get_mut(model_id) {
+                server.last_used = std::time::Instant::now();
+            }
+        }
     }
 }
 

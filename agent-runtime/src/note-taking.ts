@@ -80,6 +80,26 @@ function targetOf(tool: string, args: unknown): string | undefined {
 }
 
 /**
+ * The next `C<n>` marker, one past the highest already recorded.
+ *
+ * Reads the list rather than keeping a counter so it survives
+ * `WorkingNotes.from(state)` on a resumption, where the ids are replayed into a
+ * fresh instance and any counter would restart at zero — which would reuse
+ * markers a previous attempt had already handed out.
+ */
+export function nextCalculationId(existing: readonly string[]): string {
+  let highest = 0;
+  for (const id of existing) {
+    const match = /^C(\d+)$/.exec(id.trim());
+    const digits = match?.[1];
+    if (!digits) continue;
+    const n = Number.parseInt(digits, 10);
+    if (Number.isFinite(n) && n > highest) highest = n;
+  }
+  return `C${highest + 1}`;
+}
+
+/**
  * Folds one tool result into the notes.
  *
  * Pure with respect to everything except the notes it is given, so a caller can
@@ -104,9 +124,16 @@ export function observeToolResult(
   }
 
   if (isCalculation(tool)) {
-    // Numbered by position, because the engine's own record is keyed that way
-    // and the note is a reference into it rather than a copy of the working.
-    notes.calculated(`C${notes.state.calculationIds.length + 1}`);
+    // Numbered from the highest marker already held, not from the list's
+    // length.
+    //
+    // `calculationIds` is capped at 32 and `push` shifts the oldest out, so
+    // once 32 are held the length stops growing — and `C${length + 1}` becomes
+    // a permanent `C33`. `#addId` drops an id it already holds, so the 34th
+    // calculation onward recorded nothing at all, and because the drop happened
+    // before `push` the `dropped` counter did not move either: the notes did
+    // not even say they had stopped counting.
+    notes.calculated(nextCalculationId(notes.state.calculationIds));
   }
 
   const target = targetOf(tool, args);
@@ -122,3 +149,4 @@ export function observeToolResult(
     }
   }
 }
+

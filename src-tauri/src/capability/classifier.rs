@@ -68,24 +68,53 @@ const CODING: &[Signal] = &[
     Signal("java", CLEAR),
     Signal("golang", CLEAR),
     Signal("c++", CLEAR),
+    Signal("cpp", CLEAR),
     Signal("sql", CLEAR),
     Signal("html", CLEAR),
     Signal("css", CLEAR),
     Signal("bash", CLEAR),
     Signal("regex", CLEAR),
-    Signal("code", CLEAR),
     Signal("snippet", CLEAR),
-    // Constructs
+    // `code` sits alone at MODERATE, and the level is the whole point.
+    //
+    // At CLEAR it was 2.0, and "as per the code, what is the minimum shell
+    // thickness" cleared the specialist bar on that word by itself — in a
+    // refinery, "the code" is ASME or IS, not source. At WEAK it was 0.6, and
+    // "write the example code for a linked list in cpp" stopped reading as
+    // coding at all. MODERATE is the level at which one occurrence is not
+    // enough and one occurrence beside a language name is.
+    Signal("code", MODERATE),
+    // Constructs that stay diagnostic in a plant. A refinery has functions and
+    // implements recommendations, but neither collides the way the block below
+    // does, and at MODERATE one of them alone still falls short of the bar.
     Signal("function", MODERATE),
-    Signal("class", MODERATE),
-    Signal("method", MODERATE),
-    Signal("variable", MODERATE),
-    Signal("import", MODERATE),
-    Signal("module", MODERATE),
-    Signal("library", MODERATE),
     Signal("implement", MODERATE),
     Signal("script", MODERATE),
-    Signal("runtime", MODERATE),
+    // ── Words a refinery uses for something else ──────────────────────────
+    //
+    // Every signal below reads as programming in a developer tool and as
+    // ordinary work in this one, and they are the reason a question about a
+    // pressure vessel was being answered by a coding model.
+    //
+    // "What is the recommended inspection method for this class of vessel?"
+    // used to score `method` + `class` = 3.0 for coding against 0 for
+    // everything else, which cleared the specialist threshold outright. A
+    // plant runs on inspection *methods*, pressure *classes*, ASME *codes*,
+    // equipment *runtime*, variable-speed drives, drawing *libraries*, plant
+    // *modules*, the *function* of a valve, and *importing* a document.
+    //
+    // They are not deleted, because a genuine coding request in this product
+    // says them too — "implement a function", "fix the import error". They are
+    // demoted to WEAK, which needs corroboration: two of them together no
+    // longer clear the bar, and one of them beside `python` or `refactor`
+    // still does.
+    Signal("class", WEAK),
+    Signal("method", WEAK),
+    Signal("variable", WEAK),
+    Signal("import", WEAK),
+    Signal("module", WEAK),
+    Signal("library", WEAK),
+    Signal("runtime", WEAK),
     // Ambiguous on their own
     Signal("error", WEAK),
     Signal("exception", WEAK),
@@ -257,17 +286,37 @@ impl IntentClassifier {
             return ClassificationResult::general();
         }
 
-        let total: f32 = scored.iter().map(|(_, s)| *s).sum();
+        let runner_up_score = scored.get(1).map(|(_, s)| *s).unwrap_or(0.0);
 
-        // Dominance: 1.0 when unopposed, 0.5 when tied with an equal rival.
-        let dominance = if total > 0.0 { top_score / total } else { 0.0 };
+        // Separation: 1.0 when unopposed, 0.0 when tied with an equal rival.
+        //
+        // This was `top / total` across all five intents, which cannot fall
+        // below 1/5 however contested the prompt is — so the multiplier it fed
+        // never dropped below 0.6, and a *perfect* two-way tie at 4.5 points
+        // still cleared the 0.55 specialist bar. The module header above
+        // promises that "neither an isolated keyword nor a tie between two
+        // domains can trigger a capability switch"; against the runner-up
+        // rather than the sum, that is finally true — a tie scores exactly
+        // zero, and no amount of evidence rescues it.
+        let separation = if top_score > 0.0 {
+            (top_score - runner_up_score) / top_score
+        } else {
+            0.0
+        };
         // Evidence: saturating in absolute signal strength.
         let evidence = top_score / (top_score + EVIDENCE_SATURATION);
 
-        // Evidence sets the ceiling; dominance scales it down when contested.
-        // A dominant-but-thin verdict is capped by evidence, and a well-evidenced
-        // but contested one is capped by dominance.
-        let confidence = (evidence * (0.5 + 0.5 * dominance)).clamp(0.0, 1.0);
+        // Evidence sets the ceiling; separation scales it down when something
+        // else scored nearly as well.
+        //
+        // The floor of 0.5 is what a *tied* prompt is worth, and it is chosen
+        // to sit below `SPECIALIST_CONFIDENCE`: however much evidence a tie
+        // carries, `evidence * 0.5` cannot reach 0.55, so a two-way tie can
+        // never trigger a switch. Multiplying by `separation` alone was the
+        // first attempt and it was too harsh — "Write a Python function to
+        // call the REST api" is a real coding request, and one incidental
+        // `api` in the rival table dragged it under the bar.
+        let confidence = (evidence * (0.5 + 0.5 * separation)).clamp(0.0, 1.0);
 
         let runner_up = scored
             .get(1)
@@ -336,6 +385,78 @@ mod tests {
         assert!(
             result.confidence > 0.55,
             "expected a confident coding verdict, got {:.3}",
+            result.confidence
+        );
+    }
+
+    /// The failure this product actually had: plant English read as code.
+    ///
+    /// ARJUN is used around pressure vessels, inspection procedures and ASME
+    /// codes, and the coding table held `class`, `method`, `module`, `library`,
+    /// `import`, `variable`, `runtime` and `code` at weights high enough that
+    /// two of them together cleared the specialist threshold. The router then
+    /// sent an inspection question to a coding model, applied that model's 7B
+    /// floor, and discarded whichever model the administrator had pinned.
+    ///
+    /// None of these may classify as a confident specialist verdict.
+    #[test]
+    fn plant_english_is_not_read_as_a_coding_request() {
+        for prompt in [
+            "What is the recommended inspection method for this class of vessel?",
+            "As per the code, what is the minimum shell thickness?",
+            "What is the runtime of the standby pump module?",
+            "Import the vendor drawing library and list what is in it",
+            "Check the variable speed drive against the equipment register",
+            "What is the function of the pressure relief valve on this line?",
+        ] {
+            let result = IntentClassifier::classify(prompt);
+            assert!(
+                result.confidence < 0.55,
+                "{prompt:?} was read as {:?} with confidence {:.3}; a specialist model would have been chosen for a plant question",
+                result.intent,
+                result.confidence
+            );
+        }
+    }
+
+    /// The other half of the same rule: real coding requests still route.
+    ///
+    /// Asserted beside the case above because the two are one decision. Making
+    /// plant English safe is worthless if it also makes "refactor this" arrive
+    /// at a general model.
+    #[test]
+    fn a_real_coding_request_still_reads_as_one() {
+        for prompt in [
+            "Write a Python function to parse this CSV",
+            "Refactor this code so the retry loop is not duplicated",
+            "There is a segmentation fault in the parser, help me debug it",
+            "Write a bash script to rotate these logs",
+        ] {
+            let result = IntentClassifier::classify(prompt);
+            assert_eq!(result.intent, PromptIntent::Coding, "{prompt:?}");
+            assert!(
+                result.confidence >= 0.55,
+                "{prompt:?} scored only {:.3}",
+                result.confidence
+            );
+        }
+    }
+
+    /// A tie can never trigger a switch, however much evidence it carries.
+    ///
+    /// The old formula measured the leader against the *sum* of all five
+    /// intents, which cannot fall below a fifth, so its multiplier never went
+    /// under 0.6 and a perfectly tied prompt at 4.5 points was "confident".
+    /// This is the property the module header claims and now has.
+    #[test]
+    fn a_two_way_tie_is_never_confident() {
+        // One decisive signal from each of two tables, and nothing else.
+        let result = IntentClassifier::classify("solve for x, and refactor it");
+        assert!(
+            result.confidence < 0.55,
+            "a tie between {:?} and {:?} was confident at {:.3}",
+            result.intent,
+            result.runner_up,
             result.confidence
         );
     }

@@ -1,3 +1,16 @@
+//! **NOT THE LOOP. `Executor` has no production caller.**
+//!
+//! The agent loop is the Node child process in `agent-runtime/`; this module's
+//! `Executor`, `step`, `step_batch` and `TaskState` are reachable only from its
+//! own tests. Two things in it are live and are why the file is still here:
+//! the `ToolRunner` trait, which `agent_runtime` implements, and the
+//! `CONSECUTIVE_REFUSAL_LIMIT` constant.
+//!
+//! This is stated at the top because it has already cost real time: a review
+//! reading this file for "how does a turn run" reported the batch-admission
+//! defect below as a live bug, and it is not reachable. Fix the Node loop, or
+//! delete `Executor` — do not reason about the product from this file.
+//!
 //! Running a task one step at a time, pausing when a person is needed.
 //!
 //! This is where the plan, the gateway and the tools meet. It deliberately runs

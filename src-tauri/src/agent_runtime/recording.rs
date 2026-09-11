@@ -191,8 +191,36 @@ pub(super) fn refused(deps: &Arc<RuntimeDeps>, call: &CallParams, reason: String
         call.tool
     );
     remember_refusal(deps, call, &reason);
+    // And into the in-memory table the task record is built from. `remember_refusal`
+    // above writes the durable event, which is what a screen reads after a
+    // restart; this is what the record written at the end of the run holds, and
+    // until now only successful and failed calls reached it.
+    super::record_refusal(deps, &call.run_id, &call.tool, &reason);
     super::release_reservation(deps, &call.run_id, &call.tool_call_id);
     json!({ "outcome": "refuse", "reason": reason })
+}
+
+/// A refusal that may also be the end of the turn.
+///
+/// `terminal` is set when the plan has halted — its budget is spent, it caught
+/// the run looping, or its time is up — and every call after this one would be
+/// refused with the same sentence. The loop reads it and stops rather than
+/// trying again, which is what it did before: each retry emitted events, the
+/// events rearmed the stall guard, and a run with nothing left to spend ran to
+/// its thirty-minute deadline producing refusals.
+pub(super) fn refused_terminally(
+    deps: &Arc<RuntimeDeps>,
+    call: &CallParams,
+    reason: String,
+    terminal: bool,
+) -> Value {
+    let mut verdict = refused(deps, call, reason);
+    if terminal {
+        if let Some(object) = verdict.as_object_mut() {
+            object.insert("terminal".to_string(), Value::Bool(true));
+        }
+    }
+    verdict
 }
 
 /// Writes how a tool call went into the run's durable history.

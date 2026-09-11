@@ -192,16 +192,6 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "browse_model_cards": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
-    "cancel_model_download": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
     "cancel_scan": {
       "owner": "ocr",
       "consumer": "frontend",
@@ -231,11 +221,6 @@
       "owner": "models",
       "consumer": "frontend",
       "note": "Called from src/. The Storage screen's scan for weight files already on the machine; it registers what the manifest does not list, adding only and never editing an entry an administrator wrote by hand. Gated on ImportModel because it writes the manifest."
-    },
-    "get_active_downloads": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
     },
     "get_all_package_certifications": {
       "owner": "models",
@@ -283,11 +268,6 @@
       "note": "Packages known not to be certified. No surface calls it yet; the service wrapper that did was dead code and was removed."
     },
     "get_hardware_profile": {
-      "owner": "platform",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
-    "get_hf_token_status": {
       "owner": "platform",
       "consumer": "frontend",
       "note": "Called from src/."
@@ -386,11 +366,6 @@
       "owner": "models",
       "consumer": "frontend",
       "note": "Called from src/. Distinct from list_registered_models, which returns the registry as loaded at startup: this one re-reads the manifest from disk, so a model detect_system_models registered moments ago shows up on the Storage screen without a restart."
-    },
-    "list_model_categories": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
     },
     "list_registered_models": {
       "owner": "models",
@@ -497,11 +472,6 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "pause_model_download": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
     "prepare_model_for": {
       "owner": "models",
       "consumer": "frontend",
@@ -557,11 +527,6 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
-    "resume_model_download": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
     "revert_hardware_override": {
       "owner": "platform",
       "consumer": "frontend",
@@ -570,7 +535,7 @@
     "run_benchmark": {
       "owner": "benchmarks",
       "consumer": "admin",
-      "note": "Runs the measured benchmark suite. Operator-invoked; never on a page, because a benchmark started by a render is a benchmark of the render."
+      "note": "Refuses: the measured path is not wired. It previously timed nothing and recorded the caller's own arguments as a measurement, so it now returns an error rather than a plausible row. Operator-invoked; never on a page, because a benchmark started by a render is a benchmark of the render."
     },
     "run_egress_canary": {
       "owner": "sovereignty",
@@ -598,11 +563,6 @@
       "note": "Called from src/."
     },
     "set_config_value": {
-      "owner": "platform",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
-    "set_hf_token": {
       "owner": "platform",
       "consumer": "frontend",
       "note": "Called from src/."
@@ -652,11 +612,6 @@
       "consumer": "admin",
       "note": "Lists installed skills as cards. The model reaches skills through capability.search; this is the operator's view."
     },
-    "start_model_download": {
-      "owner": "models",
-      "consumer": "frontend",
-      "note": "Called from src/."
-    },
     "stop_chat_generation": {
       "owner": "inference",
       "consumer": "frontend",
@@ -666,11 +621,6 @@
       "owner": "agent",
       "consumer": "admin",
       "note": "Lists the loaded subagent profiles, so an operator can see which are available."
-    },
-    "synthetic_benchmark": {
-      "owner": "benchmarks",
-      "consumer": "frontend",
-      "note": "Called from src/."
     },
     "unload_active_model": {
       "owner": "inference",
@@ -716,6 +666,11 @@
       "owner": "voice",
       "consumer": "frontend-pending",
       "note": "Voice input."
+    },
+    "widget_prepare": {
+      "owner": "widgets",
+      "consumer": "frontend",
+      "note": "Called from src/components/chat/WidgetFrame.tsx. Holds one widget document in memory and returns the id the widget:// handler serves it under."
     },
     "zero_trust_check_tool_call": {
       "owner": "governance",

@@ -1,9 +1,9 @@
 ---
 name: engineering-calculation
 description: >-
-  Work out an engineering figure with units, using the deterministic calculation
-  engine for every step, and produce a workbook that shows the working as live
-  formulas Excel can recompute.
+  Work out an engineering figure with units, using the deterministic
+  calculation engine for every step, and produce a workbook that shows the
+  working.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

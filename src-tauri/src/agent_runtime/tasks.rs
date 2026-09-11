@@ -322,6 +322,24 @@ pub struct ContextLedgerRecord {
     pub headroom: i64,
 }
 
+/// What a turn could not fit of its own conversation.
+///
+/// Counted before the model is called, from `turn_context::fit`, so the numbers
+/// describe what was *offered* to the turn rather than what it did with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryTrim {
+    /// Earlier messages that did not fit and were left out.
+    pub dropped: u32,
+    /// Earlier messages that did fit and were sent.
+    pub carried: u32,
+    /// Roughly what the carried ones cost, in tokens.
+    pub tokens: u32,
+    /// The served window this was budgeted against, so a reader can see why a
+    /// thread that was fine yesterday is not today.
+    pub window_tokens: u32,
+}
+
 /// One time a run's older history was replaced by a summary.
 ///
 /// Kept on the record, not only counted, because "compacted three times" and
@@ -412,6 +430,19 @@ pub struct TaskRecord {
     /// Where the context window stood when the run ended.
     #[serde(default)]
     pub context_ledger: Option<ContextLedgerRecord>,
+    /// Conversation this turn could not carry, because the window had no room.
+    ///
+    /// `None` means nothing was left out. Distinct from a compaction: a
+    /// compaction *summarises* what it replaces and says so in the transcript,
+    /// while this is history that was never sent at all — so an answer given
+    /// after it rests on less than the thread contains, with nothing in the
+    /// answer to hint at that.
+    ///
+    /// Durable for the same reason `ContextCompacted` is: it is a caveat on
+    /// everything the turn said, and a recovered trace that dropped it would
+    /// overstate what the model had in front of it.
+    #[serde(default)]
+    pub history_trim: Option<HistoryTrim>,
 }
 
 impl TaskRecord {
@@ -733,6 +764,7 @@ pub(crate) mod tests {
             compactions: Vec::new(),
             working_notes: None,
             context_ledger: None,
+            history_trim: None,
             verification: None,
             artifacts: Vec::new(),
             evidence: Vec::new(),

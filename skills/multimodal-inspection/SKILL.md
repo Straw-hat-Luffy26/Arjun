@@ -1,9 +1,8 @@
 ---
 name: multimodal-inspection
 description: >-
-  Work with scanned inspection reports, drawings and photographs that have been
-  taken into the knowledge base, reporting what was actually read and what was
-  not rather than filling the gaps.
+  Work with scanned inspection reports, drawings and photographs that have
+  been taken into the knowledge base, reporting what was actually read and.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

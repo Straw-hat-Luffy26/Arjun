@@ -1,106 +1,24 @@
-//! Phase 4 Tauri Commands for Model Downloads & Storage Management
+//! Models already installed on this machine.
+//!
+//! ## What this module used to be
+//!
+//! It was the download surface: `start_model_download`,
+//! `pause_model_download`, `resume_model_download`, `cancel_model_download`
+//! and `get_active_downloads`, each of which reached the HuggingFace Hub
+//! through `DownloadManager`. This build reaches no model catalogue, so they
+//! are gone along with the manager, the provider and the token that
+//! authenticated them.
+//!
+//! Weights arrive by a reviewed offline transfer into the model directory and
+//! are registered by `registry::scan`. What is left here reads and removes what
+//! is already on disk, and touches nothing off this machine.
 
 use tauri::{AppHandle, Manager, State};
-use std::sync::Arc;
-use anyhow::Result;
 
 use crate::commands::governance::{require_permission, require_session, CurrentSession};
-use crate::download_manager::traits::{DownloadTask, InstalledModel, StorageSummary};
-use crate::download_manager::DownloadManager;
+use crate::download_manager::traits::{InstalledModel, StorageSummary};
 use crate::identity::Permission;
 use crate::model_manager::ModelManager;
-
-#[tauri::command]
-pub async fn start_model_download(
-    app_handle: AppHandle,
-    download_mgr: State<'_, Arc<DownloadManager>>,
-    session: State<'_, CurrentSession>,
-    model_id: String,
-    model_name: String,
-    provider_id: String,
-    quantization: String,
-    format: String,
-    backend: String,
-    hf_token: Option<String>,
-) -> Result<String, String> {
-    // A model download is the first half of installing a model. The
-    // matrix puts it under `ImportModel`. `User` and below must not
-    // start one.
-    require_permission(&session, Permission::ImportModel)?;
-
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve AppData directory: {}", e))?;
-
-    download_mgr
-        .start_download(
-            app_handle.clone(),
-            app_data_dir,
-            model_id,
-            model_name,
-            provider_id,
-            quantization,
-            format,
-            backend,
-            hf_token,
-        )
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn pause_model_download(
-    download_mgr: State<'_, Arc<DownloadManager>>,
-    session: State<'_, CurrentSession>,
-    task_id: String,
-) -> Result<(), String> {
-    require_permission(&session, Permission::ImportModel)?;
-    download_mgr.pause_download(&task_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn resume_model_download(
-    app_handle: AppHandle,
-    download_mgr: State<'_, Arc<DownloadManager>>,
-    session: State<'_, CurrentSession>,
-    task_id: String,
-    hf_token: Option<String>,
-) -> Result<String, String> {
-    require_permission(&session, Permission::ImportModel)?;
-
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve AppData directory: {}", e))?;
-
-    download_mgr
-        .resume_download(app_handle.clone(), app_data_dir, &task_id, hf_token)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cancel_model_download(
-    app_handle: AppHandle,
-    download_mgr: State<'_, Arc<DownloadManager>>,
-    session: State<'_, CurrentSession>,
-    task_id: String,
-) -> Result<(), String> {
-    require_permission(&session, Permission::ImportModel)?;
-    download_mgr.cancel_download(&app_handle, &task_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_active_downloads(
-    download_mgr: State<'_, Arc<DownloadManager>>,
-    session: State<'_, CurrentSession>,
-) -> Result<Vec<DownloadTask>, String> {
-    // The list of in-flight downloads is not sensitive; any signed-in
-    // user can see it. The matrix does not gate read-only inspection.
-    require_session(&session)?;
-    Ok(download_mgr.list_tasks())
-}
 
 #[tauri::command]
 pub fn get_installed_models(

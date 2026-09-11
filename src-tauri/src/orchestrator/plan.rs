@@ -794,14 +794,33 @@ mod tests {
         }
     }
 
+    /// A name that resolves to no tool is refused — and the run carries on.
+    ///
+    /// This test used to expect `StopReason::Failed`, which is what `admits`
+    /// returned before the `UnknownTool` branch was added. The distinction is
+    /// the whole point of that branch: `Failed` goes through `self.halt`, which
+    /// records the reason and makes every later call replay it, whereas a
+    /// misspelled tool name should cost the model one call and no more. So the
+    /// refusal is asserted here, and so is the run still being usable after it.
     #[test]
-    fn a_tool_that_does_not_exist_stops_the_run() {
+    fn a_tool_that_does_not_exist_is_refused_without_ending_the_run() {
         let mut run = run();
-        let call = ToolCall::new("delete_everything", json!({}));
-        assert!(matches!(
-            run.may_call(&call),
-            Continuation::Stop(StopReason::Failed { .. })
-        ));
+
+        match run.may_call(&ToolCall::new("delete_everything", json!({}))) {
+            Continuation::Stop(StopReason::UnknownTool { tool, available }) => {
+                assert_eq!(tool, "delete_everything");
+                // The model is told which names are right, so its next call can
+                // be better rather than merely different.
+                assert!(!available.is_empty(), "the refusal named no alternatives");
+            }
+            other => panic!("expected an unknown-tool refusal, got {other:?}"),
+        }
+
+        // The run was not halted: a real call still gets a real answer.
+        assert!(
+            matches!(run.may_call(&search("wall thickness")), Continuation::Proceed),
+            "a misspelled tool name ended the run"
+        );
     }
 
     // ── Loops ────────────────────────────────────────────────────────────

@@ -10,10 +10,9 @@ import {
   Star,
   ScanSearch,
 } from 'lucide-react';
-import { Button, Spinner, DownloadBar } from '../components/ui';
+import { Button, Spinner } from '../components/ui';
 import { Can } from '../components/auth/Can';
 import { useToast } from '../hooks/useToast';
-import { useDownloads } from '../hooks/useDownloads';
 import {
   getInstalledModels,
   deleteInstalledModel,
@@ -108,19 +107,6 @@ export const Storage: React.FC = () => {
       setLoading(false);
     }
   }, []);
-
-  // A finished download becomes an installed model, so the list below it has to
-  // catch up on its own — otherwise the bar says "Finished" while the model is
-  // nowhere to be seen until a manual refresh.
-  const onDownloadCompleted = useCallback(
-    (d: { modelName: string }) => {
-      addToast('success', `${d.modelName} is ready to use`);
-      void refresh();
-    },
-    [addToast, refresh]
-  );
-
-  const { downloads, pause, resume, cancel, dismiss } = useDownloads(onDownloadCompleted);
 
   useEffect(() => {
     refresh();
@@ -332,27 +318,6 @@ export const Storage: React.FC = () => {
             <span className={styles.statValue}>{formatSize(summary.availableDiskSpaceBytes ?? 0)}</span>
           </div>
         </div>
-      )}
-
-      {downloads.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>
-            <Download size={15} /> Downloading
-            <span className={styles.count}>{downloads.length}</span>
-          </h2>
-          <div className={styles.downloads}>
-            {downloads.map((d) => (
-              <DownloadBar
-                key={d.taskId}
-                download={d}
-                onPause={(id) => void pause(id)}
-                onResume={(id) => void resume(id)}
-                onCancel={(id) => void cancel(id)}
-                onDismiss={dismiss}
-              />
-            ))}
-          </div>
-        </section>
       )}
 
       <section className={styles.section}>

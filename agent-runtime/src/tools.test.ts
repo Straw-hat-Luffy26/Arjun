@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+
+/** A literal newline, kept out of the template strings below. */
+const NL = String.fromCharCode(10);
 import type { BeforeToolCallContext } from "@openclaw/agent-core";
 import { RpcPeer, type PeerTransport } from "./peer.js";
+import { isImageWithMediaPayload } from "../vendor/openclaw/packages/ai/src/providers/tool-result-text.js";
 import { GrantLedger, authorizeToolCall, buildTools, type Verdict } from "./tools.js";
 
 /** A peer whose `request` is scripted, so the gateway's answer is the variable. */
@@ -211,22 +215,57 @@ describe("host tools", () => {
 
     const result = await tool.execute("tc-mm", { query: "PT-2201" });
 
-    // The content array is text first, then images, then tables. Order
-    // matters because some agent-core versions read the first part as
-    // the answer and the rest as supplementary.
+    // Text first, then images. Order matters because some agent-core versions
+    // read the first part as the answer and the rest as supplementary.
+    //
+    // This used to assert `{ source: { type: "base64", media_type, data } }`
+    // for the image and a `{ type: "table", headers, rows }` block beside it.
+    // Both shapes were pinned here and understood nowhere: `llm-core`'s
+    // `ImageContent` wants `data` and `mimeType` at the top level, and there is
+    // no table block type at all. The test passed while the rows and the
+    // picture reached neither the model nor the person.
     expect(result.content).toEqual([
-      { type: "text", text: "1 passage, 1 region, 1 table." },
+      {
+        type: "text",
+        text:
+          "1 passage, 1 region, 1 table." + NL + NL +
+          "Pump Manual, page 4 (table)" + NL +
+          "| K | V |" + NL + "| --- | --- |" + NL + "| design pressure | 14 bar |",
+      },
       {
         type: "image",
-        source: { type: "base64", media_type: "image/png", data: "BASE64" },
+        data: "BASE64",
+        mimeType: "image/png",
         caption: "PT-2201 on a P&ID",
       },
-      {
-        type: "table",
-        headers: ["K", "V"],
-        rows: [["design pressure", "14 bar"]],
-        citation: "Pump Manual, page 4 (table)",
-      },
     ]);
+  });
+
+  /**
+   * The property the shape above exists for.
+   *
+   * `isImageWithMediaPayload` is what every provider emitter gates image output
+   * on, and it reads `block.data` — not `block.source.data`. An image that
+   * fails it is dropped silently, and `describeToolResultMediaPlaceholder`
+   * fails the same check, so the model is not even told one existed. Asserting
+   * the predicate rather than the field names keeps this true if the
+   * transport's shape ever moves.
+   */
+  it("emits images the transport will actually forward", async () => {
+    const ledger = new GrantLedger();
+    const peer = scriptedPeer(async () => ({
+      text: "one region",
+      images: [{ mime: "image/png", data: "BASE64", caption: "a valve" }],
+    }));
+    const tool = buildTools(peer, ledger, "run-1", "qwen2.5-vl-3b")
+      .find((t) => t.name === "knowledge.multimodal_retrieve")!;
+    ledger.put("tc-img", "g-img");
+
+    const result = await tool.execute("tc-img", { query: "valve" });
+    const image = result.content.find(
+      (block: { type: string }) => block.type === "image",
+    );
+
+    expect(isImageWithMediaPayload(image)).toBe(true);
   });
 });

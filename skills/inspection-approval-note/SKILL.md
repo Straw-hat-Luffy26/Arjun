@@ -1,9 +1,8 @@
 ---
 name: inspection-approval-note
 description: >-
-  Draft an approval note from an inspection report, grounded in the site's own
-  documents, with every figure produced by the calculation engine and every
-  claim carrying the marker of the passage it came from.
+  Draft an approval note from an inspection report, grounded in the site's
+  own documents, with every figure produced by the calculation engine and.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

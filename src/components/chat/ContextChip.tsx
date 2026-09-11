@@ -57,7 +57,7 @@ export function ContextChip() {
   // `activeMessageId` is reserved before the turn starts and never changes. The
   // ledger belongs to the run and the attachment costs belong to the turn — see
   // `useContextLedger`, where the split is explained.
-  const { ledger, compactions, attachments, status, error } = useContextLedger(
+  const { ledger, compactions, historyTrim, attachments, status, error } = useContextLedger(
     latestRunId,
     activeMessageId,
   );
@@ -298,6 +298,19 @@ export function ContextChip() {
         {compactions.length > 0 && (
           <span className={styles.contextCompactCount}>×{compactions.length}</span>
         )}
+        {historyTrim && (
+          // On the chip itself, not only inside the card: the card has to be
+          // opened, and somebody who does not already suspect the thread lost
+          // its history has no reason to open it.
+          <span
+            className={styles.contextCompactCount}
+            title={`${historyTrim.dropped} earlier message${
+              historyTrim.dropped === 1 ? '' : 's'
+            } did not fit this model's window and were not sent`}
+          >
+            −{historyTrim.dropped}
+          </span>
+        )}
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
       </button>
       {open && (
@@ -357,6 +370,18 @@ export function ContextChip() {
               These rows do not add up to the totals they describe
               ({ledger?.itemisationErrors?.map(e => e.section).join(', ')}). Treat
               the breakdown as unreliable.
+            </p>
+          )}
+          {historyTrim && (
+            <p className={styles.contextTrimmedLine}>
+              {historyTrim.dropped} earlier message
+              {historyTrim.dropped === 1 ? '' : 's'} did not fit and {historyTrim.dropped === 1 ? 'was' : 'were'}{' '}
+              not sent to the model. It answered from the {historyTrim.carried} most recent
+              {historyTrim.carried === 1 ? ' one' : ''}
+              {historyTrim.windowTokens > 0 && (
+                <> · window {historyTrim.windowTokens.toLocaleString()} tokens</>
+              )}
+              . A model with a larger window would carry more of this conversation.
             </p>
           )}
           {compactions.length > 0 && (

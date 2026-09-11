@@ -223,8 +223,10 @@ export const Approvals = () => {
           <div>
             <strong>Nothing is waiting on you.</strong>
             <p>
-              A task pauses here before any action that writes a file, runs code, or produces a
-              document somebody will sign.
+              A task pauses here before it writes a file outside its own workspace, runs code, or
+              deletes a notebook. Producing a document you asked for &mdash; a note, a workbook, a
+              deck &mdash; does not stop here: you already asked for it, and it is written inside
+              the task&rsquo;s own folder.
             </p>
           </div>
         </div>

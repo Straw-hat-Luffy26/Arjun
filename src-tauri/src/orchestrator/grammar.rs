@@ -223,13 +223,33 @@ mod tests {
         assert!(!grammar.gbnf.contains("sandbox.run_code"));
     }
 
+    /// Every declared argument is named somewhere in its tool's grammar.
+    ///
+    /// Two shapes, because `build` has two. A per-key rule spells each name as
+    /// a quoted JSON key; an artifact rule matches a plain `object` and lists
+    /// the names in the comment above it, for the reason recorded at that
+    /// branch — fixing the key *order* was steering models into a call they did
+    /// not mean.
+    ///
+    /// Both are asserted rather than the artifact case simply being skipped:
+    /// the comment is the only place those names survive into what the model is
+    /// shown, so if `spec_for` gains an argument and the comment does not, that
+    /// is still a drift worth failing on.
     #[test]
     fn every_declared_argument_appears_in_its_rule() {
         for tool in ToolName::ALL {
             let grammar = build(&[*tool]).unwrap();
+            let artifact = tool.is_artifact_creation();
+
             for argument in spec_for(*tool).arguments {
+                let needle = if artifact {
+                    // `# artifact.create_approval_note arguments: path, template, content`
+                    argument.name.to_string()
+                } else {
+                    format!("\\\"{}\\\"", argument.name)
+                };
                 assert!(
-                    grammar.gbnf.contains(&format!("\\\"{}\\\"", argument.name)),
+                    grammar.gbnf.contains(&needle),
                     "{} is missing {:?} in its grammar",
                     tool.as_str(),
                     argument.name
@@ -277,14 +297,33 @@ mod tests {
         assert_eq!(names.len(), ToolName::ALL.len());
     }
 
+    /// A per-key rule maps each declared kind to its own terminal.
     #[test]
     fn argument_kinds_map_to_the_right_terminal() {
-        // `execute_code` takes two strings; `create_docx` takes an object.
         let code = build(&[ToolName::ExecuteCode]).unwrap();
         assert!(code.gbnf.contains("\\\"source\\\"\" ws \":\" ws string"));
 
-        let docx = build(&[ToolName::CreateDocx]).unwrap();
-        assert!(docx.gbnf.contains("\\\"content\\\"\" ws \":\" ws object"));
+        let pages = build(&[ToolName::LoadMoreEvidence]).unwrap();
+        assert!(pages.gbnf.contains("\\\"fromPage\\\"\" ws \":\" ws integer"));
+    }
+
+    /// An artifact call takes its whole argument payload as one `object`.
+    ///
+    /// This used to be asserted as `"content" ws ":" ws object` against
+    /// `create_docx` — the per-key form it no longer uses. The generic form is
+    /// the deliberate one, so it is what is pinned; `spec_for` and the gateway
+    /// remain the things that check the shape, and they can say which key is
+    /// missing, which a grammar cannot.
+    #[test]
+    fn an_artifact_call_takes_a_plain_object() {
+        for tool in ToolName::ALL.iter().copied().filter(|t| t.is_artifact_creation()) {
+            let grammar = build(&[tool]).unwrap();
+            assert!(
+                grammar.gbnf.contains("\\\"arguments\\\"\" ws \":\" ws object"),
+                "{} does not take a plain object",
+                tool.as_str()
+            );
+        }
     }
 
     /// A grammar that cannot express a backslash makes half the paths on Windows

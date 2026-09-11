@@ -43,65 +43,6 @@ pub async fn set_config(
     Ok(())
 }
 
-/// The HuggingFace token's status, without returning the token itself.
-///
-/// A saved secret is not echoed back to the UI — the field shows whether one is
-/// set and where it came from, which is all that is needed to decide whether to
-/// replace it.
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HfTokenStatus {
-    /// True when Hub requests will be authenticated.
-    pub configured: bool,
-    /// `"settings"`, `"environment"`, or `"none"`.
-    pub source: String,
-}
-
-#[tauri::command]
-pub fn get_hf_token_status() -> HfTokenStatus {
-    HfTokenStatus {
-        configured: crate::config::hf_token::is_present(),
-        source: crate::config::hf_token::source().to_string(),
-    }
-}
-
-/// Saves the HuggingFace token and applies it to the running process.
-///
-/// An empty string clears the saved token, after which any `HF_TOKEN` in the
-/// environment takes over again.
-///
-/// Administrator only — the token is a credential, and a leaked token
-/// lets the holder authenticate to HuggingFace as this account, so this
-/// is gated on `ModifyPolicy` like every other config write.
-#[tauri::command]
-pub async fn set_hf_token(
-    app: AppHandle,
-    token: String,
-    session: State<'_, CurrentSession>,
-) -> Result<HfTokenStatus, String> {
-    require_permission(&session, Permission::ModifyPolicy)?;
-    let path = ConfigManager::get_config_path(&app);
-    let mut config = ConfigManager::load(&path).map_err(|e| e.to_string())?;
-
-    config.hf_token = token.trim().to_string();
-    ConfigManager::save(&config, &path).map_err(|e| e.to_string())?;
-
-    // Applied in-process as well as saved, so the next browse uses it without
-    // a restart.
-    crate::config::hf_token::set(Some(config.hf_token.clone()));
-
-    // The cached sweep was fetched under the previous credentials and is a
-    // smaller slice of the library than a token allows; dropping it means the
-    // next browse re-fetches rather than showing the anonymous result.
-    crate::commands::catalog::invalidate_browse_cache();
-
-    log::info!(
-        "[CONFIG] HuggingFace token {}",
-        if config.hf_token.is_empty() { "cleared" } else { "saved" }
-    );
-
-    Ok(get_hf_token_status())
-}
 
 /// Gets a specific config value by key (simplified implementation)
 #[tauri::command]

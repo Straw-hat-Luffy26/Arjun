@@ -4,7 +4,6 @@ import { useTheme } from '../hooks/useTheme';
 import { useConfig } from '../hooks/useConfig';
 import { useToast } from '../hooks/useToast';
 import { getInferenceStatus } from '../services/ai.service';
-import { getHfTokenStatus, setHfToken, type HfTokenStatus } from '../services/config.service';
 import { getModelProfile, updateModelProfile, refreshModelProfile } from '../services/intelligence.service';
 import type { ModelProfile, InferenceParameters } from '../types/intelligence';
 import type { LoadedModelInfo } from '../types/ai';
@@ -82,42 +81,6 @@ export const Settings: React.FC = () => {
   const [profile, setProfile] = useState<ModelProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState<boolean>(false);
   const [params, setParams] = useState<InferenceParameters | null>(null);
-
-  // The saved token is never sent back to the page, so this holds only what is
-  // being typed now; `tokenStatus` says whether one already exists.
-  const [tokenInput, setTokenInput] = useState<string>('');
-  const [tokenStatus, setTokenStatus] = useState<HfTokenStatus | null>(null);
-  const [savingToken, setSavingToken] = useState<boolean>(false);
-
-  useEffect(() => {
-    getHfTokenStatus().then(setTokenStatus).catch(() => setTokenStatus(null));
-  }, []);
-
-  const handleSaveToken = async () => {
-    setSavingToken(true);
-    try {
-      setTokenStatus(await setHfToken(tokenInput));
-      setTokenInput('');
-      addToast('success', 'HuggingFace token saved — Discover will refresh with the full library');
-    } catch (e) {
-      addToast('error', `Could not save the token: ${String(e)}`);
-    } finally {
-      setSavingToken(false);
-    }
-  };
-
-  const handleClearToken = async () => {
-    setSavingToken(true);
-    try {
-      setTokenStatus(await setHfToken(''));
-      setTokenInput('');
-      addToast('info', 'HuggingFace token cleared');
-    } catch (e) {
-      addToast('error', `Could not clear the token: ${String(e)}`);
-    } finally {
-      setSavingToken(false);
-    }
-  };
 
   useEffect(() => {
     async function loadActiveProfile() {
@@ -289,74 +252,6 @@ export const Settings: React.FC = () => {
             onChange={(checked) => setTheme(checked ? 'dark' : 'light')} 
           />
         </div>
-      </Card>
-
-      <Card>
-        <h2 className={styles.sectionTitle}>HuggingFace account</h2>
-        <div className={styles.info} style={{ marginBottom: '12px' }}>
-          <span className={styles.desc}>
-            Without a token, HuggingFace limits anonymous requests and Discover can only
-            show a small slice of the library. A free read token widens the listing and
-            unlocks gated models such as Llama and Gemma.{' '}
-            <a
-              href="https://huggingface.co/settings/tokens"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              Create one
-            </a>
-            .
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <Input
-              label="Access token"
-              type="password"
-              placeholder={
-                tokenStatus?.configured
-                  ? tokenStatus.source === 'environment'
-                    ? 'Currently using HF_TOKEN from your environment'
-                    : 'A token is saved — type a new one to replace it'
-                  : 'hf_...'
-              }
-              value={tokenInput}
-              onChange={(e) => setTokenInput(e.target.value)}
-              autoComplete="off"
-            />
-          </div>
-          <Button onClick={() => void handleSaveToken()} disabled={savingToken || !tokenInput.trim()}>
-            {savingToken ? 'Saving…' : 'Save'}
-          </Button>
-          {tokenStatus?.source === 'settings' && (
-            <Button variant="secondary" onClick={() => void handleClearToken()} disabled={savingToken}>
-              Clear
-            </Button>
-          )}
-        </div>
-
-        <div className={styles.row} style={{ marginTop: '12px' }}>
-          <div className={styles.info}>
-            <span className={styles.label}>Status</span>
-            <span className={styles.desc}>
-              {tokenStatus?.source === 'settings' && 'Saved in Sarathi settings.'}
-              {tokenStatus?.source === 'environment' &&
-                'Using a token from your environment. Saving one here overrides it.'}
-              {(!tokenStatus || tokenStatus.source === 'none') &&
-                'Not configured — browsing anonymously.'}
-            </span>
-          </div>
-          <Badge variant={tokenStatus?.configured ? 'success' : 'default'}>
-            {tokenStatus?.configured ? 'Connected' : 'Anonymous'}
-          </Badge>
-        </div>
-
-        <span className={styles.desc} style={{ display: 'block', marginTop: '10px' }}>
-          Stored in plain text in Sarathi&apos;s local config file, the same way the
-          <code> HF_TOKEN</code> environment variable it replaces would be. Use a
-          read-only token.
-        </span>
       </Card>
 
       <Card>

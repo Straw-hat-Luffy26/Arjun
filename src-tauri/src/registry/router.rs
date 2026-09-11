@@ -61,6 +61,16 @@ pub struct RoutingDecision {
     pub fully_on_gpu: bool,
 }
 
+/// What a conversation has already settled on.
+///
+/// Read from the conversation store at the start of a turn and written back
+/// after routing. See [`ModelRouter::route_sticky`].
+#[derive(Debug, Clone)]
+pub struct StickyRoute {
+    pub role: ModelRole,
+    pub model_id: String,
+}
+
 /// Why no model could be chosen. Each names what would fix it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,9 +257,165 @@ impl ModelRouter {
         )
     }
 
+    /// Routes a turn that belongs to a conversation which may already have a
+    /// model.
+    ///
+    /// ## Why a thread keeps its model
+    ///
+    /// Routing classifies one prompt, and it ran on every turn, so the model
+    /// changed whenever the *wording* moved — not when the work did. A follow-up
+    /// is the clearest case: "yes, go ahead" and "now check that against the
+    /// curve" carry almost no signal, so they scored as unclear, fell to the
+    /// general reasoning band, and pulled the thread off whatever specialist had
+    /// been doing the job. Every switch also evicted a warm server and threw
+    /// away its prompt cache, so the person paid a cold start for it.
+    ///
+    /// So a settled thread is only overturned by a turn that classifies
+    /// *confidently* into a different role. That is precisely the case where the
+    /// person has changed the kind of work — "now write me a script to do that"
+    /// — and precisely what an unclear follow-up cannot do.
+    ///
+    /// A sticky model that is no longer in the registry, or no longer a
+    /// candidate for its role, is not forced: the role is routed afresh and the
+    /// reasons say so. Nothing here can widen what a turn may reach — the sticky
+    /// model still has to pass every gate `candidates` applies, including the
+    /// classification clearance for *this* turn.
+    #[allow(clippy::too_many_arguments)]
+    pub fn route_sticky(
+        registry: &ModelRegistry,
+        prompt: &str,
+        classification: Option<Classification>,
+        vram_total_bytes: u64,
+        required_modality: Option<Modality>,
+        require_structured_output: bool,
+        available_runtime_profiles: &[String],
+        allowed_licenses: &[String],
+        orchestrator: Option<&StartupModelTarget>,
+        sticky: Option<&StickyRoute>,
+    ) -> Result<RoutingDecision, RoutingFailure> {
+        let Some(sticky) = sticky else {
+            return Self::route_with_orchestrator(
+                registry,
+                prompt,
+                classification,
+                vram_total_bytes,
+                required_modality,
+                require_structured_output,
+                available_runtime_profiles,
+                allowed_licenses,
+                orchestrator,
+            );
+        };
+
+        let classified = IntentClassifier::classify(prompt);
+        let intent_label = classified.capability_name().to_string();
+        let confidence = classified.confidence;
+        let confident = confidence >= SPECIALIST_CONFIDENCE;
+        let asked_for = if confident {
+            Self::role_for(classified.intent)
+        } else {
+            ModelRole::Reasoning
+        };
+
+        if confident && asked_for != sticky.role {
+            // The work itself changed. Route it fresh, and say why the thread
+            // moved — a person who notices the model changed is owed the reason.
+            let mut reasons = vec![format!(
+                "This turn reads as {} work (confidence {:.0}%), which is a different kind of task from the rest of this conversation, so the model changed.",
+                intent_label,
+                confidence * 100.0
+            )];
+            reasons.push(format!(
+                "Read as a {} request (confidence {:.0}%).",
+                intent_label,
+                confidence * 100.0
+            ));
+            return Self::route_to_role(
+                registry,
+                asked_for,
+                classification,
+                vram_total_bytes,
+                reasons,
+                intent_label,
+                confidence,
+                required_modality,
+                require_structured_output,
+                available_runtime_profiles,
+                allowed_licenses,
+                orchestrator,
+            );
+        }
+
+        // The thread keeps its role. Keep the model too, if it is still a
+        // candidate for that role under this turn's gates.
+        let candidates = registry.candidates(
+            sticky.role,
+            classification,
+            required_modality,
+            require_structured_output,
+            available_runtime_profiles,
+            allowed_licenses,
+        );
+        if let Some(entry) = candidates.iter().find(|e| e.id == sticky.model_id) {
+            let plan = plan_gpu_offload(
+                vram_total_bytes,
+                entry.weights_bytes,
+                entry.context_length,
+                None,
+            );
+            let reasons = vec![
+                format!(
+                    "Kept on {}, which has been answering this conversation. Re-routing every turn changes the model when the wording moves rather than when the work does, and costs a cold model server each time.",
+                    entry.name
+                ),
+                plan.reason.clone(),
+            ];
+            return Ok(Self::decide(
+                entry,
+                sticky.role,
+                intent_label,
+                confidence,
+                plan,
+                false,
+                reasons,
+            ));
+        }
+
+        let reasons = vec![format!(
+            "{} answered this conversation before but is no longer available for {} work, so a model is being chosen again.",
+            sticky.model_id,
+            sticky.role.label()
+        )];
+        Self::route_to_role(
+            registry,
+            sticky.role,
+            classification,
+            vram_total_bytes,
+            reasons,
+            intent_label,
+            confidence,
+            required_modality,
+            require_structured_output,
+            available_runtime_profiles,
+            allowed_licenses,
+            orchestrator,
+        )
+    }
+
     /// Routes to a named role directly, for work whose kind is already known —
     /// OCR on a scanned page, embeddings for retrieval — where classifying the
     /// user's words would be answering the wrong question.
+    ///
+    /// **No caller in `src/`, and one that matters in `tests/`.** This was
+    /// briefly deleted as dead code on the strength of a grep over `src/`
+    /// alone. It is not dead: `two_runtimes.rs` uses it to prove the property
+    /// PS 26117 asks for — that a coding task and a document task reach
+    /// different models on different runtimes — and that is the only place the
+    /// claim is checked end to end.
+    ///
+    /// What is true is that the *product* does not route OCR through here:
+    /// `commands::ocr` picks its model by a hardcoded id. That is worth
+    /// changing, and until it is, this is the function it would change to use.
     pub fn route_for_role(
         registry: &ModelRegistry,
         role: ModelRole,
@@ -305,6 +471,19 @@ impl ModelRouter {
             allowed_licenses,
         );
         if candidates.is_empty() {
+            // Nothing at or above the floor for this role, and that is a
+            // refusal rather than a rescue.
+            //
+            // The below-floor rescue at step 5a deliberately does not apply
+            // here. It exists for a machine whose registry *has* proper models
+            // that will not fit in VRAM — there the floor stops being a quality
+            // rule and starts guaranteeing the worst outcome available. A
+            // registry that holds nothing meeting the floor at all is a
+            // different situation: answering a coding request from a 1.5B model
+            // is not a degradation somebody can judge, and "install a model
+            // that can do this" is an answer the operator can act on where a
+            // bad reply is not. `explain_no_candidates` says which of the two
+            // it is.
             return Err(RoutingFailure {
                 role,
                 reason: Self::explain_no_candidates(
@@ -354,9 +533,11 @@ impl ModelRouter {
             let b_is_orch = orchestrator_rank(b, orchestrator);
             b_is_orch
                 .cmp(&a_is_orch)
+                // Active parameters where the model declares them, matching
+                // `meets_floor`. See `ModelEntry::effective_parameters_b`.
                 .then_with(|| {
-                    b.parameters_b
-                        .partial_cmp(&a.parameters_b)
+                    b.effective_parameters_b()
+                        .partial_cmp(&a.effective_parameters_b())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .then_with(|| {
@@ -409,7 +590,7 @@ impl ModelRouter {
                 // is markedly slower, and an administrator watching a slow
                 // answer should be able to read why it is this model.
                 format!(
-                    "{} is configured as the orchestrator. It does not fit                      entirely in this machine's VRAM, so it runs partly on the                      CPU rather than being replaced by a smaller model. It will                      be slower.",
+                    "{} is configured as the orchestrator. It does not fit entirely in this machine's VRAM, so it runs partly on the CPU rather than being replaced by a smaller model. It will be slower.",
                     entry.name
                 )
             });
@@ -479,8 +660,8 @@ impl ModelRouter {
         };
         below_floor.retain(|entry| !entry.meets_floor(role));
         below_floor.sort_by(|a, b| {
-            b.parameters_b
-                .partial_cmp(&a.parameters_b)
+            b.effective_parameters_b()
+                .partial_cmp(&a.effective_parameters_b())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         for entry in &below_floor {
@@ -732,6 +913,104 @@ mod tests {
     fn registry(entries: Vec<ModelEntry>) -> ModelRegistry {
         ModelRegistry::from_manifest(ModelManifest { models: entries }, PathBuf::from("registry.json"))
             .unwrap()
+    }
+
+    // ── Stickiness ───────────────────────────────────────────────────────
+    //
+    // A thread keeps its model until a turn confidently asks for different
+    // work. See `ModelRouter::route_sticky`.
+
+    fn sticky(role: ModelRole, model_id: &str) -> StickyRoute {
+        StickyRoute { role, model_id: model_id.to_string() }
+    }
+
+    fn route_with_sticky<'a>(
+        registry: &ModelRegistry,
+        prompt: &str,
+        held: Option<&'a StickyRoute>,
+    ) -> RoutingDecision {
+        ModelRouter::route_sticky(
+            registry, prompt, None, 24 * GB, None, false, &[], &[], None, held,
+        )
+        .unwrap()
+    }
+
+    /// The failure this exists for: a follow-up carries no signal, so it used
+    /// to fall to the general band and pull the thread off its coding model.
+    #[test]
+    fn an_unclear_follow_up_keeps_the_conversations_model() {
+        let registry = stocked();
+        let held = sticky(ModelRole::Coding, "qwen-coder-14b");
+
+        for follow_up in ["yes, go ahead", "now do the other one too", "thanks, and the rest?"] {
+            let decision = route_with_sticky(&registry, follow_up, Some(&held));
+            assert_eq!(decision.model_id, "qwen-coder-14b", "{follow_up:?}");
+            assert_eq!(decision.role, ModelRole::Coding, "{follow_up:?}");
+        }
+    }
+
+    /// And the person is told why the model did not change.
+    #[test]
+    fn keeping_the_model_says_so() {
+        let registry = stocked();
+        let held = sticky(ModelRole::Coding, "qwen-coder-14b");
+        let decision = route_with_sticky(&registry, "yes, go ahead", Some(&held));
+        assert!(
+            decision.reasons.iter().any(|r| r.contains("has been answering this conversation")),
+            "{:?}",
+            decision.reasons
+        );
+    }
+
+    /// Stickiness is not a cage: work that has genuinely changed re-routes.
+    #[test]
+    fn a_confident_change_of_work_moves_the_thread() {
+        let registry = stocked();
+        let held = sticky(ModelRole::Reasoning, "qwen-32b");
+
+        let decision = route_with_sticky(
+            &registry,
+            "Refactor this Python function and fix the stack trace",
+            Some(&held),
+        );
+
+        assert_eq!(decision.role, ModelRole::Coding);
+        assert!(
+            decision.reasons.iter().any(|r| r.contains("different kind of task")),
+            "the reader is owed the reason the model changed: {:?}",
+            decision.reasons
+        );
+    }
+
+    /// A held model that has left the registry does not pin the thread to
+    /// nothing — the role is routed again.
+    #[test]
+    fn a_held_model_that_is_gone_routes_the_role_afresh() {
+        let registry = stocked();
+        let held = sticky(ModelRole::Coding, "a-model-that-was-deleted");
+
+        let decision = route_with_sticky(&registry, "yes, go ahead", Some(&held));
+
+        assert_eq!(decision.role, ModelRole::Coding);
+        assert_eq!(decision.model_id, "qwen-coder-14b");
+        assert!(
+            decision.reasons.iter().any(|r| r.contains("no longer available")),
+            "{:?}",
+            decision.reasons
+        );
+    }
+
+    /// With nothing held, this is exactly the old behaviour.
+    #[test]
+    fn a_first_turn_routes_as_it_always_did() {
+        let registry = stocked();
+        let fresh = route_with_sticky(&registry, "Summarise this report", None);
+        let direct = ModelRouter::route(
+            &registry, "Summarise this report", None, 24 * GB, None, false, &[], &[],
+        )
+        .unwrap();
+        assert_eq!(fresh.model_id, direct.model_id);
+        assert_eq!(fresh.role, direct.role);
     }
 
     fn stocked() -> ModelRegistry {

@@ -20,7 +20,6 @@ import { SignIn } from './pages/SignIn';
 import { governanceService, type Session } from './services/governance.service';
 import { Settings } from './pages/Settings';
 import { SystemInfo } from './pages/SystemInfo';
-import { Browse } from './pages/Browse';
 import { Storage } from './pages/Storage';
 import { Health } from './pages/Health';
 import { ModelHealth } from './pages/ModelHealth';
@@ -140,14 +139,6 @@ function App() {
                       element={
                         <RequirePermission permission="importModel">
                           <Storage />
-                        </RequirePermission>
-                      }
-                    />
-                    <Route
-                      path="browse"
-                      element={
-                        <RequirePermission permission="importModel">
-                          <Browse />
                         </RequirePermission>
                       }
                     />

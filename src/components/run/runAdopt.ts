@@ -7,6 +7,7 @@ import {
   type AttachmentContextEvent,
   type CompactionRecord,
   type ContextLedgerRecord,
+  type HistoryTrim,
   type RunSummary,
 } from '../../services/agent.service';
 import {
@@ -371,6 +372,16 @@ export type ContextLedgerStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'fail
 export interface ContextLedgerView {
   ledger: ContextLedgerRecord | null;
   compactions: CompactionRecord[];
+  /**
+   * Conversation this turn could not carry, or `null` if all of it fitted.
+   *
+   * Kept apart from `compactions` because they are different events with
+   * different remedies: a compaction is the run summarising itself to keep
+   * going, while this is the *thread* not fitting the model now serving it —
+   * which a person fixes by choosing a larger model, and cannot fix at all if
+   * nothing tells them it happened.
+   */
+  historyTrim: HistoryTrim | null;
   attachments: AttachmentContextEvent[];
   status: ContextLedgerStatus;
   /** The sentence to show when `status` is `failed`. Never model output. */
@@ -433,6 +444,7 @@ export function useContextLedger(
 ): ContextLedgerView {
   const [ledger, setLedger] = useState<ContextLedgerRecord | null>(null);
   const [compactions, setCompactions] = useState<CompactionRecord[]>([]);
+  const [historyTrim, setHistoryTrim] = useState<HistoryTrim | null>(null);
   const [status, setStatus] = useState<ContextLedgerStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   /**
@@ -452,6 +464,7 @@ export function useContextLedger(
     // not even for the moment before its first event lands.
     setLedger(null);
     setCompactions([]);
+    setHistoryTrim(null);
     setError(null);
 
     if (!runId) {
@@ -480,6 +493,19 @@ export function useContextLedger(
           liveArrived = true;
           setLedger(event.ledger);
           setStatus('ready');
+          return;
+        }
+        if (event.type === 'context_trimmed') {
+          liveArrived = true;
+          setHistoryTrim({
+            dropped: event.dropped,
+            carried: event.carried,
+            tokens: event.tokens,
+            windowTokens: event.windowTokens,
+          });
+          // Deliberately does not set `status`: a trim is not a reading of the
+          // window, and a turn can be trimmed before it has made a model call
+          // and therefore before there is any ledger to be `ready` about.
           return;
         }
         if (event.type === 'context_compacted') {
@@ -519,6 +545,11 @@ export function useContextLedger(
         setCompactions(current =>
           (snapshot.compactions ?? []).reduce(mergeCompaction, current),
         );
+        // Same rule as the ledger: the live event describes a later moment than
+        // this reply, which was in flight while it arrived.
+        if (!liveArrived) {
+          setHistoryTrim(snapshot.historyTrim ?? null);
+        }
         setStatus(current =>
           current === 'ready' ||
           snapshot.ledger ||
@@ -583,7 +614,7 @@ export function useContextLedger(
     };
   }, [messageId]);
 
-  return { ledger, compactions, attachments, status, error };
+  return { ledger, compactions, historyTrim, attachments, status, error };
 }
 
 /**

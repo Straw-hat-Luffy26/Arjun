@@ -14,14 +14,6 @@ pub struct SarathiConfig {
     pub cache_directory: String,
     pub log_level: String,
     pub ai_settings: AiSettings,
-    /// HuggingFace access token. Raises the Hub's anonymous rate limit, which
-    /// is what caps the catalog to a small popular slice, and unlocks gated
-    /// repositories such as `meta-llama/*` and `google/gemma-*`.
-    ///
-    /// Stored in this file as plain text — the same as the `HF_TOKEN` variable
-    /// it substitutes for. Empty or absent means "use the environment".
-    #[serde(default)]
-    pub hf_token: String,
 }
 
 /// AI-specific configuration
@@ -168,7 +160,6 @@ impl Default for SarathiConfig {
             cache_directory: "cache".to_string(),
             log_level: "info".to_string(),
             ai_settings: AiSettings::default(),
-            hf_token: String::new(),
         }
     }
 }

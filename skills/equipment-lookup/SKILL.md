@@ -2,9 +2,7 @@
 name: equipment-lookup
 description: >-
   Cross-reference an equipment tag against the datasheets, SOPs, and
-  inspection records the site has on file. The skill returns the datasheet
-  parameters the way an inspector reads them, the SOP references the operator
-  uses, and the last inspection record the file holds.
+  inspection records the site has on file.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

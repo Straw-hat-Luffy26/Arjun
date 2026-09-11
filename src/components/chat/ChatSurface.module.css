@@ -1030,6 +1030,16 @@
   line-height: 1.4;
 }
 
+/* The thread did not fit. Warmer than `.contextWillNotFit`, which is an error,
+   and louder than `.contextCompactionLine`, which is a statistic — this is a
+   caveat on the answer the person is reading. */
+.contextTrimmedLine {
+  margin: 0;
+  color: var(--warning, #fbbf24);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
 .contextCompactionLine {
   margin: 0;
   color: var(--text-tertiary);

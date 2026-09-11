@@ -55,7 +55,6 @@ export interface ISarathiSystemAnalyzerService {
 
 export interface ISarathiModelManagerService {
   listModels(): Promise<unknown[]>;
-  getModelCompatibility(modelId: string): Promise<unknown>;
   getRecommendations(): Promise<unknown[]>;
 }
 

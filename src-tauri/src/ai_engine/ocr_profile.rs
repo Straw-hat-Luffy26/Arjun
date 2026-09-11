@@ -1,23 +1,35 @@
 //! The accuracy-to-speed slider, and what comes back from it.
 //!
-//! ## Why quantisation is not the slider
+//! ## What the slider actually changes
 //!
-//! The obvious dial is the weight file — drop from Q6_K to Q4_K_M and
-//! everything gets faster. It is the wrong primary axis. Changing quant means
-//! a different file on disk, a model reload, and in a deployment that has not
-//! pre-installed both, a download. A slider whose every notch might reach the
-//! network is not a slider this product can offer.
+//! Two things reach the server today: the **weight file** (the tier) and the
+//! **decode cap** (`max_decode_tokens`, sent per request as `max_tokens`).
+//! Stops 1–2 share Q4_K_M and stops 3–4 share Q6_K, so only the 2→3 move
+//! reloads; within a tier the slider changes how much text one page may
+//! produce, and is instant.
 //!
-//! The lever that costs nothing is the **vision token budget**. The
-//! DeepEncoder turns a page into a fixed number of tokens depending on the
-//! resolution mode it runs — 64 at tiny, 100 at small, 256 at base, 400 at
-//! large — and that count dominates both latency and how much small print
-//! survives. llama.cpp exposes it directly as `--image-max-tokens`, so the
-//! budget is a per-request argument rather than a reload.
+//! ## The vision token budget, and why it is not the slider
 //!
-//! So the slider has four stops over two installed weight files. Stops 1–2
-//! share Q4_K_M and stops 3–4 share Q6_K; only the 2→3 move reloads, and the
-//! UI says so. Within a tier the slider is instant.
+//! `max_image_tokens` is the DeepEncoder's resolution mode — 64 at tiny, 100 at
+//! small, 256 at base, 400 at large — and it dominates both latency and how
+//! much small print survives. It is the lever this module was designed around,
+//! and it is **not wired**: [`OcrProfile::server_args`] builds the
+//! `--image-max-tokens` flag and nothing but that function's own unit test ever
+//! calls it. `serving::plan_launch` does not emit it, and `ocr_stream`'s
+//! request body has no field for it.
+//!
+//! It is not a wiring oversight that can be fixed in one line, because
+//! `--image-max-tokens` is a **launch** argument on a `llama-server` process
+//! that `ModelServers` keys by model id and reuses across stops. Honouring it
+//! per stop would mean either keying servers by `(model_id, image_tokens)` and
+//! restarting on every within-tier move — which is exactly the "instant"
+//! property above — or a per-request field llama.cpp does not currently offer.
+//!
+//! So the field is kept, because it records the intent and the numbers are
+//! right, and it is no longer *reported to the user* as something the stop
+//! changes. A slider that displays a number with no effect is worse than one
+//! that does not mention it, and this module exists to stop the labels
+//! disagreeing with the profiles that run.
 //!
 //! ## The sampler is not optional
 //!
@@ -73,6 +85,20 @@ pub enum OcrDetent {
 }
 
 impl OcrDetent {
+    /// Where this stop sits on the accuracy axis. Higher reads better.
+    ///
+    /// Explicit rather than derived from the enum's discriminant so that
+    /// reordering the variants — which the UI does by index — cannot silently
+    /// reorder *quality*, which other code compares on.
+    pub const fn quality(self) -> u8 {
+        match self {
+            OcrDetent::Fastest => 0,
+            OcrDetent::Fast => 1,
+            OcrDetent::Detailed => 2,
+            OcrDetent::Maximum => 3,
+        }
+    }
+
     pub const ALL: [OcrDetent; 4] = [
         OcrDetent::Fastest,
         OcrDetent::Fast,

@@ -1,15 +1,19 @@
 /**
  * Service for the System Health page's benchmark section.
  *
- * The page renders the most recent `run_benchmark` result. The
- * `synthetic_benchmark` command is the source for the "what the
- * SIH pitch quotes" row, which the page shows before any real
- * run has been recorded.
+ * The page renders the most recent measured `run_benchmark` result, and
+ * nothing else. There is no synthetic row: the `synthetic_benchmark` command
+ * that used to supply one — a fixed 38 tok/s stamped with the current time —
+ * was removed, because the page rendered it in the same grid as measured
+ * values under the words "Last measured".
+ *
+ * A machine that has recorded no benchmark has no benchmark, and the page says
+ * so.
  */
 
 import { getBackendService } from './api';
 
-export interface BenchmarkResult {
+export interface BenchmarkRow {
   modelId: string;
   promptTokens: number;
   replyTokens: number;
@@ -22,17 +26,8 @@ export interface BenchmarkResult {
   hardwareTier: string;
 }
 
-export interface BenchmarkRow extends BenchmarkResult {
-  synthetic: boolean;
-}
-
 export const benchmarkService = {
-  /** Returns a synthetic row for the SIH pitch (Tier 1 / RTX 5060 4GB). */
-  synthetic(): Promise<BenchmarkRow> {
-    return getBackendService().invoke<BenchmarkRow>('synthetic_benchmark');
-  },
-
-  /** Returns the most recent rows, newest first. */
+  /** Returns the most recent measured rows, newest first. */
   recent(limit?: number): Promise<BenchmarkRow[]> {
     return getBackendService().invoke<BenchmarkRow[]>('recent_benchmarks', {
       limit: limit ?? 5,

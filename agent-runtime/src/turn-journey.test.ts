@@ -18,7 +18,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { RpcPeer, type PeerTransport } from "./peer.js";
-import { startRun, type ActiveRun, type RunRequest } from "./run.js";
+import { answerOf, startRun, type ActiveRun, type RunRequest } from "./run.js";
 
 function chunk(delta: unknown, finishReason: string | null = null): string {
   return `data: ${JSON.stringify({
@@ -453,5 +453,45 @@ describe("stopping a turn that is generating", () => {
     );
     expect(outcome.outcome.kind).toBe("completed");
     expect(outcome.text).toContain("Class 300.");
+  });
+});
+
+describe("answerOf: what a stopped turn is recorded as having said", () => {
+  const assistant = (text: string, extra: Record<string, unknown> = {}) => ({
+    role: "assistant",
+    content: [{ type: "text", text }],
+    ...extra,
+  });
+
+  it("returns the text of a normal final message", () => {
+    const { text } = answerOf([assistant("the seal is due for replacement")]);
+    expect(text).toBe("the seal is due for replacement");
+  });
+
+  /**
+   * The defect this guards.
+   *
+   * `stopIfAborted` appends an assistant message whose only text block is
+   * empty, carrying `stopReason: "aborted"`. Reading strictly the last
+   * assistant message therefore reported a stopped turn as having said nothing
+   * — discarding a partial answer the person had been watching arrive, and
+   * making an operator's Stop indistinguishable from a model that produced
+   * nothing at all.
+   */
+  it("keeps the partial answer when the turn was interrupted", () => {
+    const { text, finalAssistant } = answerOf([
+      assistant("the seal is due for replacement, and the sp"),
+      assistant("", { stopReason: "aborted" }),
+    ]);
+
+    expect(text).toBe("the seal is due for replacement, and the sp");
+    // The ending still comes from the interrupted message — only the text is
+    // taken from further back.
+    expect((finalAssistant as { stopReason?: unknown })?.stopReason).toBe("aborted");
+  });
+
+  it("still reports nothing when nothing was said", () => {
+    const { text } = answerOf([assistant("", { stopReason: "aborted" })]);
+    expect(text).toBe("");
   });
 });

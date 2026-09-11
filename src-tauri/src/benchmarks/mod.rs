@@ -172,48 +172,6 @@ fn read_history(path: &Path) -> Result<Vec<BenchmarkResult>> {
     Ok(history)
 }
 
-/// Synthesises a benchmark result without actually running the
-/// model. The function is what the bench command calls when the
-/// real model is not loaded; the row is marked with
-/// `model_id = "<synthetic>"` so a reviewer can tell the row is
-/// illustrative rather than measured.
-///
-/// The synthetic values are *honest* about being synthetic: the
-/// `accuracy_pct` is 100% (the answer is the expected answer by
-/// construction), the `tokens_per_second` is what the *prior* real
-/// run on this hardware reported, and the field is named
-/// `synthetic: true` so a UI can render it greyed out.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyntheticBenchmark {
-    pub result: BenchmarkResult,
-    pub synthetic: bool,
-}
-
-/// Returns a synthetic benchmark that mirrors what a Tier 1
-/// (RTX 5060 4 GB) machine would produce for gemma-3-12b-it
-/// at Q4_K_M. The numbers are the same ones the SIH pitch
-/// quotes on the "Performance" slide.
-pub fn synthetic_gemma_3_12b_tier_1() -> SyntheticBenchmark {
-    let now = chrono::Utc::now();
-    let result = BenchmarkResult {
-        model_id: "gemma-3-12b-it".to_string(),
-        prompt_tokens: 18,
-        reply_tokens: 64,
-        ttft_ms: 220,
-        total_ms: 1700,
-        tokens_per_second: 38.0,
-        vram_peak_mib: 3800,
-        accuracy_pct: 100.0,
-        at: now.to_rfc3339(),
-        hardware_tier: "tier-1-rtx-5060-4gb".to_string(),
-    };
-    SyntheticBenchmark {
-        result,
-        synthetic: true,
-    }
-}
-
 /// Stamps the start of a real benchmark run. The caller holds
 /// the handle and calls [`BenchTimer::finish`] when the model
 /// has produced its reply, with the token count and accuracy
@@ -251,13 +209,12 @@ impl BenchTimer {
             model_id: self.model_id,
             prompt_tokens: self.prompt_tokens,
             reply_tokens: self.reply_tokens,
-            // The model-router's first-token timing is a more
-            // accurate TTFT than the wall clock here; the
-            // `synthetic_*` helpers fill the field with the
-            // numbers the SIH pitch quotes. For a real run the
-            // caller passes the model-side measurement through
-            // a separate channel; this function reports 0 to
-            // mark the row as missing that signal.
+            // The model-router's first-token timing is a more accurate TTFT
+            // than the wall clock here, and it arrives through a separate
+            // channel. Zero is the honest value for "this run did not carry
+            // one" — a reader must be able to tell a missing measurement from
+            // a fast one, which is why nothing here substitutes a plausible
+            // number for it.
             ttft_ms: 0,
             total_ms,
             tokens_per_second: tps,
@@ -291,10 +248,31 @@ mod tests {
         assert!(r.tokens_per_second > 0.0);
     }
 
+    /// A row to exercise the store with.
+    ///
+    /// Built here, in the test module, and deliberately not a `pub fn` on the
+    /// module: the helper this replaces was reachable from a Tauri command, and
+    /// its hardcoded 38 tok/s was published as a measured benchmark. A fixture
+    /// only tests can reach cannot be published by accident.
+    fn a_row() -> BenchmarkResult {
+        BenchmarkResult {
+            model_id: "fixture-model".to_string(),
+            prompt_tokens: 18,
+            reply_tokens: 64,
+            ttft_ms: 220,
+            total_ms: 1700,
+            tokens_per_second: 37.6,
+            vram_peak_mib: 3800,
+            accuracy_pct: 92.0,
+            at: chrono::Utc::now().to_rfc3339(),
+            hardware_tier: "fixture-tier".to_string(),
+        }
+    }
+
     #[test]
     fn record_then_recent_round_trips() {
         let tmp = tempdir();
-        let r = synthetic_gemma_3_12b_tier_1().result;
+        let r = a_row();
         record(&tmp, &r).unwrap();
         let rows = recent(&tmp, 10).unwrap();
         assert_eq!(rows.len(), 1);
@@ -305,7 +283,7 @@ mod tests {
     fn recent_caps_at_the_asked_limit() {
         let tmp = tempdir();
         for _ in 0..20 {
-            record(&tmp, &synthetic_gemma_3_12b_tier_1().result).unwrap();
+            record(&tmp, &a_row()).unwrap();
         }
         let rows = recent(&tmp, 5).unwrap();
         assert_eq!(rows.len(), 5);
@@ -315,7 +293,7 @@ mod tests {
     fn record_caps_the_file_at_64_rows() {
         let tmp = tempdir();
         for _ in 0..80 {
-            record(&tmp, &synthetic_gemma_3_12b_tier_1().result).unwrap();
+            record(&tmp, &a_row()).unwrap();
         }
         let path = tmp.join("benchmarks.json");
         let bytes = std::fs::read(&path).unwrap();

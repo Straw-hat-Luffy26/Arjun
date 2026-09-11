@@ -1,9 +1,8 @@
 ---
 name: sandbox-code-task
 description: >-
-  Write a small program for a task that genuinely needs one, and run it in an
-  isolated sandbox — refusing plainly, and without describing imagined output,
-  when this machine cannot isolate it.
+  Write a small program for a task that genuinely needs one, and run it in
+  an isolated sandbox — refusing plainly, and without describing imagined.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

@@ -204,6 +204,17 @@ pub struct SkillManifest {
     pub sha256: String,
 }
 
+/// How many skill cards one `capability.search` may put in front of a model.
+///
+/// Not a style choice, and the reasoning is in [`SkillCard::for_model`]: even
+/// slimmed, sixty-five cards do not belong in an 8192-token window. Twelve is
+/// what fits an eighth of it with room to spare, and the response says how
+/// many matched and how to narrow, so nothing is hidden — only paged.
+///
+/// The operator's listing (`skill_search`) is not paged. A desktop screen has
+/// no context window.
+pub const CAPABILITY_PAGE: usize = 12;
+
 /// The concise form: what discovery keeps and what `capability.search` returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,6 +229,15 @@ pub struct SkillCard {
     pub sha256: String,
     /// Absent when the skill is available.
     pub quarantined: Option<Quarantine>,
+    /// Whether this skill came from an outside collection rather than being
+    /// written for this product.
+    ///
+    /// Read from the manifest's own `imported-from` metadata, which the import
+    /// sets and nothing else does. It is on the card for two reasons: an
+    /// operator looking at the Skills screen should be able to tell where a
+    /// skill came from, and `capability.search` puts the skills written for
+    /// this deployment on the first page — see the ordering there.
+    pub imported: bool,
 }
 
 impl SkillCard {
@@ -236,7 +256,29 @@ impl SkillCard {
             network: manifest.network,
             sha256: manifest.sha256.clone(),
             quarantined,
+            imported: manifest.metadata.contains_key("imported-from"),
         }
+    }
+
+    /// What a *model* is told about this skill.
+    ///
+    /// Deliberately less than the card. The full card carries a sha256, a
+    /// version and a classification — evidence for the person reading the
+    /// Skills screen, and nothing a model can act on. Sixty-five full cards
+    /// serialise to about 32 KB, roughly eight thousand tokens, which is the
+    /// entire window of the smallest model this product serves
+    /// (`ai_engine::manager::DEFAULT_WORKING_CONTEXT`). One unprompted
+    /// `capability.search` would leave no room for the person's own documents.
+    ///
+    /// What survives is what changes a decision: which skill to ask for, what
+    /// it would let the run do, and whether using it stops for a reviewer.
+    pub fn for_model(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name,
+            "description": self.description,
+            "tools": self.allowed_tools,
+            "needsApproval": self.approval_class == ApprovalClass::Reviewer,
+        })
     }
 
     /// A card for a directory whose `SKILL.md` did not validate.
@@ -263,6 +305,9 @@ impl SkillCard {
             network: NetworkNeed::None,
             sha256: String::new(),
             quarantined: Some(quarantined),
+            // Nothing is known about a directory that did not validate,
+            // including where it came from.
+            imported: false,
         }
     }
 

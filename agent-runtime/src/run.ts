@@ -95,24 +95,45 @@ export interface RunRequest {
     contextWindow?: number;
     maxTokens?: number;
     input?: ("text" | "image")[];
-    /** Whether reasoning is wanted for this run. */
+    /**
+     * Whether this model produces reasoning at all.
+     *
+     * Rust's `ModelCapabilities::emits_reasoning`. Drives `thinkingLevel`, and
+     * is the value asked for when the model has a switch to ask with.
+     */
     reasoning?: boolean;
     /**
-     * Whether this model can be asked for reasoning at all.
+     * Whether this model's chat template branches on `enable_thinking`.
      *
-     * Read on the Rust side from the model's own chat template — the presence
-     * of the `enable_thinking` variable it branches on — rather than matched
-     * against a list of model families. A model with no switch must not be
-     * sent the kwarg in either direction: telling a model that never reasons
-     * not to reason is noise, and telling one that always reasons to stop is a
-     * template variable it will ignore while the operator waits for a panel
-     * that never fills.
+     * Rust's `ModelCapabilities::supports_toggled_reasoning`, read from the
+     * template itself rather than matched against a list of model families.
+     * This is the *gate* on the kwarg, and only the gate: a model with no
+     * switch must not be sent it in either direction, because telling a model
+     * that never reasons not to reason is noise, and telling one that always
+     * reasons to stop is a variable it will ignore — or, on vLLM, a rejected
+     * request.
+     *
+     * ## Why this is not called `supportsReasoning`
+     *
+     * It was, and the two fields were consumed the wrong way round. Rust sent
+     * `supportsReasoning: emits_reasoning` and `reasoning:
+     * supports_toggled_reasoning`; this file then passed them to
+     * `payloadPolicy(reasoningWanted, supportsToggle)` in that order, so the
+     * *gate* was "does it reason" and the *value* was "does it have a switch".
+     *
+     * Since `emits_reasoning = supports_toggled_reasoning || …`, that made two
+     * things true at once: a model with a switch was always sent
+     * `enable_thinking: true` and could never be asked to stop, and a model
+     * that always reasons with **no** switch had the gate opened for it and was
+     * sent `enable_thinking: false` — the exact case the paragraph above says
+     * must never happen. Both sides' comments described the intended behaviour
+     * correctly; only the names were ambiguous enough to let the wiring cross.
      *
      * Absent means unknown, and the runtime falls back to recognising the two
      * families it knows by name — the behaviour that shipped before this
      * existed.
      */
-    supportsReasoning?: boolean;
+    hasReasoningToggle?: boolean;
   };
   /**
    * When this run must stop, as epoch milliseconds.
@@ -374,7 +395,10 @@ function toModel(spec: RunRequest["model"]): Model {
  * were zero is how a request that was calculated to fit exactly does not.
  *
  * Matches `TEMPLATE_OVERHEAD_TOKENS` in `commands/agent.rs`, which charges the
- * same scaffolding to the document budget.
+ * same scaffolding to the document budget. That claim used to be false — Rust
+ * held 64 — and the two sides budgeting the same request by different figures
+ * is how a request calculated to fit does not. Changing either means changing
+ * both.
  */
 const TEMPLATE_OVERHEAD_TOKENS = 256;
 
@@ -517,6 +541,19 @@ export async function startRun(
   // A catalogue that could not be fetched comes back empty, which is the
   // failing-closed reading: silence from the gateway is not a list of tools.
   const catalogue = await fetchCatalogue(peer, runId);
+  if (catalogue.unavailable) {
+    // Failing closed is the right call — a gateway that cannot be reached has
+    // not said which tools are eligible, and reading silence as "all of them"
+    // would let a transport fault widen what a model can reach. What was wrong
+    // was doing it quietly: the turn went on to answer from the model's weights
+    // with no tools and nothing anywhere saying why, and `every_step_reached`
+    // then failed for tools the model was never shown.
+    process.stderr.write(
+      `[agent-runtime:log] [tools] run=${runId} the tool catalogue could not be read, so this ` +
+        `turn has no tools: ${catalogue.unavailable}
+`,
+    );
+  }
   const offered = buildTools(
     peer,
     ledger,
@@ -586,6 +623,28 @@ export async function startRun(
       runId,
       event: { type: "tools_fitted", ...fitted.report, kept: tools.length },
     });
+  }
+
+  // An over-budget catalogue is a request the provider will refuse.
+  //
+  // `fitToolsToBudget` walks five compression stages and then drops tools from
+  // the tail, and when even one tool at its smallest rendering will not fit it
+  // gives up and reports `overBudget: true` — and the run went ahead anyway.
+  // The request then went out, llama-server answered `400 ... exceeds the
+  // available context size`, and the turn died at the provider: the exact
+  // failure the whole budget exists to prevent, arrived at by a module that had
+  // already worked out it was going to happen.
+  //
+  // Failing here instead means the person is told the model's window is too
+  // small for this task's tools, which is something they can act on — a larger
+  // model, or a narrower plan — where a provider 400 is not.
+  if (fitted.report.overBudget) {
+    throw new Error(
+      `This model's context window cannot hold the tools this task needs: the catalogue is ` +
+        `${fitted.report.tokens} tokens at its smallest against a budget of ` +
+        `${fitted.report.budget}. Nothing was asked of the model. A model with a larger window, ` +
+        `or a plan permitting fewer tools, would fit.`,
+    );
   }
 
   const compactor = new RunCompactor({
@@ -706,12 +765,24 @@ export async function startRun(
        * `"off"` for a model whose chat template has no reasoning switch, which
        * is the honest answer for it and keeps the request unchanged.
        */
-      thinkingLevel: request.model.supportsReasoning ? "medium" : "off",
+      thinkingLevel: request.model.reasoning ? "medium" : "off",
     },
     // The signal is passed through, not dropped. agent-core hands one to every
     // `beforeToolCall`, and without it an authorisation begun just before the
     // user pressed stop carried on regardless of the stop.
-    beforeToolCall: (context, signal) => authorizeToolCall(peer, ledger, runId, context, signal),
+    beforeToolCall: (context, signal) =>
+      authorizeToolCall(peer, ledger, runId, context, signal, (reason) => {
+        // The plan is spent. The refusal still reaches the model — it is the
+        // sentence the answer should report — but the run stops here rather
+        // than trying again into the same wall.
+        //
+        // Without this the loop treated a refusal as an ordinary error result
+        // and carried on. Each retry emitted events, the events rearmed the
+        // stall guard, and a run whose budget was gone spun to the
+        // thirty-minute deadline emitting nothing but refusals.
+        causedBy({ kind: "budgetStopped", detail: reason });
+        agent.abort(reason);
+      }),
     /**
      * A local inference server needs no credential, but the OpenAI client
      * refuses to construct without one. So a placeholder is supplied rather
@@ -730,7 +801,37 @@ export async function startRun(
      * remember to set, and forgetting produces an approval note that opens with
      * the model thinking out loud.
      */
-    onPayload: payloadPolicy(request.model.reasoning ?? false, request.model.supportsReasoning),
+    // (what to ask for, whether there is a switch to ask with) — in that order.
+    onPayload: payloadPolicy(
+      request.model.reasoning ?? false,
+      request.model.hasReasoningToggle,
+    ),
+    /**
+     * The turn counter, and the only bound on how many turns a run may take.
+     *
+     * `shouldStopAfterTurn` is the loop's own hook for this and `AgentOptions`
+     * does not expose it, so the count rides on `prepareNextTurn`, which the
+     * loop calls once per turn immediately before its `stopIfAborted()` check.
+     * Aborting here is therefore honoured on the very next line, and it is the
+     * same mechanism the stall guard and the deadline already use — rather
+     * than editing the vendored loop to expose one more hook.
+     *
+     * Returns `undefined` because nothing about the model or the context is
+     * being changed; this is a counter, not a turn policy.
+     */
+    prepareNextTurn: () => {
+      turnsTaken += 1;
+      if (turnsTaken >= MAX_TURNS) {
+        causedBy({
+          kind: "budgetStopped",
+          detail:
+            `Stopped: it took ${MAX_TURNS} turns without finishing. That is far past what this ` +
+            "work should need, so it was treated as circling rather than progressing.",
+        });
+        agent.abort("the task took too many turns without finishing");
+      }
+      return undefined;
+    },
   });
 
   /**
@@ -779,6 +880,25 @@ export async function startRun(
    * can be emitted, and on a small GPU that is not instant.
    */
   const STALL_MS = 4 * 60 * 1000;
+
+  /**
+   * How many model turns one `run.start` may take.
+   *
+   * A backstop, not a policy. The policy is the plan's step budget, which Rust
+   * enforces at the gateway — but that budget is spent on *tool calls*, and a
+   * model that answers, is asked to continue, answers again and never calls a
+   * tool spends none of it. The vendored loop is a `while (true)` whose only
+   * exit is `terminate` on the tool batch, and `shouldStopAfterTurn` was never
+   * set, so nothing counted turns at all: the first real bound was the
+   * thirty-minute deadline, and the stall guard could not help because every
+   * turn emits events and rearms it.
+   *
+   * Generous on purpose. A long agentic task legitimately takes tens of turns,
+   * and a cap that bites during normal work would be worse than the unbounded
+   * loop it replaces. This is the number at which something has gone wrong.
+   */
+  const MAX_TURNS = 64;
+  let turnsTaken = 0;
 
   const guard = createStallGuard(STALL_MS, () => {
     causedBy({
@@ -858,18 +978,35 @@ export async function startRun(
     if (event.type === "message_end") {
       const message = event.message;
       const usage = message.role === "assistant" ? message.usage : undefined;
-      // `estimatedIn` is read before the correction is applied, or the drift
-      // would be computed against a figure that had already been corrected and
-      // would read as zero on every turn.
-      const estimatedIn = contextLedger.snapshot().occupied;
-      const actualIn = usage?.input ?? null;
-      contextLedger.reconcile({
-        estimatedIn,
-        actualIn,
-        actualOut: usage?.output ?? null,
-      });
-      contextLedger.applyMeasuredInput(actualIn);
-      publishLedger("turn");
+      // Only a message that carries usage is a model call.
+      //
+      // `message_end` fires for the prompt, for *every tool result*, and for
+      // the interrupt and failure messages the loop synthesises — none of which
+      // is a provider round trip. Reconciling on all of them appended a
+      // `TurnReconciliation` whose `turn` field is documented as "which call of
+      // this run" and was really a message index, mostly full of
+      // `driftRatio: null`; the list is unbounded and is serialised *in full*
+      // into every `context_ledger` frame, so a long run's stdout grew with the
+      // square of its tool calls. It also meant two `snapshot()` rebuilds per
+      // tool result, for a reading nothing had measured.
+      //
+      // Guarded rather than returned from: the forwarding below is how a
+      // `message_end` reaches the chat surface at all, and a tool result still
+      // has to get there.
+      if (usage) {
+        // `estimatedIn` is read before the correction is applied, or the drift
+        // would be computed against a figure that had already been corrected
+        // and would read as zero on every turn.
+        const estimatedIn = contextLedger.snapshot().occupied;
+        const actualIn = usage.input ?? null;
+        contextLedger.reconcile({
+          estimatedIn,
+          actualIn,
+          actualOut: usage.output ?? null,
+        });
+        contextLedger.applyMeasuredInput(actualIn);
+        publishLedger("turn");
+      }
     }
     // Best-effort by design: a dropped event costs the operator a progress line,
     // whereas awaiting delivery would let a slow UI stall the run.
@@ -1109,14 +1246,33 @@ export function answerOf(messages: readonly unknown[]): {
   text: string;
   finalAssistant: { stopReason?: unknown; errorMessage?: unknown } | undefined;
 } {
-  const finalAssistant = [...messages].reverse().find((message) => isAssistantMessage(message));
-  const assistantContent = (finalAssistant as { content?: unknown } | undefined)?.content;
-  const text = Array.isArray(assistantContent)
-    ? assistantContent
-        .filter((block): block is { type: "text"; text: string } => block?.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-    : "";
+  const reversed = [...messages].reverse();
+  const finalAssistant = reversed.find((message) => isAssistantMessage(message));
+
+  const textOf = (message: unknown): string => {
+    const content = (message as { content?: unknown } | undefined)?.content;
+    return Array.isArray(content)
+      ? content
+          .filter((block): block is { type: "text"; text: string } => block?.type === "text")
+          .map((block) => block.text)
+          .join("\n")
+      : "";
+  };
+
+  // An interrupted turn appends an assistant message whose only text block is
+  // empty — `turn-interruption.ts` builds it that way, with `stopReason:
+  // "aborted"`. Reading strictly the last assistant message therefore threw
+  // away whatever the model had produced before the operator pressed Stop:
+  // exactly the partial answer the comment above says this function exists to
+  // keep.
+  //
+  // So an empty final message falls back to the last assistant message that
+  // said something. `finalAssistant` is still the interrupted one, because that
+  // is what carries the ending; only the text comes from further back.
+  const text =
+    textOf(finalAssistant) ||
+    textOf(reversed.find((m) => isAssistantMessage(m) && textOf(m).length > 0));
+
   return { text, finalAssistant };
 }
 

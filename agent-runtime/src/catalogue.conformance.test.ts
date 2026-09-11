@@ -85,6 +85,28 @@ const LEGACY_NAMES: ReadonlyMap<string, string> = new Map([
   ["create_pptx", "artifact.create_briefing_deck"],
   ["execute_code", "sandbox.run_code"],
   ["validate_artifact", "artifact.verify_docx"],
+  // The four artifact tools that were namespaced from the start. Rust's
+  // `legacy_str` resolves each bare spelling; this file did not list any of
+  // them, which is why the table above read 12 where the shared one reads 17.
+  ["create_diagram", "artifact.create_diagram"],
+  ["create_pdf", "artifact.create_pdf"],
+  ["create_chart", "artifact.create_chart"],
+  ["create_table", "artifact.create_table"],
+]);
+
+/**
+ * Aliases this side resolves that Rust does not, and deliberately so.
+ *
+ * `create_flowchart` was never the name of anything. It is what a model
+ * reaches for when it has been asked for a flowchart, and folding it onto the
+ * diagram tool here means the call succeeds instead of ending the step on an
+ * unresolved name. Rust never sees the raw spelling — the runtime canonicalises
+ * before the call crosses the wire — so `ToolName::legacy_str` has no reason to
+ * carry it, and asserting parity without this exception would force one of the
+ * two tables to be wrong.
+ */
+const RUNTIME_ONLY_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["create_flowchart", "artifact.create_diagram"],
 ]);
 
 /**
@@ -137,8 +159,20 @@ describe("the shared canonicalisation layer agrees with this file's tables", () 
     expect(new Set(CANONICAL_TOOL_NAMES)).toEqual(RUST_WIRE_NAMES);
   });
 
-  it("declares exactly the legacy aliases Rust does", () => {
-    expect(new Map(LEGACY_TOOL_NAMES)).toEqual(new Map(LEGACY_NAMES));
+  it("declares exactly the legacy aliases Rust does, plus the runtime-only ones", () => {
+    expect(new Map(LEGACY_TOOL_NAMES)).toEqual(
+      new Map([...LEGACY_NAMES, ...RUNTIME_ONLY_ALIASES]),
+    );
+  });
+
+  it("resolves every runtime-only alias to a tool Rust knows", () => {
+    // The exception above is only safe while what it folds onto is real. An
+    // alias pointing at a name Rust dropped would turn a working call into an
+    // unresolved one at the gateway instead of in the runtime.
+    for (const [alias, current] of RUNTIME_ONLY_ALIASES) {
+      expect(canonicalToolName(alias)).toBe(current);
+      expect(RUST_WIRE_NAMES).toContain(current);
+    }
   });
 
   it("folds every legacy spelling onto its current name", () => {

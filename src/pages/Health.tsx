@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, CircleCheck, CircleHelp, Cpu, Gauge, RefreshCw, Sparkles } from 'lucide-react';
+import { Activity, AlertTriangle, CircleCheck, CircleHelp, Cpu, Gauge, RefreshCw } from 'lucide-react';
 import { healthService, type HealthItem, type HealthSnapshot, type Reading } from '../services/health.service';
 import { benchmarkService, type BenchmarkRow } from '../services/benchmark.service';
 import styles from './Health.module.css';
@@ -49,6 +49,7 @@ export const Health = () => {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [benchmark, setBenchmark] = useState<BenchmarkRow | null>(null);
+  const [benchmarkError, setBenchmarkError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
 
@@ -66,25 +67,29 @@ export const Health = () => {
     }
   }, []);
 
+  /**
+   * Reads the most recent measured row, and nothing else.
+   *
+   * There used to be a second `try` here that fell through to
+   * `benchmarkService.synthetic()` whenever no real run had been recorded. It
+   * returned a fixed 38 tok/s stamped with the current time, and the grid below
+   * rendered it exactly like a measurement, under the words "Last measured".
+   * Both the command and the fallback are gone: a machine that has benchmarked
+   * nothing shows the empty state, which is the true answer.
+   */
   const refreshBenchmark = useCallback(async () => {
     try {
       const rows = await benchmarkService.recent(1);
       if (!mountedRef.current) return;
-      if (rows.length > 0) {
-        setBenchmark(rows[0]);
-        return;
-      }
-    } catch {
-      // Recent failed (no model run yet); fall through to synthetic.
-    }
-    try {
-      const s = await benchmarkService.synthetic();
+      setBenchmark(rows.length > 0 ? rows[0] : null);
+      setBenchmarkError(null);
+    } catch (e) {
       if (!mountedRef.current) return;
-      setBenchmark(s);
-    } catch {
-      // Even the synthetic row is unreachable (e.g. dev-only run
-      // with the command not registered). The page renders the
-      // "no benchmark" placeholder.
+      // A read that failed is not "no benchmark" — it is not knowing, and the
+      // section says which of the two it is rather than showing the empty
+      // state for both.
+      setBenchmark(null);
+      setBenchmarkError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -143,69 +148,6 @@ export const Health = () => {
                     .filter(Boolean)
                     .join(' · ')}
             </strong>
-
-      <section className={styles.benchSection}>
-        <header className={styles.benchHeader}>
-          <Gauge size={18} />
-          <h2>Performance</h2>
-          {benchmark?.synthetic && (
-            <span className={styles.syntheticTag} title="No model run recorded yet; these are the values the SIH pitch quotes.">
-              <Sparkles size={12} /> Illustrative
-            </span>
-          )}
-          <button
-            type="button"
-            className={styles.benchButton}
-            onClick={() => void refreshBenchmark()}
-          >
-            <RefreshCw size={14} /> Refresh
-          </button>
-        </header>
-        {benchmark ? (
-          <div className={styles.benchGrid}>
-            <div className={styles.benchStat}>
-              <span className={styles.benchLabel}>Tokens / sec</span>
-              <span className={styles.benchValue}>{benchmark.tokensPerSecond.toFixed(1)}</span>
-              <span className={styles.benchNote}>
-                gemma-3-12b-it · Q4_K_M · 64-token reply
-              </span>
-            </div>
-            <div className={styles.benchStat}>
-              <span className={styles.benchLabel}>Time to first token</span>
-              <span className={styles.benchValue}>{benchmark.ttftMs} ms</span>
-              <span className={styles.benchNote}>
-                measured from prompt to first received token
-              </span>
-            </div>
-            <div className={styles.benchStat}>
-              <span className={styles.benchLabel}>VRAM peak</span>
-              <span className={styles.benchValue}>{benchmark.vramPeakMib} MiB</span>
-              <span className={styles.benchNote}>
-                nvidia-smi read at the end of the run
-              </span>
-            </div>
-            <div className={styles.benchStat}>
-              <span className={styles.benchLabel}>Accuracy on demo tasks</span>
-              <span className={styles.benchValue}>{benchmark.accuracyPct.toFixed(0)}%</span>
-              <span className={styles.benchNote}>
-                hand-graded on tag ID, calculation, policy compliance
-              </span>
-            </div>
-          </div>
-        ) : (
-          <p className={styles.benchEmpty}>
-            <Cpu size={14} /> No benchmark available. Load a model and run any
-            task; the row will appear here.
-          </p>
-        )}
-        {benchmark && (
-          <p className={styles.benchMeta}>
-            Last measured {new Date(benchmark.at).toLocaleString()} · hardware
-            tier <code>{benchmark.hardwareTier}</code> · model{' '}
-            <code>{benchmark.modelId}</code>
-          </p>
-        )}
-      </section>
             <p>
               {snapshot
                 ? `Read ${new Date(snapshot.takenAt).toLocaleTimeString()} · ${snapshot.externalCallsMade} external calls made`
@@ -223,6 +165,74 @@ export const Health = () => {
           Refresh
         </button>
       </div>
+
+      <section className={styles.benchSection}>
+        <header className={styles.benchHeader}>
+          <Gauge size={18} />
+          <h2>Performance</h2>
+          <button
+            type="button"
+            className={styles.benchButton}
+            onClick={() => void refreshBenchmark()}
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </header>
+        {benchmark ? (
+          <div className={styles.benchGrid}>
+            <div className={styles.benchStat}>
+              <span className={styles.benchLabel}>Tokens / sec</span>
+              <span className={styles.benchValue}>{benchmark.tokensPerSecond.toFixed(1)}</span>
+              <span className={styles.benchNote}>
+                {benchmark.replyTokens}-token reply
+              </span>
+            </div>
+            <div className={styles.benchStat}>
+              <span className={styles.benchLabel}>Time to first token</span>
+              <span className={styles.benchValue}>
+                {benchmark.ttftMs > 0 ? `${benchmark.ttftMs} ms` : 'not recorded'}
+              </span>
+              <span className={styles.benchNote}>
+                {benchmark.ttftMs > 0
+                  ? 'measured from prompt to first received token'
+                  : 'this run carried no first-token measurement'}
+              </span>
+            </div>
+            <div className={styles.benchStat}>
+              <span className={styles.benchLabel}>VRAM peak</span>
+              <span className={styles.benchValue}>{benchmark.vramPeakMib} MiB</span>
+              <span className={styles.benchNote}>
+                nvidia-smi read at the end of the run
+              </span>
+            </div>
+            <div className={styles.benchStat}>
+              <span className={styles.benchLabel}>Accuracy on demo tasks</span>
+              <span className={styles.benchValue}>{benchmark.accuracyPct.toFixed(0)}%</span>
+              <span className={styles.benchNote}>
+                hand-graded on tag ID, calculation, policy compliance
+              </span>
+            </div>
+          </div>
+        ) : benchmarkError ? (
+          <p className={styles.benchEmpty}>
+            <AlertTriangle size={14} /> The benchmark history could not be read, so
+            nothing is claimed about performance on this machine: {benchmarkError}
+          </p>
+        ) : (
+          <p className={styles.benchEmpty}>
+            <Cpu size={14} /> Nothing has been measured on this machine yet. Run a
+            benchmark and the row will appear here &mdash; until then this section
+            stays empty rather than showing a figure from somewhere else.
+          </p>
+        )}
+        {benchmark && (
+          <p className={styles.benchMeta}>
+            Last measured {new Date(benchmark.at).toLocaleString()} · hardware
+            tier <code>{benchmark.hardwareTier}</code> · model{' '}
+            <code>{benchmark.modelId}</code>
+          </p>
+        )}
+      </section>
 
       <div className={styles.grid}>
         {snapshot?.items.map((item) => (

@@ -1120,6 +1120,50 @@ fn a_recovered_trace_keeps_the_caveat_that_history_was_summarised() {
     assert_eq!(snapshot.compactions, 1);
 }
 
+#[test]
+fn a_recovered_trace_keeps_the_caveat_that_history_did_not_fit() {
+    // The stronger sibling of the compaction caveat above. A compaction says
+    // what it replaced; this is history the model was never shown, so an answer
+    // given afterwards rests on less than the thread holds and says nothing
+    // about the gap. A trace that dropped it would overstate what the model was
+    // looking at.
+    let log = log();
+    start(&log, "run-1");
+    log.record(
+        EventDraft::new("run-1", TaskEventType::ContextTrimmed, SYSTEM_ACTOR).with(json!({
+            "dropped": 11,
+            "carried": 2,
+            "tokens": 180,
+            "windowTokens": 8192,
+        })),
+    )
+    .expect("a trim");
+    log.record(EventDraft::new("run-1", TaskEventType::TurnEnded, USER).with(json!({})))
+        .expect("a turn");
+
+    let snapshot = log.snapshot("run-1").unwrap().unwrap();
+    let trim = snapshot.history_trim.expect("the trim survived recovery");
+    assert_eq!(trim.dropped, 11);
+    assert_eq!(trim.carried, 2);
+    assert_eq!(trim.window_tokens, 8192);
+    // And it is not folded in with the compactions, which are a different
+    // event with a different remedy.
+    assert_eq!(snapshot.compactions, 0);
+}
+
+#[test]
+fn a_turn_that_carried_its_whole_thread_records_no_trim() {
+    // The ordinary case, and the one that must stay silent: a meter reporting
+    // "0 dropped" every turn would train people to ignore it.
+    let log = log();
+    start(&log, "run-1");
+    log.record(EventDraft::new("run-1", TaskEventType::TurnEnded, USER).with(json!({})))
+        .expect("a turn");
+
+    let snapshot = log.snapshot("run-1").unwrap().unwrap();
+    assert!(snapshot.history_trim.is_none());
+}
+
 /// One compaction event, with the whole payload the runtime now sends.
 fn compaction_payload(ordinal: u32, refined: bool, before: u32, after: u32) -> serde_json::Value {
     json!({

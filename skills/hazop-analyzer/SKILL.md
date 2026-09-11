@@ -1,10 +1,7 @@
 ---
 name: hazop-analyzer
 description: >-
-  Fill a HAZOP worksheet for a process deviation. The skill walks a study team
-  through "what if flow is too high / too low / reverse / wrong composition" for
-  a node, surfaces the credible causes and consequences in the site's own
-  language, and produces a worksheet row the team can sign.
+  Fill a HAZOP worksheet for a process deviation.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

@@ -25,12 +25,10 @@
 //! reviewed — from being pointed at vendor negotiations.
 
 pub mod discovery;
-pub mod fit_score;
 pub mod integrity;
 pub mod router;
 pub mod scan;
 pub mod capability;
-pub mod categorize;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -124,6 +122,16 @@ impl ModelRole {
         ModelRole::Rerank,
         ModelRole::RelationExtraction,
     ];
+
+    /// The role a label names, or `None` if nothing does.
+    ///
+    /// The inverse of [`Self::label`], derived from `ALL` so the two cannot
+    /// drift as roles are added. Used to read back a role persisted as text —
+    /// a conversation's sticky route — where an unrecognised value must mean
+    /// "route afresh" rather than a guess.
+    pub fn from_label(label: &str) -> Option<ModelRole> {
+        Self::ALL.iter().copied().find(|role| role.label() == label)
+    }
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -342,8 +350,20 @@ impl ModelEntry {
     /// model per token, and pretending otherwise would route agent planning to
     /// something that cannot hold a tool-call format.
     pub fn meets_floor(&self, role: ModelRole) -> bool {
-        let effective = self.active_parameters_b.unwrap_or(self.parameters_b);
-        effective >= role.minimum_parameters_b()
+        self.effective_parameters_b() >= role.minimum_parameters_b()
+    }
+
+    /// Parameters per token: the active count where declared, the total
+    /// otherwise.
+    ///
+    /// Extracted so the router's size *ordering* reads the same figure as the
+    /// floor above. It did not: `meets_floor` used the active count while the
+    /// sort compared `parameters_b`, so a 30B-A3B passed the reasoning floor as
+    /// a 3B and then sorted ahead of every dense candidate as a 30B — chosen
+    /// for a capacity it does not have per token, and budgeted for weights it
+    /// does.
+    pub fn effective_parameters_b(&self) -> f32 {
+        self.active_parameters_b.unwrap_or(self.parameters_b)
     }
 
     /// Whether this model supports the required modality.

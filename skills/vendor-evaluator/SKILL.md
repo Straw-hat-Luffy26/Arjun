@@ -1,11 +1,9 @@
 ---
 name: vendor-evaluator
 description: >-
-  Compare vendor quotes against a standard contract template and a like-for-like
-  technical specification, flag terms that are unusual for the category, and
-  calculate a three-year total cost of ownership. The skill is honest about
-  what is in the quote and what is not, and refuses to recommend a vendor
-  when the comparison is incomplete.
+  Compare vendor quotes against a standard contract template and a
+  like-for-like technical specification, flag terms that are unusual for
+  the.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

@@ -4,7 +4,6 @@ pub mod recommendation;
 pub mod download;
 pub mod inference;
 pub mod intelligence;
-pub mod catalog;
 pub mod sovereignty;
 pub mod agent;
 pub mod artifact_preview;

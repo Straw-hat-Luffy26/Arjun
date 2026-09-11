@@ -2014,6 +2014,200 @@ mod capability_search_execution {
 /// Three tools in the catalogue were therefore unreachable. A model that
 /// planned to use one, was granted it by the gateway, and called it, got back a
 /// sentence saying the tool was available somewhere else.
+/// What a model is actually shown when it asks what this machine can do.
+///
+/// Sixty-five skills are installed; twelve reach one response. These pin the
+/// two things that makes acceptable: that the page fits, and that the model is
+/// told the rest exist. A model shown twelve and not told will conclude the
+/// machine has twelve.
+mod capability_paging {
+    use super::*;
+    use crate::agent_runtime::render_capabilities;
+
+    fn card(name: &str, needs_approval: bool) -> Value {
+        json!({
+            "name": name,
+            "description": "what it is for",
+            "tools": ["search_documents"],
+            "needsApproval": needs_approval,
+        })
+    }
+
+    #[test]
+    fn a_paged_listing_says_how_many_it_did_not_show() {
+        let shown: Vec<Value> = (0..12).map(|i| card(&format!("skill-{i}"), false)).collect();
+        let prose = render_capabilities(&json!({ "skills": shown, "matched": 65 }));
+
+        assert!(prose.contains("12 of 65 shown"), "{prose}");
+        assert!(
+            prose.contains("Search again"),
+            "and says what to do about it: {prose}"
+        );
+    }
+
+    #[test]
+    fn a_complete_listing_does_not_invite_a_second_search() {
+        // Sending a model back for "the rest" when there is no rest costs a
+        // step and returns the same twelve.
+        let shown: Vec<Value> = (0..3).map(|i| card(&format!("skill-{i}"), false)).collect();
+        let prose = render_capabilities(&json!({ "skills": shown, "matched": 3 }));
+
+        assert!(!prose.contains("shown."), "{prose}");
+        assert!(!prose.contains("Search again"), "{prose}");
+    }
+
+    #[test]
+    fn a_skill_whose_output_waits_for_a_reviewer_says_so_before_it_is_chosen() {
+        // Found out after the run halts, this is a wasted turn; found out here,
+        // it is something the model can say in its plan.
+        let prose = render_capabilities(&json!({
+            "skills": [card("gated", true), card("automatic", false)],
+            "matched": 2,
+        }));
+
+        let gated = prose
+            .lines()
+            .find(|line| line.starts_with("- gated"))
+            .expect("the gated skill is listed");
+        assert!(gated.contains("waits for a reviewer"), "{gated}");
+
+        let automatic = prose
+            .lines()
+            .find(|line| line.starts_with("- automatic"))
+            .expect("the automatic skill is listed");
+        assert!(!automatic.contains("reviewer"), "{automatic}");
+    }
+
+    #[test]
+    fn nothing_found_is_an_answer_not_a_failure() {
+        // A model told the call failed retries it; a model told nothing matched
+        // moves on.
+        let prose = render_capabilities(&json!({ "skills": [], "matched": 0 }));
+        assert!(prose.contains("No installed skill matches"), "{prose}");
+    }
+
+    #[test]
+    fn the_skills_this_product_was_written_for_are_on_the_first_page() {
+        // The alphabet is not a ranking. Sorted by name, sixty-five skills put
+        // `accessibility`, `api-design` and `article-writing` first and left
+        // `pid-reader` at 40, `hazop-analyzer` at 30 and `safety-compliance`
+        // at 57 — so a model asking a refinery what it can do would have seen
+        // twelve software-engineering skills and concluded that is the job.
+        use crate::skills::{SkillRegistry, CAPABILITY_PAGE};
+
+        let shipped = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent")
+            .join("skills");
+        let registry = SkillRegistry::open(shipped);
+        let session = Session::open(User::new("priya", "Priya Sharma", vec![Role::Employee]));
+        let mut cards = registry.search(
+            "",
+            &crate::skills::SkillContext {
+                session: &session,
+                mode: crate::sovereignty::mode::OperatingMode::Work,
+                run_permits: crate::orchestrator::tools::ToolName::ALL,
+            },
+        );
+
+        // The same ordering `capability_search` applies.
+        cards.retain(|card| card.is_available());
+        cards.sort_by_key(|card| (card.imported, card.name.clone()));
+
+        let first_page: Vec<&str> = cards
+            .iter()
+            .take(CAPABILITY_PAGE)
+            .map(|c| c.name.as_str())
+            .collect();
+
+        for expected in ["pid-reader", "hazop-analyzer", "safety-compliance"] {
+            assert!(
+                first_page.contains(&expected),
+                "{expected} is not on the first page a model sees: {first_page:?}"
+            );
+        }
+        // Every skill written for this product, not merely the three named
+        // above. Ten of them and a page of twelve, so they all fit with two
+        // places left over.
+        let own: Vec<&str> = cards
+            .iter()
+            .filter(|c| !c.imported)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(
+            own.len() <= CAPABILITY_PAGE,
+            "there are now {} skills written for this product and a page holds \
+             {CAPABILITY_PAGE}; some would be pushed off the first page, which \
+             is the failure this test exists to catch",
+            own.len()
+        );
+        assert_eq!(
+            first_page[..own.len()],
+            own[..],
+            "the page does not start with this product's own skills"
+        );
+
+        // The rest of the page is filled from the imported skills, in order,
+        // so the listing stays predictable rather than merely reordered.
+        let filler: Vec<&str> = cards
+            .iter()
+            .filter(|c| c.imported)
+            .map(|c| c.name.as_str())
+            .take(CAPABILITY_PAGE - own.len())
+            .collect();
+        assert_eq!(
+            first_page[own.len()..],
+            filler[..],
+            "the rest of the page is not the imported skills in order"
+        );
+
+        // Alphabetical within each group.
+        for group in [&own, &filler] {
+            let mut sorted = (*group).clone();
+            sorted.sort_unstable();
+            assert_eq!(**group, sorted, "not alphabetical within its group: {group:?}");
+        }
+    }
+
+    #[test]
+    fn the_page_a_model_sees_is_a_fraction_of_the_card_an_operator_sees() {
+        // The reason `for_model` exists. If these ever converge, the listing is
+        // back in the model's context at full size.
+        use crate::skills::{SkillRegistry, CAPABILITY_PAGE};
+
+        let shipped = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent")
+            .join("skills");
+        let registry = SkillRegistry::open(shipped);
+        let session = Session::open(User::new("priya", "Priya Sharma", vec![Role::Employee]));
+        let cards = registry.search(
+            "",
+            &crate::skills::SkillContext {
+                session: &session,
+                mode: crate::sovereignty::mode::OperatingMode::Work,
+                run_permits: crate::orchestrator::tools::ToolName::ALL,
+            },
+        );
+        assert!(
+            cards.len() > CAPABILITY_PAGE,
+            "this assertion needs more skills installed than fit one page"
+        );
+
+        let operator = serde_json::to_string(&cards).expect("serialises").len();
+        let model: usize = cards
+            .iter()
+            .take(CAPABILITY_PAGE)
+            .map(|c| serde_json::to_string(&c.for_model()).expect("serialises").len())
+            .sum();
+        assert!(
+            model * 4 < operator,
+            "the model's page is {model} bytes against the operator's {operator}; \
+             the point of `for_model` is that it is much smaller"
+        );
+    }
+}
+
 mod runtime_wiring {
     use super::*;
 

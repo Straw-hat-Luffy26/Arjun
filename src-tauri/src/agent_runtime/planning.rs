@@ -29,7 +29,10 @@
 //! clearly the person asked for it.
 //!
 //! - `execute_code` is out unless code was asked for. Nothing else in an
-//!   ordinary desk task wants a sandbox, and the tool is not built in any case.
+//!   ordinary desk task wants a sandbox. Both directions cost something here,
+//!   which is why the words are chosen carefully: the sandbox *is* built
+//!   (`orchestrator::runner::execute_code`), so withholding it loses a real
+//!   capability, and planning it by accident reports a finished run as failed.
 //! - `create_xlsx` is out unless the plan expects a calculation. The tool
 //!   already refuses when the run has computed nothing, so this only moves the
 //!   same refusal earlier and makes it legible in the plan.
@@ -98,8 +101,40 @@ const DECK_WORDS: &[&str] = &[
     "pitch deck",
 ];
 
-/// Words that mean a sandbox is wanted.
-const CODE_WORDS: &[&str] = &["script", "python", "code", "program"];
+/// Words that mean a sandbox is wanted, and cannot mean anything else here.
+const CODE_WORDS: &[&str] = &[
+    "script",
+    "python",
+    "javascript",
+    "typescript",
+    "sandbox",
+];
+
+/// Ways of saying "code" that mean source rather than a standard.
+///
+/// `"code"` on its own used to be in the list above, and in a refinery that is
+/// the wrong reading far more often than the right one: "as per the code",
+/// "code compliance", "the IS code", "ASME code" are all questions about a
+/// standard, and each of them planned a sandbox step the run could not satisfy
+/// — which reports the whole run failed. `"program"` came out for the same
+/// reason: a plant runs training programs and inspection programs.
+///
+/// Phrases rather than a weight, because this module's matcher is boolean.
+/// Each one is a use of the word that a standards clause cannot produce.
+const CODE_PHRASES: &[&str] = &[
+    "write code",
+    "write the code",
+    "write some code",
+    "code snippet",
+    "sample code",
+    "example code",
+    "code to ",
+    "code that ",
+    "code for ",
+    "run the code",
+    "write a program",
+    "write a small program",
+];
 
 /// Words that mean the person wants something to outlast this run.
 ///
@@ -114,8 +149,68 @@ const MEMORY_WORDS: &[&str] = &[
     "from now on",
 ];
 
+/// Whether the prompt uses any of these words.
+///
+/// ## Why this is not `contains`
+///
+/// It was, and in this product's vocabulary that was a trap. `str::contains`
+/// has no notion of a word boundary, so every list above matched inside longer
+/// words that mean something else entirely:
+///
+/// | written | matched | and so the run planned |
+/// |---|---|---|
+/// | su**mm**ary | `mm` | a calculation, and — since "summary" is also a deliverable — a workbook |
+/// | ope**ratio**n | `ratio` | a calculation |
+/// | gene**rate**, accu**rate** | `rate` | a calculation |
+/// | work**flow**, over**flow** | `flow` | a calculation |
+/// | down**load**, work**load** | `load` | a calculation |
+/// | **note**book | `note` | a Word document |
+/// | as per the **code** | `code` | a sandbox run |
+///
+/// None of these are cosmetic. A step is settled only by evidence it actually
+/// left behind ([`Satisfies`]), so a step planned by accident is one the run
+/// cannot satisfy — `PlanRecord::unfinished()` is then non-empty and
+/// `completion::verify` reports the whole run failed. "Write a summary of the
+/// inspection report" planned a calculation *and* a workbook, and could not
+/// have finished.
+///
+/// So single words match whole tokens, the way
+/// [`crate::capability::classifier`] already does. Phrases containing a space
+/// or a hyphen keep `contains`: they are specific enough that no longer word
+/// can swallow them, and tokenising them would need the caller to know how the
+/// splitter works.
 fn mentions(prompt: &str, words: &[&str]) -> bool {
-    words.iter().any(|word| prompt.contains(word))
+    let tokens: Vec<&str> = prompt
+        .split(|c: char| !(c.is_alphanumeric() || c == '+' || c == '#'))
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    words.iter().any(|word| {
+        if word.contains(' ') || word.contains('-') {
+            prompt.contains(word)
+        } else {
+            tokens.iter().any(|token| token_is(token, word))
+        }
+    })
+}
+
+/// Whether one token counts as this word.
+///
+/// The word itself, or the word carrying a number in front of it. Unit words
+/// are why: people write "500mm" and "75kw" as often as "500 mm", and a plain
+/// token comparison would see `500mm` and miss the `mm` that says this prompt
+/// involves working something out. Only digits and a decimal point may precede
+/// it, so `summary` still does not contain `mm`.
+fn token_is(token: &str, word: &str) -> bool {
+    if token == word {
+        return true;
+    }
+    match token.strip_suffix(word) {
+        Some(prefix) => {
+            !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit() || c == '.')
+        }
+        None => false,
+    }
 }
 
 /// What would show that a step was actually carried out.
@@ -194,7 +289,7 @@ pub fn derive(prompt: &str) -> DerivedPlan {
     let produces_document = mentions(&deck_free, DELIVERABLE_WORDS);
 
     let produces_workbook = mentions(&lower, WORKBOOK_WORDS) || (calculates && produces_document);
-    let writes_code = mentions(&lower, CODE_WORDS);
+    let writes_code = mentions(&lower, CODE_WORDS) || mentions(&lower, CODE_PHRASES);
 
     let step = |intent: &str, satisfied_by: Satisfies| StepSpec {
         intent: intent.to_string(),
@@ -431,6 +526,97 @@ pub fn plan_for(run_id: &str, prompt: &str) -> PlanRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper: does this plan expect the run to use the tool?
+    fn plans(plan: &DerivedPlan, tool: ToolName) -> bool {
+        plan.steps
+            .iter()
+            .any(|step| step.satisfied_by == Satisfies::Tool(tool))
+    }
+
+    /// The trap `mentions` was built to remove: plant English inside longer
+    /// words planning work nobody asked for.
+    ///
+    /// Each of these planned at least one step the run could not satisfy, so
+    /// `PlanRecord::unfinished()` was non-empty and the whole run reported
+    /// itself failed for producing exactly what was wanted.
+    #[test]
+    fn a_word_inside_a_longer_word_plans_nothing() {
+        // "summary" carries "mm"; it is also a deliverable word, so the pair
+        // used to plan a calculation *and* a workbook.
+        let summary = derive("write a summary of the inspection report");
+        assert!(
+            !plans(&summary, ToolName::RunCalculation),
+            "\"summary\" contains \"mm\" and planned a calculation"
+        );
+        assert!(
+            !plans(&summary, ToolName::CreateXlsx),
+            "\"summary\" planned a workbook nobody asked for"
+        );
+
+        // "operation" carries "ratio"; "generate" and "accurate" carry "rate".
+        for prompt in [
+            "what is the standard operation procedure for this unit?",
+            "generate an accurate list of the valves on this line",
+            "describe the workflow for raising a permit",
+            "how do I download the vendor drawing?",
+        ] {
+            assert!(
+                !plans(&derive(prompt), ToolName::RunCalculation),
+                "{prompt:?} planned a calculation"
+            );
+        }
+
+        // "notebook" carries "note", a deliverable word.
+        assert!(
+            !derive("create a notebook for the B-deck survey")
+                .steps
+                .iter()
+                .any(|step| step.intent.contains("Produce the document")),
+            "\"notebook\" planned a Word document"
+        );
+
+        // "the code" in a refinery is ASME or IS, not source.
+        assert!(
+            !plans(&derive("as per the code, what is the minimum shell thickness?"), ToolName::ExecuteCode),
+            "\"the code\" planned a sandbox run"
+        );
+    }
+
+    /// And the words themselves still work when they are the words.
+    #[test]
+    fn the_real_words_still_plan_what_they_always_did() {
+        assert!(plans(
+            &derive("calculate the flow rate through the 8 inch line"),
+            ToolName::RunCalculation
+        ));
+        assert!(plans(
+            &derive("write a python script to tabulate these readings"),
+            ToolName::ExecuteCode
+        ));
+        assert!(derive("draft a note approving the seal replacement")
+            .steps
+            .iter()
+            .any(|step| step.intent.contains("Produce the document")));
+    }
+
+    /// A unit written against its number is still a unit.
+    ///
+    /// People write "500mm" as often as "500 mm", and a plain token comparison
+    /// would miss it — which would trade one silent misplan for another.
+    #[test]
+    fn a_unit_stuck_to_its_number_still_reads_as_one() {
+        for prompt in [
+            "what is the bolt torque for a 500mm flange?",
+            "is the 75kw motor rated for this duty?",
+            "check the 12.5kg counterweight",
+        ] {
+            assert!(
+                plans(&derive(prompt), ToolName::RunCalculation),
+                "{prompt:?} did not plan a calculation"
+            );
+        }
+    }
 
     #[test]
     fn every_plan_searches_before_answering_and_checks_afterwards() {

@@ -79,14 +79,77 @@ fn esc(text: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '(' => out.push_str("\\("),
             ')' => out.push_str("\\)"),
-            // WinAnsi covers the base-14 fonts. Anything outside it would be
-            // drawn as the wrong glyph, so it is replaced visibly rather than
-            // silently mangled.
-            c if (c as u32) < 32 || (c as u32) > 255 => out.push('?'),
-            c => out.push(c),
+            c if (c as u32) < 32 => out.push('?'),
+            c if c.is_ascii() => out.push(c),
+            // Everything above ASCII, as one CP1252 byte written in octal.
+            //
+            // Two things were wrong here, in opposite directions.
+            //
+            // A character between 128 and 255 was pushed onto a Rust `String`,
+            // and the content stream is written out as UTF-8 - so it left as
+            // *two* bytes while the font is declared `/WinAnsiEncoding`, which
+            // reads one byte per glyph. A degree sign was drawn as two wrong
+            // glyphs, and in an engineering document that is a temperature.
+            //
+            // Anything above 255 became a literal `?`. CP1252 has the em dash,
+            // the en dash, the ellipsis, the bullet and both pairs of curly
+            // quotes - the characters a model writes constantly - at its own
+            // code points; they were never looked up.
+            //
+            // Octal escapes rather than raw bytes, so the stream stays ASCII
+            // and `stream.len()` still equals the byte length that the
+            // `/Length` entry declares.
+            c => match win_ansi(c) {
+                Some(byte) => out.push_str(&format!("\\{byte:03o}")),
+                // Genuinely outside CP1252 - Devanagari, CJK, an emoji. The
+                // base-14 fonts have no glyph for it and this file embeds no
+                // font, so it is replaced visibly rather than drawn wrong.
+                None => out.push('?'),
+            },
         }
     }
     out
+}
+
+/// The CP1252 byte for a character, where there is one.
+///
+/// Latin-1 is the identity over 160..=255. The 128..=159 block is where CP1252
+/// differs from it, and it is where the typographic characters live.
+fn win_ansi(ch: char) -> Option<u8> {
+    let code = ch as u32;
+    if (160..=255).contains(&code) {
+        return Some(code as u8);
+    }
+    Some(match ch {
+        '\u{20ac}' => 0x80, // euro
+        '\u{201a}' => 0x82, // single low quote
+        '\u{0192}' => 0x83, // florin
+        '\u{201e}' => 0x84, // double low quote
+        '\u{2026}' => 0x85, // ellipsis
+        '\u{2020}' => 0x86, // dagger
+        '\u{2021}' => 0x87, // double dagger
+        '\u{02c6}' => 0x88, // circumflex
+        '\u{2030}' => 0x89, // per mille
+        '\u{0160}' => 0x8a,
+        '\u{2039}' => 0x8b,
+        '\u{0152}' => 0x8c,
+        '\u{017d}' => 0x8e,
+        '\u{2018}' => 0x91, // left single quote
+        '\u{2019}' => 0x92, // right single quote, and the apostrophe a model writes
+        '\u{201c}' => 0x93, // left double quote
+        '\u{201d}' => 0x94, // right double quote
+        '\u{2022}' => 0x95, // bullet
+        '\u{2013}' => 0x96, // en dash
+        '\u{2014}' => 0x97, // em dash
+        '\u{02dc}' => 0x98,
+        '\u{2122}' => 0x99, // trade mark
+        '\u{0161}' => 0x9a,
+        '\u{203a}' => 0x9b,
+        '\u{0153}' => 0x9c,
+        '\u{017e}' => 0x9e,
+        '\u{0178}' => 0x9f,
+        _ => return None,
+    })
 }
 
 /// How many characters of a given size fit across the text column.
@@ -102,9 +165,32 @@ fn per_line(size: f64, fixed: bool) -> usize {
 
 fn wrap(text: &str, size: f64, fixed: bool) -> Vec<String> {
     let limit = per_line(size, fixed);
+    if fixed {
+        return split_at_column(text, limit);
+    }
+
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
+        // A single word longer than the column.
+        //
+        // This used to be placed on a line of its own and left there, whatever
+        // its length — so a long URL, a chemical name or a tag with no spaces
+        // in it was drawn straight off the right edge of the page and the part
+        // past the margin was simply not on the paper. The comment above says
+        // the wrap is conservative because "a line that runs slightly short is
+        // invisible, one that runs off the page is not"; that was true of the
+        // intent and not of the code.
+        if word.chars().count() > limit {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut pieces = split_at_column(word, limit);
+            // The last piece keeps collecting the words that follow it.
+            current = pieces.pop().unwrap_or_default();
+            lines.extend(pieces);
+            continue;
+        }
         if current.is_empty() {
             current = word.to_string();
         } else if current.chars().count() + 1 + word.chars().count() <= limit {
@@ -122,6 +208,33 @@ fn wrap(text: &str, size: f64, fixed: bool) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+/// Splits at the column edge, keeping every character exactly where it was.
+///
+/// Used for anything drawn in the fixed-width face: a listing, a table row.
+///
+/// `wrap` used to run `split_whitespace()` over these too, which reflows text
+/// by definition — it collapses every run of spaces to one and drops leading
+/// ones entirely. `parse_document_body` takes a fenced block with
+/// `raw.trim_end()` precisely so the indentation survives, and its own comment
+/// records what deleting it cost: "`line.trim()` deleted the indentation, which
+/// in Python *is* the program". That work was undone two functions later.
+///
+/// Splitting rather than wrapping is also the right answer for a long line of
+/// code: word-wrapping moves tokens around, while splitting at the column at
+/// least leaves them in the order and the position they were written.
+fn split_at_column(text: &str, limit: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        // A blank line inside a listing is a deliberate separation, not
+        // nothing, and the caller draws it as vertical space.
+        return vec![String::new()];
+    }
+    chars
+        .chunks(limit)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
 }
 
 /// Breaks the blocks into pages that fit.
@@ -386,6 +499,101 @@ mod tests {
                 Block::Fixed("Item      Qty  Cost".to_string()),
             ],
         }
+    }
+
+    /// A degree sign, an em dash and a curly quote have to survive the trip.
+    ///
+    /// The fonts are declared `/WinAnsiEncoding`, which is CP1252: one byte per
+    /// glyph. `esc` built a Rust `String` and the stream was written out as
+    /// UTF-8, so every character from 128 to 255 reached the page as *two*
+    /// bytes and was drawn as two wrong glyphs - a temperature in degrees came
+    /// out as mojibake, in an engineering document.
+    ///
+    /// Above 255 it was worse in the other direction: anything there became a
+    /// literal `?`, including the em dash, the ellipsis and the curly quotes a
+    /// model writes constantly. CP1252 has all of them; they were never looked
+    /// up.
+    #[test]
+    fn characters_a_plant_document_contains_are_not_mangled() {
+        let body = format!(
+            "Rated 120 {}C {} see {}Operating limits{}{}",
+            '\u{b0}', '\u{2014}', '\u{201c}', '\u{201d}', '\u{2026}'
+        );
+        let bytes = render(&PdfSpec {
+            title: "Pump duty".to_string(),
+            classification: "OFFICIAL".to_string(),
+            blocks: vec![Block::Paragraph(body)],
+        })
+        .expect("pdf");
+
+        // Nothing may reach the page as UTF-8: a 0xC2 lead byte before the
+        // degree sign is exactly the mojibake this guards.
+        assert!(
+            !bytes.windows(2).any(|w| w == [0xC2, 0xB0]),
+            "the degree sign was written as UTF-8"
+        );
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            !text.contains('?'),
+            "a character was replaced with a question mark"
+        );
+        // CP1252: degree 0xB0, em dash 0x97, open quote 0x93, ellipsis 0x85.
+        for octal in [r"\260", r"\227", r"\223", r"\205"] {
+            assert!(text.contains(octal), "missing {octal} in the stream");
+        }
+    }
+
+    /// Indentation in a listing is the program, and it has to survive.
+    ///
+    /// `parse_document_body` goes to trouble to keep it — a fenced block is
+    /// taken with `raw.trim_end()` so only trailing space is lost, and the
+    /// comment there says plainly that "`line.trim()` deleted the indentation,
+    /// which in Python *is* the program". Then `wrap` called
+    /// `split_whitespace()` on it and threw all of it away again, so a
+    /// four-space indent, a run of spaces lining up a table, and a tab all
+    /// collapsed to one space by the time they reached the page.
+    #[test]
+    fn a_listing_keeps_the_spaces_that_carry_its_meaning() {
+        let body = "    return \"even\" if n % 2 == 0 else \"odd\"";
+        let lines = wrap(body, BODY, true);
+        assert_eq!(lines.len(), 1, "a short line should not be split: {lines:?}");
+        assert_eq!(lines[0], body, "the indent was lost");
+
+        // And the same through the whole renderer, not only the helper.
+        let bytes = render(&PdfSpec {
+            title: "Even-Odd Number Algorithm".to_string(),
+            classification: "OFFICIAL".to_string(),
+            blocks: vec![
+                Block::Fixed("def even_or_odd(n: int) -> str:".to_string()),
+                Block::Fixed(body.to_string()),
+            ],
+        })
+        .expect("pdf");
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.contains("(    return"),
+            "the indent did not reach the page"
+        );
+    }
+
+    /// A long listing line is split at the column, not at a space.
+    ///
+    /// Word-wrapping a line of code moves its tokens around; splitting it at
+    /// the column edge at least leaves them where they were written.
+    #[test]
+    fn a_long_listing_line_splits_without_reflowing() {
+        let long = format!("    {}", "x".repeat(200));
+        let lines = wrap(&long, BODY, true);
+        assert!(lines.len() > 1, "a 200-character line should have split");
+        assert!(lines[0].starts_with("    x"), "the indent was lost: {:?}", lines[0]);
+        let rejoined: String = lines.concat();
+        assert_eq!(rejoined, long, "characters were added or dropped in the split");
+    }
+
+    /// A blank line inside a listing is a deliberate separation.
+    #[test]
+    fn a_blank_line_in_a_listing_survives() {
+        assert_eq!(wrap("", BODY, true), vec![String::new()]);
     }
 
     #[test]

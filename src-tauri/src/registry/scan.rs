@@ -168,12 +168,36 @@ fn read_gguf_meta(path: &Path) -> Option<GgufMetadata> {
     crate::ai_engine::gguf_meta::read_gguf_metadata(path).ok()
 }
 
+/// Lowercases and replaces anything that is not alphanumeric with a hyphen, so
+/// a file name is usable as a stable identifier.
+fn slug(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut last_dash = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "model".to_string()
+    } else {
+        out
+    }
+}
+
 /// Shaped a `ScannedGguf` into a `ModelEntry` suitable for the
 /// registry. The id is derived from the file name (no slashes,
 /// no extension). The `LoadSpec` is filled in from what we
 /// can see on disk: `provider_id` defaults to the runtime
-/// (`llama-cpp`), `model_id` is the architecture when it is
-/// recoverable from the header.
+/// (`llama-cpp`), and `model_id` is the file stem — the same value as
+/// `ModelEntry.id`, so one file is one identity.
 pub fn entry_for(gguf: &ScannedGguf) -> ModelEntry {
     let meta = read_gguf_meta(&gguf.path);
     let file_stem = gguf
@@ -186,13 +210,25 @@ pub fn entry_for(gguf: &ScannedGguf) -> ModelEntry {
     // header does not carry a `general.name` (most GGUFs do
     // not, the field is converter-specific).
     let name = file_stem.clone();
-    let architecture = meta.as_ref().map(|m| m.architecture.clone());
     let provider_id = "llama-cpp".to_string();
-    let model_id = architecture
-        .clone()
-        .unwrap_or_else(|| name.clone())
-        .to_ascii_lowercase()
-        .replace(' ', "-");
+    // The file, not the family.
+    //
+    // This used to be `general.architecture` from the GGUF header, which is
+    // `"qwen3"`, `"llama"` or `"gemma3"` — a *family* name that every file of
+    // that family on the machine shares. The `LoadSpec` triple is what an
+    // administrator's pinned choice is matched on, so five Qwen3 files all
+    // registered as `("llama-cpp", "qwen3", <quant>)` and the pin stopped
+    // identifying one of them: `orchestrator_rank` returned its top rank for
+    // all five at once, the size sort then decided between them, and the Models
+    // screen kept showing a star beside a model that was not answering.
+    // `entries_for_package` had the same problem from the other end, resolving
+    // one package to several files.
+    //
+    // The file stem is what `ModelEntry.id` already uses, and a GGUF filename
+    // carries the model and its quantisation, so it distinguishes exactly the
+    // things that are actually different. Slugged rather than hashed so the id
+    // stays readable in the manifest and survives the library being moved.
+    let model_id = slug(&file_stem);
     let quantization = infer_quantization(&file_stem);
     let parameters_b = if let Some(count) = meta.as_ref().and_then(|m| m.parameter_count) {
         // Header-reported parameter count, divided by

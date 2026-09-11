@@ -3,7 +3,6 @@
 
 pub mod provider;
 pub mod registry;
-pub mod huggingface;
 pub mod ollama_library;
 pub mod local;
 

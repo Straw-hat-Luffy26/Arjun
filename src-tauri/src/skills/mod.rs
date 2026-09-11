@@ -73,6 +73,7 @@ pub mod registry;
 
 pub use manifest::{
     is_valid_name, ApprovalClass, NetworkNeed, Quarantine, SkillCard, SkillManifest,
+    CAPABILITY_PAGE,
 };
 pub use narrowing::{narrow, Narrowed};
 pub use registry::{

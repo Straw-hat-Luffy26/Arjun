@@ -180,13 +180,35 @@ export interface CompactorOptions {
  * recent context. On a 200k window this lands near the upstream numbers; on an
  * 8k one it stays proportionate instead of demanding more than exists.
  */
-export function settingsForWindow(contextWindow: number): CompactionSettings {
+export function settingsForWindow(
+  contextWindow: number,
+  /**
+   * The most this model may generate in one turn, when it is known.
+   *
+   * The reserve has to be at least this, and a proportional reserve is not: on
+   * an 8,192-token window a fifth is 1,638, while `maxTokens` defaults to
+   * 4,096 on both sides of the wire. So the compactor certified a context as
+   * fitting, the model generated past the room it had been left, and the
+   * request that overflowed was the one the compactor had just approved.
+   *
+   * Omitted for callers that do not know it — the summariser's own settings,
+   * and the tests — which keeps the proportional behaviour they had.
+   */
+  maxOutputTokens?: number,
+): CompactionSettings {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
     return { ...DEFAULT_COMPACTION_SETTINGS, enabled: false };
   }
+  const proportional = Math.max(512, Math.floor(contextWindow * 0.2));
+  // Never more than half the window: a model whose output cap is most of its
+  // context would otherwise leave no room for a conversation at all, and a
+  // short reply is better than no history.
+  const forOutput = Number.isFinite(maxOutputTokens ?? NaN)
+    ? Math.min(Math.floor(contextWindow / 2), maxOutputTokens as number)
+    : 0;
   return {
     enabled: true,
-    reserveTokens: Math.max(512, Math.floor(contextWindow * 0.2)),
+    reserveTokens: Math.max(proportional, forOutput),
     keepRecentTokens: Math.max(512, Math.floor(contextWindow * 0.4)),
   };
 }
@@ -575,7 +597,10 @@ export class RunCompactor {
   constructor(options: CompactorOptions) {
     this.#options = options;
     this.#settings = {
-      ...settingsForWindow(options.model.contextTokens ?? options.model.contextWindow ?? 0),
+      ...settingsForWindow(
+        options.model.contextTokens ?? options.model.contextWindow ?? 0,
+        options.model.maxTokens,
+      ),
       ...options.settings,
     };
     this.#notes = options.notes ?? new WorkingNotes();
@@ -658,6 +683,40 @@ export class RunCompactor {
   }
 
   /**
+   * How large the whole request would be: these messages plus everything that
+   * goes out with them.
+   *
+   * ## Why this is not `#tokensAt(...) + fixed`
+   *
+   * It was, at both call sites, and it double-counted from the second turn on.
+   *
+   * `estimateContextTokens` has two modes. With no provider usage to read it
+   * sums the messages, and the system prompt and tool schemas are genuinely not
+   * in that number — so adding `ledger.fixed()` is right, and is the fix that
+   * stopped an 8,192-token window being told 2,700 tokens fitted while the real
+   * request came to 9,238. But once a turn has completed, it short-circuits to
+   * the provider's own `usage.input`, and the provider counted the *whole*
+   * request: the system prompt and the schemas are already in it. Adding
+   * `fixed` again inflated every later turn by the size of the catalogue plus
+   * the system prompt — on a small window with twenty tools, several thousand
+   * tokens against a trigger at eight tenths of the window.
+   *
+   * The run then compacted turns earlier than it needed to, and
+   * `#enforceCeiling` dropped history that would have fitted. `context-ledger`
+   * documents this exact trap and avoids it in `setMessages`; this class walked
+   * into it.
+   *
+   * `lastUsageIndex` is the discriminator: `null` means nothing was read from
+   * the provider and the estimate is messages only.
+   */
+  #requestTokens(messages: AgentMessage[]): number {
+    const measured = estimateContextTokens(messages);
+    return measured.lastUsageIndex === null
+      ? measured.tokens + this.#ledger.fixed()
+      : measured.tokens;
+  }
+
+  /**
    * The `transformContext` hook.
    *
    * Measures the *projected* context, not the raw transcript: once a summary
@@ -704,8 +763,7 @@ export class RunCompactor {
     // an 8,192-token window while the request around it came to 9,238 — so
     // nothing was compacted, and the turn died at the provider with the one
     // error the compactor exists to prevent.
-    const fixed = this.#ledger.fixed();
-    const tokensBefore = this.#tokensAt(projected) + fixed;
+    const tokensBefore = this.#requestTokens(projected);
     this.#measure(projected);
 
     if (!shouldCompact(tokensBefore, window, this.#settings)) {
@@ -787,7 +845,7 @@ export class RunCompactor {
 
     this.#options.onCompacted?.({
       tokensBefore,
-      tokensAfter: this.#tokensAt(projected) + fixed,
+      tokensAfter: this.#requestTokens(projected),
       messagesSummarised: this.#covered,
       ordinal: this.#compactions,
       refinedExistingSummary,
@@ -846,13 +904,18 @@ export class RunCompactor {
   ): AgentMessage[] {
     if (!Number.isFinite(window) || window <= 0) return projected;
 
-    const fixed = this.#ledger.fixed();
-    // What the messages may occupy: the window, less the reply the model has to
-    // have room to write, less everything that is not a message. Never below a
-    // token, so the arithmetic below always has somewhere to aim.
-    const ceiling = Math.max(1, window - this.#settings.reserveTokens - fixed);
+    // What the whole request may occupy: the window, less the reply the model
+    // has to have room to write. Never below a token, so the arithmetic below
+    // always has somewhere to aim.
+    //
+    // `fixed` is not subtracted here any more, because `cost` now includes it —
+    // see `#requestTokens`. Subtracting it from the ceiling *and* adding it
+    // inside the cost charged the system prompt and the tool schemas twice on
+    // every turn after the first, and this pass drops whole messages, so the
+    // over-charge was paid in history.
+    const ceiling = Math.max(1, window - this.#settings.reserveTokens);
     const drift = this.#ledger.driftFactor();
-    const cost = (messages: AgentMessage[]) => Math.ceil(this.#tokensAt(messages) * drift);
+    const cost = (messages: AgentMessage[]) => Math.ceil(this.#requestTokens(messages) * drift);
 
     if (cost(projected) <= ceiling) return projected;
 
@@ -921,7 +984,7 @@ export class RunCompactor {
       process.stderr.write(
         `[agent-runtime:log] [context] ceiling enforced: ${dropped} message(s) dropped, ` +
           `${truncated} truncated, to fit ${ceiling} token(s) of a ${window}-token window ` +
-          `(fixed cost ${fixed}, drift x${drift.toFixed(2)})\n`,
+          `(fixed cost ${this.#ledger.fixed()}, drift x${drift.toFixed(2)})\n`,
       );
     }
     return kept;

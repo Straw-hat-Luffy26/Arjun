@@ -75,6 +75,16 @@ pub enum TaskEventType {
     /// the earlier turns rather than on the turns themselves. A recovered trace
     /// that quietly dropped this would overstate its own grounding.
     ContextCompacted,
+    /// The turn could not carry all of its own conversation, so the oldest of
+    /// it was left out before the model was called.
+    ///
+    /// Durable for the same reason as `ContextCompacted`, and it is the
+    /// stronger of the two: a compaction replaces history with a summary and
+    /// tells the model it did, while this simply does not send it. An answer
+    /// given afterwards rests on less than the thread holds and says nothing
+    /// about the gap, so a trace that dropped this would overstate what the
+    /// model was looking at.
+    ContextTrimmed,
 
     // -- Tools ------------------------------------------------------------
     /// The gateway allowed a call and issued a grant.
@@ -238,6 +248,7 @@ impl TaskEventType {
             TaskEventType::PlanStopped => "plan_stopped",
             TaskEventType::TurnEnded => "turn_ended",
             TaskEventType::ContextCompacted => "context_compacted",
+            TaskEventType::ContextTrimmed => "context_trimmed",
             TaskEventType::ToolAuthorized => "tool_authorized",
             TaskEventType::ToolRefused => "tool_refused",
             TaskEventType::ToolSucceeded => "tool_succeeded",
@@ -294,6 +305,7 @@ impl TaskEventType {
             "plan_stopped" => TaskEventType::PlanStopped,
             "turn_ended" => TaskEventType::TurnEnded,
             "context_compacted" => TaskEventType::ContextCompacted,
+            "context_trimmed" => TaskEventType::ContextTrimmed,
             "tool_authorized" => TaskEventType::ToolAuthorized,
             "tool_refused" => TaskEventType::ToolRefused,
             "tool_succeeded" => TaskEventType::ToolSucceeded,

@@ -805,6 +805,7 @@ fn completion_reconciles_the_surface_run_id_to_the_runtime_one() {
                 error: None,
                 outcome: None,
                 verification: None,
+                tool_summary: None,
                 failed: false,
                 tokens_in: None,
                 tokens_out: None,
@@ -1177,4 +1178,109 @@ mod pinned_context {
             .expect("no error")
             .is_none());
     }
+}
+
+// ── What the plan is allowed to read ──────────────────────────────────────
+
+/// A follow-up is a follow-up *to* something, and the plan has to see it.
+///
+/// `planning::derive` fixes which tools a run may reach from the words of one
+/// prompt. Asked of "now turn that into a deck" alone it plans no deck, and the
+/// gateway then refuses the very call the person just asked for.
+#[test]
+fn recent_requests_returns_the_threads_asks_oldest_first() {
+    let dir = temp_dir();
+    let store = ConversationStore::open(&dir).expect("open");
+    let conv = store
+        .create("Test".to_string(), "Welcome.".to_string(), OWNER)
+        .expect("create");
+
+    for (n, text) in ["draft a briefing deck on seal wear", "add the vendor figures", "yes, go ahead"]
+        .iter()
+        .enumerate()
+    {
+        store
+            .append_user_turn(&conv.id, text, &format!("a-{n}"), &format!("run-{n}"), OWNER)
+            .expect("append")
+            .expect("found");
+    }
+
+    let recent = store.recent_requests(&conv.id, OWNER, 4).expect("read");
+    assert_eq!(
+        recent,
+        vec![
+            "draft a briefing deck on seal wear".to_string(),
+            "add the vendor figures".to_string(),
+            "yes, go ahead".to_string(),
+        ],
+        "the plan must still be able to see that a deck was asked for"
+    );
+}
+
+#[test]
+fn recent_requests_is_bounded_and_keeps_the_newest() {
+    let dir = temp_dir();
+    let store = ConversationStore::open(&dir).expect("open");
+    let conv = store
+        .create("Test".to_string(), "Welcome.".to_string(), OWNER)
+        .expect("create");
+    for n in 0..8 {
+        store
+            .append_user_turn(&conv.id, &format!("ask {n}"), &format!("a-{n}"), &format!("run-{n}"), OWNER)
+            .expect("append")
+            .expect("found");
+    }
+
+    let recent = store.recent_requests(&conv.id, OWNER, 3).expect("read");
+    assert_eq!(recent, vec!["ask 5".to_string(), "ask 6".to_string(), "ask 7".to_string()]);
+}
+
+/// Only what the person asked for.
+///
+/// Folding the assistant's own words in would let a model widen its next turn's
+/// plan by describing tools it would like to have — the plan is a bound on the
+/// model, so the model must not be able to write it.
+#[test]
+fn recent_requests_ignores_what_the_assistant_said() {
+    let dir = temp_dir();
+    let store = ConversationStore::open(&dir).expect("open");
+    let conv = store
+        .create("Test".to_string(), "Welcome.".to_string(), OWNER)
+        .expect("create");
+    store
+        .append_user_turn(&conv.id, "what does the SOP say?", "a-1", "run-1", OWNER)
+        .expect("append")
+        .expect("found");
+    store
+        .record_message_completion(
+            &conv.id,
+            "a-1",
+            "run-1",
+            MessageCompletion {
+                final_content: Some("I could write a python script and a spreadsheet for this."),
+                ..Default::default()
+            },
+            OWNER,
+        )
+        .expect("complete")
+        .expect("found");
+
+    let recent = store.recent_requests(&conv.id, OWNER, 4).expect("read");
+    assert_eq!(recent, vec!["what does the SOP say?".to_string()]);
+}
+
+/// Somebody else's thread is not readable, and reads as no thread at all.
+#[test]
+fn recent_requests_is_owner_scoped() {
+    let dir = temp_dir();
+    let store = ConversationStore::open(&dir).expect("open");
+    let conv = store
+        .create("Test".to_string(), "Welcome.".to_string(), OWNER)
+        .expect("create");
+    store
+        .append_user_turn(&conv.id, "draft a deck", "a-1", "run-1", OWNER)
+        .expect("append")
+        .expect("found");
+
+    assert!(store.recent_requests(&conv.id, OTHER, 4).expect("read").is_empty());
 }

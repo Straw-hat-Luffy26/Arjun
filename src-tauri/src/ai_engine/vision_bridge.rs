@@ -1,3 +1,13 @@
+//! **No production caller. `VisionLanguageBridge::new` is constructed only by
+//! this module's own tests.**
+//!
+//! Chat attachments go through `commands::ocr`, which picks its model by a
+//! hardcoded id and streams through `ai_engine::ocr_stream`. Nothing routes to
+//! `ModelRole::Vision` and nothing builds this bridge. It is kept because the
+//! loopback and modality checks in `new` are the ones a vision path would need
+//! and are worth not rewriting — but it is not on any path a turn takes, and a
+//! reader tracing how a drawing is read should be in `commands/ocr.rs`.
+//!
 //! The vision-language bridge: taking image paths plus a query, formatting
 //! them into a chat-completion call that a local vision-language model
 //! understands, and returning a structured description.

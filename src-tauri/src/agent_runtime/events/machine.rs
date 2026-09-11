@@ -401,6 +401,11 @@ pub fn advance(current: RunState, event: TaskEventType) -> Transition {
         // Reached when compaction finished from a state other than `Compacting`
         // — the historical shape, where only the finish was ever recorded.
         | E::ContextCompacted
+        // Trimming happens once, before the loop starts, and changes nothing
+        // about what the run is doing — only how much of its own conversation
+        // it was handed. A state of its own would suggest the run paused to do
+        // it; it did not.
+        | E::ContextTrimmed
         // Reached only when nothing was waiting; the pre-match above handles
         // the case where something was.
         | E::WaitCompleted

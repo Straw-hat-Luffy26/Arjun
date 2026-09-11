@@ -1,9 +1,8 @@
 ---
 name: artifact-verification
 description: >-
-  Re-open a file this task produced and confirm what is actually in it, so that
-  "the document is ready" is a statement about the file rather than about the
-  call that wrote it.
+  Re-open a file this task produced and confirm what is actually in it, so
+  that "the document is ready" is a statement about the file rather than.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

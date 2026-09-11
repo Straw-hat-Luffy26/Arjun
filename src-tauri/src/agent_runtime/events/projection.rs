@@ -84,6 +84,12 @@ pub struct TaskSnapshot {
     pub plan: Option<PlanRecord>,
     pub activity: Vec<ActivityRecord>,
     pub turns: u32,
+    /// Conversation this turn could not carry, if any did not fit.
+    ///
+    /// `None` means the whole thread was sent. See `tasks::HistoryTrim` for why
+    /// this is not folded in with the compactions: a compaction says what it
+    /// replaced, and this is history that never reached the model at all.
+    pub history_trim: Option<super::super::tasks::HistoryTrim>,
     /// Times older history was replaced by a summary so the run could continue.
     pub compactions: u32,
     /// What each of those compactions actually did.
@@ -188,6 +194,7 @@ impl TaskSnapshot {
             plan: None,
             activity: Vec::new(),
             turns: 0,
+            history_trim: None,
             compactions: 0,
             checkpoints_taken: 0,
             checkpoint_failures: 0,
@@ -319,6 +326,16 @@ impl TaskSnapshot {
             // Counted from the events rather than incremented locally, so a
             // recovered trace and a watched one agree.
             TaskEventType::TurnEnded => self.turns += 1,
+            TaskEventType::ContextTrimmed => {
+                // Last one wins. A run is one chat turn, so there is at most
+                // one of these — but a resumed attempt fits the window again
+                // against whatever model is serving now, and the later reading
+                // is the one that describes what the model actually saw.
+                self.history_trim = serde_json::from_value::<
+                    super::super::tasks::HistoryTrim,
+                >(event.payload.clone())
+                .ok();
+            }
             TaskEventType::ContextCompacted => {
                 self.compactions += 1;
                 // The count is incremented whether or not the payload can be

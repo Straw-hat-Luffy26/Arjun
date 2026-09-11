@@ -93,6 +93,97 @@ describe("settingsForWindow", () => {
   });
 });
 
+/**
+ * The prefix is charged once, not twice.
+ *
+ * `estimateContextTokens` has two modes: with no provider usage to read it sums
+ * the messages, and the system prompt and tool schemas are genuinely not in
+ * that figure — so the ledger's `fixed()` has to be added. Once a turn has
+ * completed it short-circuits to the provider's own `usage.input`, which
+ * counted the *whole* request and already contains them.
+ *
+ * Adding `fixed()` in both cases inflated every turn after the first by the
+ * size of the catalogue plus the system prompt. The run compacted earlier than
+ * it needed to, and the ceiling pass dropped history that would have fitted —
+ * on a small window with a full catalogue, thousands of tokens of it.
+ */
+describe("the fixed prefix is charged once", () => {
+  /** An assistant turn carrying a provider usage record, as a real one does. */
+  function answered(text: string, inputTokens: number): AgentMessage {
+    return {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "openai-completions",
+      provider: "llama-cpp",
+      model: "qwen2.5-coder-7b",
+      stopReason: "stop",
+      timestamp: 1,
+      usage: {
+        input: inputTokens,
+        output: 8,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: inputTokens + 8,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    } as unknown as AgentMessage;
+  }
+
+  it("does not compact a turn the provider says already fits", async () => {
+    const compactor = new RunCompactor({
+      model: model(8_192),
+      runtime: summariser(),
+      apiKey: "local",
+    });
+    // ~3,000 tokens of prefix: a tool catalogue and a system prompt, booked the
+    // way a real run books them.
+    compactor.ledger.setText("system", "s".repeat(6_000));
+    compactor.ledger.setText("toolSchema", "t".repeat(6_000));
+
+    // Long enough that there *is* something older than `keepRecentTokens` to
+    // summarise — otherwise nothing would compact whatever the arithmetic said,
+    // and the test would pass for the wrong reason.
+    //
+    // The final turn carries the provider's own count for the whole request,
+    // prefix included: 4,000 against a trigger at 8,192 − 1,638 = 6,554, which
+    // fits with room to spare. Adding the prefix a second time makes it 7,000
+    // and compacts a turn that did not need it.
+    const messages = [...longTranscript(20, 400), answered("short answer", 4_000)];
+
+    await compactor.transform(messages);
+
+    expect(compactor.compactions).toBe(0);
+  });
+
+  it("still adds the prefix before any turn has completed", async () => {
+    // The other mode, and the reason `fixed()` is added at all: with no usage
+    // to read, the estimate is messages only. An 8k window told that 2,700
+    // tokens of conversation fitted, while the request around it came to 9,238,
+    // compacted nothing and died at the provider.
+    const compactor = new RunCompactor({
+      model: model(8_192),
+      runtime: summariser(),
+      apiKey: "local",
+    });
+    // ~3,000 tokens of prefix.
+    compactor.ledger.setText("system", "s".repeat(6_000));
+    compactor.ledger.setText("toolSchema", "t".repeat(6_000));
+
+    // ~4,000 tokens of conversation: comfortably under the 6,554 trigger on its
+    // own, and over it once the prefix is added. Long enough that there is
+    // something older than `keepRecentTokens` to summarise, which is what makes
+    // this a compaction rather than a ceiling trim.
+    //
+    // No assistant turn carries usage here, so the estimator is in its
+    // messages-only mode and the prefix genuinely has to be added.
+    const messages = longTranscript(20, 400);
+
+    await compactor.transform(messages);
+
+    expect(compactor.compactions).toBe(1);
+  });
+});
+
 describe("a run that outgrows its window", () => {
   it("leaves a short transcript completely alone", async () => {
     const runtime = summariser();

@@ -324,6 +324,7 @@ fn the_fact_is_absent_from_everything_a_replay_could_reach() {
         tokens_out: None,
         outcome: None,
         verification: None,
+        tool_summary: None,
     };
     let conversation = Conversation {
         id: CONVERSATION.to_string(),
@@ -344,6 +345,8 @@ fn the_fact_is_absent_from_everything_a_replay_could_reach() {
         runs: Vec::new(),
         compactions: 0,
         pinned_context: Vec::new(),
+        routed_role: None,
+        routed_model_id: None,
     };
 
     let fitted = super::turn_context::fit(&conversation, "a2", 10_000, &[]);

@@ -73,7 +73,7 @@ export function OcrQualitySlider({
         aria-label="How carefully attached documents are read"
         aria-valuetext={
           active
-            ? `${active.label}, ${active.tierLabel} tier, ${active.maxImageTokens} vision tokens`
+            ? `${active.label}, ${active.tierLabel} tier, up to ${active.maxDecodeTokens} tokens a page`
             : OCR_DETENT_ORDER[index]
         }
       />
@@ -88,7 +88,7 @@ export function OcrQualitySlider({
           <>
             <strong>{active.label}</strong>
             <span className={styles.ocrSliderDetail}>
-              {active.tierLabel} tier · {active.maxImageTokens} vision tokens
+              {active.tierLabel} tier · up to {active.maxDecodeTokens} tokens a page
             </span>
           </>
         ) : (

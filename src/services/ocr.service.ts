@@ -83,6 +83,16 @@ export interface OcrDetentInfo {
   label: string;
   tier: 'high' | 'fast';
   tierLabel: string;
+  /**
+   * The DeepEncoder resolution mode this stop was designed around.
+   *
+   * Carried because the backend reports it and the number is the right one,
+   * but **not shown**: it is a `llama-server` launch argument that nothing
+   * currently passes, and the server is reused across stops within a tier, so
+   * changing the slider cannot change it. See the header of
+   * `ai_engine/ocr_profile.rs`. What a stop actually changes is the weight file
+   * and `maxDecodeTokens`, and those are what the UI reports.
+   */
   maxImageTokens: number;
   maxDecodeTokens: number;
 }

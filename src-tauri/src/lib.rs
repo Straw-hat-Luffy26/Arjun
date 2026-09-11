@@ -58,7 +58,6 @@ use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_sql::Builder as SqlBuilder;
 use log::info;
 
-use download_manager::DownloadManager;
 use ai_engine::InferenceManager;
 use memory_engine::MemoryManager;
 
@@ -69,7 +68,6 @@ pub fn run() {
 
     // Initialize core and managers
     let sarathi_core = core::init();
-    let download_manager = Arc::new(DownloadManager::new());
     let inference_manager = Arc::new(InferenceManager::new());
 
     // Configure SQL plugin with migrations
@@ -154,7 +152,6 @@ pub fn run() {
         })
         .manage(widgets)
         .manage(sarathi_core)
-        .manage(download_manager)
         // Cloned rather than moved: the activator built in setup below needs
         // the same manager the commands see, not a second one.
         .manage({
@@ -712,27 +709,6 @@ pub fn run() {
 
             app.manage(memory_manager);
 
-            // Load the saved HuggingFace token into the process before anything
-            // reaches the Hub. Catalog browsing and artifact resolution run
-            // from plain commands with no app handle, so they read it from there
-            // rather than opening config.json themselves.
-            {
-                let config_path = crate::config::ConfigManager::get_config_path(app.handle());
-                match crate::config::ConfigManager::load(&config_path) {
-                    Ok(cfg) if !cfg.hf_token.trim().is_empty() => {
-                        crate::config::hf_token::set(Some(cfg.hf_token));
-                        info!("HuggingFace token loaded from settings");
-                    }
-                    Ok(_) => {
-                        info!(
-                            "No HuggingFace token in settings (environment: {})",
-                            crate::config::hf_token::source()
-                        );
-                    }
-                    Err(e) => log::warn!("Could not read config for HuggingFace token: {e:#}"),
-                }
-            }
-
             let pack_manager = Arc::new(crate::model_recommendation::pack_manager::PackManager::new(&app_data_dir).expect("Failed to initialize PackManager"));
             app.manage(pack_manager);
 
@@ -931,8 +907,6 @@ pub fn run() {
             commands::ocr::cancel_scan,
             commands::config::get_config,
             commands::config::set_config,
-            commands::config::get_hf_token_status,
-            commands::config::set_hf_token,
             commands::config::get_config_value,
             commands::config::set_config_value,
             commands::config::get_default_config,
@@ -960,11 +934,6 @@ pub fn run() {
             commands::recommendation::reload_certification_packs,
 
             // Download & Storage Management commands (Phase 4)
-            commands::download::start_model_download,
-            commands::download::pause_model_download,
-            commands::download::resume_model_download,
-            commands::download::cancel_model_download,
-            commands::download::get_active_downloads,
             commands::download::get_installed_models,
             commands::download::delete_installed_model,
             commands::download::get_storage_summary,
@@ -1067,7 +1036,6 @@ pub fn run() {
             commands::voice::voice_status,
             // Performance benchmarks for the System Health page
             commands::benchmarks::run_benchmark,
-            commands::benchmarks::synthetic_benchmark,
             commands::benchmarks::recent_benchmarks,
             commands::governance::authentication_status,
             commands::governance::set_initial_administrator_password,
@@ -1084,8 +1052,6 @@ pub fn run() {
             commands::health::health_snapshot,
             commands::approvals::list_approvals,
             commands::approvals::decide_approval,
-            commands::catalog::browse_model_cards,
-            commands::catalog::list_model_categories,
             commands::notebook::notebook_list,
             commands::notebook::notebook_create,
             commands::notebook::notebook_rename,

@@ -382,6 +382,20 @@ impl ToolName {
     /// answer, which is what the verifier needs to know: an answer to such a
     /// task with nothing retrieved behind it came from the model rather than
     /// from a document. See `artifacts::verifier::Grounding`.
+    ///
+    /// ## Why the notebook and artifact tools are not here
+    ///
+    /// They used to be, and it made the distinction meaningless. `Grounding` is
+    /// decided by asking whether a plan permits *any* retrieval tool, and
+    /// `planning::derive` permits `create_chart`, `create_diagram`,
+    /// `create_pdf`, `create_table` and the whole notebook family on **every**
+    /// plan. So every plan looked like organisation-record work, including
+    /// "hi", and `Grounding::GeneralKnowledge` was unreachable — every answer
+    /// was verified as if each claim had to resolve to a retrieved passage.
+    ///
+    /// Creating a chart from figures the run computed is not reading the
+    /// record, and neither is renaming a notebook. What is left is the set that
+    /// actually returns passages from the organisation's own documents.
     pub const fn is_retrieval(self) -> bool {
         matches!(
             self,
@@ -392,17 +406,6 @@ impl ToolName {
                 | ToolName::ReadAttachedPages
                 | ToolName::SearchAttachedDocuments
                 | ToolName::BuildDocumentGraph
-                | ToolName::NotebookList
-                | ToolName::NotebookCreate
-                | ToolName::NotebookRename
-                | ToolName::NotebookDelete
-                | ToolName::NotebookSources
-                | ToolName::NotebookAddSource
-                | ToolName::NotebookRemoveSource
-                | ToolName::CreateChart
-                | ToolName::CreateDiagram
-                | ToolName::CreatePdf
-                | ToolName::CreateTable
         )
     }
 
@@ -1367,16 +1370,20 @@ mod tests {
         }
     }
 
-    /// Anything that leaves a trace outside the task needs a person.
+    /// Leaving a trace *outside the run* needs a person.
+    ///
+    /// The list used to include the three OOXML tools, and it outlived the
+    /// decision it described. Those tools were deliberately made `Automatic`
+    /// (see their arms in `spec_for`, and `an_artifact_is_produced_without_asking`
+    /// below): producing the deliverable a person just asked for in words is
+    /// the instruction, not a proposal needing ratification, and the effect is
+    /// one file inside the run's own workspace.
+    ///
+    /// What is left is the rule that still holds — a file written *outside* the
+    /// workspace, and code whose effects nothing here can enumerate.
     #[test]
-    fn tools_that_write_or_execute_all_require_approval() {
-        for tool in [
-            ToolName::WriteScopedFile,
-            ToolName::CreateDocx,
-            ToolName::CreateXlsx,
-            ToolName::CreatePptx,
-            ToolName::ExecuteCode,
-        ] {
+    fn writing_outside_the_workspace_or_executing_code_requires_approval() {
+        for tool in [ToolName::WriteScopedFile, ToolName::ExecuteCode] {
             assert!(spec_for(tool).needs_approval, "{} should need approval", tool.as_str());
         }
     }
@@ -1621,6 +1628,19 @@ mod tests {
                 // `approval_shape_tests`, which is the right altitude for a
                 // decision made per tool.
                 ToolClass::Reversible => {}
+                // Producing a deliverable is deliberately exempt.
+                //
+                // `class_of` is right to call these `SideEffecting`: that
+                // answers "may this be retried", and a document written twice
+                // is a real failure. It does not answer "must a person say
+                // yes first", and for a file written into the run's own
+                // workspace the answer to that is no - the person asked for
+                // the document in words, and holding it for a second consent
+                // is the dead end `only_deleting_a_notebook_asks_a_person_first`
+                // records. Their shape is pinned individually in
+                // `an_artifact_is_produced_without_asking`.
+                ToolClass::SideEffecting | ToolClass::Irreversible
+                    if tool.is_artifact_creation() => {}
                 ToolClass::SideEffecting | ToolClass::Irreversible => {
                     assert!(
                         spec.approval_class != ApprovalClass::Automatic,
@@ -1700,6 +1720,34 @@ mod approval_shape_tests {
         let delete = spec_for(ToolName::NotebookDelete);
         assert!(delete.needs_approval, "deleting a notebook must still ask");
         assert_eq!(delete.approval_class, ApprovalClass::PersonBeforeEffect);
+    }
+
+    /// Producing a deliverable never asks.
+    ///
+    /// The same lesson as the notebook family above, found the same way: the
+    /// gateway held every `create_docx` waiting for an approval nothing
+    /// surfaced, and the run sat there until the request timed out. A person
+    /// who asked for a report in words has already said yes to a report.
+    ///
+    /// Pinned per tool rather than derived, because this is a decision and not
+    /// a consequence - `class_of` still calls all seven `SideEffecting`, which
+    /// is what governs whether one may be retried after a timeout.
+    #[test]
+    fn an_artifact_is_produced_without_asking() {
+        for tool in ToolName::ALL.iter().copied().filter(|t| t.is_artifact_creation()) {
+            let spec = spec_for(tool);
+            assert!(
+                !spec.needs_approval,
+                "{} waits for an approval, so a chat turn asking for it will hang",
+                tool.as_str()
+            );
+            assert_eq!(
+                spec.approval_class,
+                ApprovalClass::Automatic,
+                "{}",
+                tool.as_str()
+            );
+        }
     }
 
     /// Reading never asks, which is what makes the list above meaningful.

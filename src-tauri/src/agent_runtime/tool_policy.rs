@@ -229,6 +229,15 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
 }
 
 /// What may be done when a call to this tool does not come back cleanly.
+///
+/// **No production caller.** Nothing retries a failed tool call anywhere in
+/// this product: `execute` returns the failure, the loop hands it to the model
+/// as an error result, and that is the whole of it. This table is the policy a
+/// retry *would* follow, and `class_of` above — which it derives from — is
+/// live and is what `only_what_cannot_be_undone_here_asks_a_person` reads.
+///
+/// Said plainly because "there is a retry policy" and "failed tool calls are
+/// retried" are different statements, and only the first is true.
 pub const fn retry_policy_of(tool: ToolName) -> RetryPolicy {
     match class_of(tool) {
         ToolClass::ReadOnly => READ,

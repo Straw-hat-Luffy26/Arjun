@@ -146,7 +146,22 @@ export class RpcPeer {
       return;
     }
     for (const frame of frames) {
-      void this.#dispatch(frame);
+      // `.catch`, not `void`.
+      //
+      // `#serve` catches what a handler throws, but it calls `#respond` and
+      // `#reply` *outside* that try — so a write that fails (EPIPE on a closed
+      // stdout) or a result that will not serialise (a circular reference, a
+      // BigInt) escaped as an unhandled rejection. A notification handler that
+      // throws did the same. Node's default for an unhandled rejection is to
+      // terminate the process, so the whole runtime died and the core saw the
+      // pipe close with no explanation.
+      //
+      // Reported through the fatal path instead, which is the one that already
+      // knows how to close down and tell the core why.
+      this.#dispatch(frame).catch((error: unknown) => {
+        this.#onFatal(error);
+        this.close(error);
+      });
     }
   }
 

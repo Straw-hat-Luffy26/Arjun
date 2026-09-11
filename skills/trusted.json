@@ -1,54 +1,329 @@
 {
   "trusted": [
     {
-      "name": "inspection-approval-note",
-      "sha256": "f16fb0591b1b933abdfa1a8aea04996f2709693864a67298674979a6e9ece869",
-      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+      "name": "accessibility",
+      "sha256": "5c4403ada97ed34c9bdc90e53768049529717a6894e4fee55b57cb22b8750515",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
-      "name": "multimodal-inspection",
-      "sha256": "7791df424ab422ba664a05877fc3e243e02211f9e22d6378403b7abac046fb89",
-      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+      "name": "api-design",
+      "sha256": "d0c3e67b1e87b088fed2d59da8730b5a8a625f641c5ca5edfe6192b40c233c14",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
-      "name": "engineering-calculation",
-      "sha256": "a71ea4b2e44e3727163adf1c151185a7053777662914323ab75f2e32ee374a26",
-      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+      "name": "architecture-decision-records",
+      "sha256": "59c74f048cc22220d38e6f93f189ed0018cfeda21376d8ca77e1a1f0cba9f9f4",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
-      "name": "sandbox-code-task",
-      "sha256": "07eb20466f7ab69ffebac2f627f1b3d549278cf3f495c06dbc23844d5510c04c",
-      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+      "name": "article-writing",
+      "sha256": "cadcb716e46780a66e76e0c0db84899b7c46355853edd59648163f5bc069b636",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
       "name": "artifact-verification",
-      "sha256": "0a38fcddad864f6909227b34724bedb3f12af9e4c3a5bfab2922606b9e977f6e",
+      "sha256": "89b47c3f0151f327eb1a7332769582b22a014b2e77c42804801f426d624d8ba8",
       "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
     },
     {
-      "name": "hazop-analyzer",
-      "sha256": "b2b02e1974d3a0b58c65a2418d414f5b424204eea5b4c6a4ae4b4f11b8ca5618",
-      "note": "SIH 2026 industrial pack; HAZOP worksheet analyzer (IEC 61882)."
+      "name": "backend-patterns",
+      "sha256": "4d534d5b93b208774b3cdcdf3b2fcb170ffc0ae71e1607682f142e3fe1fc4333",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
-      "name": "pid-reader",
-      "sha256": "6df5561343879f6334cf4e5b82641717eae55e6985d1557da1db91bf806f09b3",
-      "note": "SIH 2026 industrial pack; P&ID reader and line tracer."
+      "name": "benchmark-methodology",
+      "sha256": "f8cab4df58dab414f12cced9d3917781ee77550198b1f5d657e9f3901a3e71c9",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin unstated, author unknown, MIT). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "blueprint",
+      "sha256": "fc0e5c6772b15f0eb4d4117086a9a8f84bea23028c0a2d880057142210b41bf1",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "brand-voice",
+      "sha256": "1dcf762c9ea86034ada2d94c6b130b07df194f8556b990e8ff0411c2de9ec0ed",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "carrier-relationship-management",
+      "sha256": "42552117d01d0e1e897781814768b0bb10be13b38fa66d50c224a04de87ceb07",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "code-tour",
+      "sha256": "75cbe6db7b8635b1b479f1e9f42a861e034d5b8598bbd99522b57d1dfd5cecfe",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "coding-standards",
+      "sha256": "695be902c27e2dc852fb0bf578c3e8843bd2b10e0d0b832864cd336f68622395",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "competitive-report-structure",
+      "sha256": "0d18fb14d7eef80525e750235f43c3a0e363860dbeeed7dbd94eb74b890d801f",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin unstated, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "content-engine",
+      "sha256": "38fa74cf50be3d192539d1daac6e0d7ef0bc6936e5fd245ccf6e6cfec8ef1065",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "contract-first",
+      "sha256": "d364ad4dbeb25af02ea4abb6baa51cec07f6321c8e53a75cb27c8146ae88abbd",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "customs-trade-compliance",
+      "sha256": "5dd5b0e6798bd9a3339c9fece04dd0a4eae40eea3f5da626a3be82596bf01096",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "dashboard-builder",
+      "sha256": "7242820d644fe25c483f625c8a5dda3b53cfc2339e98564a3c2869974630ea1b",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC direct-port adaptation, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "database-migrations",
+      "sha256": "b16878fb920f9a82e71b0c79966bac9b520c3b530342f55a8f268b5829dc70ec",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "delivery-gate",
+      "sha256": "2c1f10ad3c88654874c976459edbb2ddaae449bcdb136c5a4d6e307721946c1f",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "design-system",
+      "sha256": "d5cc56210974d5a53c7eb05aedd3095a443f6eb145dcddedc9aa19dcfdfff629",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "energy-procurement",
+      "sha256": "960d1976ea8d28955ca8765e2dc19ae824ef258879cd4003b9b732a87fe207ce",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "engineering-calculation",
+      "sha256": "a8b0db1e621e1689f90be78de39e79e08b9f29a526067a2c460fe84f1c9db3d1",
+      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
     },
     {
       "name": "equipment-lookup",
-      "sha256": "97ebcc0e31045f6e651ca660fdb57b0deef887f1a8bea8f5a4e7a5d86c07cca5",
+      "sha256": "e20ebc700c94c11183b024b2a3867418b7139a2a356a463c5bb8cfbdb9fae1f9",
       "note": "SIH 2026 industrial pack; equipment tag cross-reference."
     },
     {
+      "name": "error-handling",
+      "sha256": "1acff8064a17fe6beb083b4c7eb5405604e8233656dd1f635d5d43057ef06282",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "frontend-patterns",
+      "sha256": "79547ab1839601d7ab9c9285e874dd893f6ac07d2ee6f4352e6ee004b11af780",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "frontend-slides",
+      "sha256": "8d7b6e031a9d7acf6da7d06fc5e450ff1127ec52d9d7cd2974d1e6dd447d380b",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "git-workflow",
+      "sha256": "0b714a8246d031819cc82f84fc1dfe565e68f3c1c8d03634caf221d697686720",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "golang-patterns",
+      "sha256": "31444c1edaa5ab02dc9802531e525d07144747939733df1b4de738c368c52aac",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "golang-testing",
+      "sha256": "ab6697bd22ed0cb5527d54f5aec0310cedb3ae779dbcc5426ef5ef95419e0fed",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "hazop-analyzer",
+      "sha256": "b46d6398a1baedfa9d7ccfde2b14ecc21d74dccabc0159c34eb93148e2b6bf27",
+      "note": "SIH 2026 industrial pack; HAZOP worksheet analyzer (IEC 61882)."
+    },
+    {
+      "name": "hexagonal-architecture",
+      "sha256": "fa17a37dca6f19018c35b8c2b3ce65e09b966a110d26fa39f1ca086b5fa4ff56",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "inspection-approval-note",
+      "sha256": "dddca39be3d5455b837e7d6cf7ffaf373b00fa7ff7bbea3b2511f33555cea6d1",
+      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+    },
+    {
+      "name": "inventory-demand-planning",
+      "sha256": "a42b91ce3c21a335bb4ba7c1947c6f05af46a4db5095d76467d9ad55422504c5",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "investor-materials",
+      "sha256": "443925107434651741f246e6af26873125a38a0750cbfc44dffa42e520288133",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "living-docs-governance",
+      "sha256": "e6044e18d99051113f0aae8281d5caee9aa21f356668e61cccab79120aa5d541",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "logistics-exception-management",
+      "sha256": "d1bcfb2e8f69faf14c6e466c30d5c060cfa14bffeb71440925d6dcfcca66dbec",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "make-interfaces-feel-better",
+      "sha256": "8d11d7a97824e9f6593af22a1ad2d3a0e88c4b734813dc0ea7ed9b0254bd8131",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "market-research",
+      "sha256": "7b72a009553255a4c7009094b7ce360a53c8b039bfb6e0ffd3ad9554b224c280",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "multimodal-inspection",
+      "sha256": "f5898cca950c6b7388ec8579f8fce27d773f1b50ed448a5fed15122393bd0dd8",
+      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+    },
+    {
+      "name": "pid-reader",
+      "sha256": "313dd3b6baee6666cb1a58d1733b614784ce1aa2fd51b405fc875e37c1364aac",
+      "note": "SIH 2026 industrial pack; P&ID reader and line tracer."
+    },
+    {
+      "name": "plankton-code-quality",
+      "sha256": "61c12e20c98503c99589ff900f21db7c3dc7054019d7545221fae016e476089d",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "postgres-patterns",
+      "sha256": "dde02a686c11936d28e27258c00fecce93a8d0357ab0b71ffb52fec8c064163e",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "product-capability",
+      "sha256": "08e4d5288e337c18e3baa72996a9666eef19e5e4b78d2c67bf85e643ba4cf822",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "product-lens",
+      "sha256": "59f4a5efb71b61dfe97d6fd64f664438ef5f6121cc32abf7b8f86d61071a5c9a",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "production-audit",
+      "sha256": "3a969ec7002d8a2fb7066061debddd29c271f5d63ef7ea5a9c1a29e3a7c5fd65",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "production-scheduling",
+      "sha256": "b69e3de02cc0fec805a78940a61fc27483df09343082a9959b1ab838f75b2417",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "python-patterns",
+      "sha256": "9f94bedb56e9e7a30877b52f8dafaf9709330af62939332896df3580ac98b3f3",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "python-testing",
+      "sha256": "9b8531fb2c4bcd50053606da0a528181805254473171477cc822bd0aee8aa19c",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "quality-nonconformance",
+      "sha256": "4d74ea10e1be7edc8657d6e8da35207450b2c132fa34c053682fa66202f4cbd7",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "react-patterns",
+      "sha256": "e9ef3adefd82d7a3a409a2a9f07d260cc4e5ce4d6f14a728b4990703edd0db47",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "redis-patterns",
+      "sha256": "00b13daa8891ea9cd52a41206147342f600858fb8935f954c1a862727dc21347",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "regex-vs-llm-structured-text",
+      "sha256": "d0eda968cef6c0e363e0ec4b7c613b70534eafa460892d825497831437470ffc",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "research-ops",
+      "sha256": "290663b549b07a3faca948becfb0e463867eede1658aabe5a87849dc7fb6980d",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "returns-reverse-logistics",
+      "sha256": "8cf05b1985a8248bc145cd2c3a332a73ce655b3044c0e4a946359c14079813cf",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "rust-patterns",
+      "sha256": "be618ea1a0983f0de3523e3d13f5ae93f1feff142a4168ab0f561f7747dbc3d5",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "rust-testing",
+      "sha256": "b08c09156d9f89d9d8b11ffd5da77672f1466a608458ea7417f7885bef018913",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
       "name": "safety-compliance",
-      "sha256": "6f5dd4d3c04d8127b7fdaf5fab72dbe50374e8f69ba7dbdf494a562503b9f754",
+      "sha256": "18c896be10bc20e17abd5641f1e11c8b52a37f7f1d0ce8f13cb98ab6ce4113a2",
       "note": "SIH 2026 industrial pack; IS 15656 / API 510 / OSHA clause checker."
     },
     {
+      "name": "safety-guard",
+      "sha256": "e3cefdda910a17720595a70adb00ad3974b4ec24ace1ed2506b86ae640eb91f3",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "sandbox-code-task",
+      "sha256": "c077cb47763e08271477027c8222809ccf0d02e71e355494426096d910129fd7",
+      "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+    },
+    {
+      "name": "scientific-thinking-literature-review",
+      "sha256": "426e503f55e3338b7371b80f54a5b68a20c5bfb80e1e358358de7d291bba7ef3",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "scientific-thinking-scholar-evaluation",
+      "sha256": "5a0e391a52e946de72f62148e46266f59054b1b828d2175c1ae8b4e87aff6a08",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin community, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
+    },
+    {
+      "name": "security-review",
+      "sha256": "17037b47dd1f6ccb4b4aeacb235b4166ef4d8ffb0963fcb272a78f6c8f356c3b",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "tdd-workflow",
+      "sha256": "333d29e93434d2c3ea3a5e5da5d75cfc1447365e9bf3d0c445a59fbd849b5d8a",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
       "name": "vendor-evaluator",
-      "sha256": "0be871599d86fe76661cd7e0ac88ce9bbebc12c685abd077bf07a6ddbdebb578",
+      "sha256": "d745f1aa4707eecb7362208eee4236f82dbe3bb2fd8ea024259245933e1f54de",
       "note": "SIH 2026 industrial pack; vendor quote comparison and 3-y TCO."
+    },
+    {
+      "name": "verification-loop",
+      "sha256": "b22ed03f6e0d58d826d433ce825c811c6468075ed4095492c3b1abc45db240fa",
+      "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, MIT). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     }
   ]
 }

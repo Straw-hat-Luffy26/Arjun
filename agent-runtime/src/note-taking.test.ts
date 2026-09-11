@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { markersIn, observeToolResult } from "./note-taking.js";
+import { markersIn, nextCalculationId, observeToolResult } from "./note-taking.js";
 import { WorkingNotes } from "./working-notes.js";
 
 describe("evidence markers", () => {
@@ -366,5 +366,33 @@ describe("a canonical side effect survives a restart and is not repeated", () =>
     const carried = WorkingNotes.from(JSON.parse(persist(notes)));
     expect(carried.state.completed[0]?.tool).toBe("sandbox.run_code");
     expect(carried.hasDone("execute_code", "python (an execution)")).toBe(true);
+  });
+});
+
+describe("numbering calculations", () => {
+  it("counts from one when nothing has been recorded", () => {
+    expect(nextCalculationId([])).toBe("C1");
+  });
+
+  it("counts from the highest marker held, not from how many are held", () => {
+    // `calculationIds` is capped at 32 and the oldest is shifted out, so once
+    // the cap is reached the length stops growing. Numbering by length made
+    // every calculation after the 32nd `C33` — which `#addId` then dropped as
+    // a duplicate, silently and without moving the `dropped` counter.
+    const atCap = Array.from({ length: 32 }, (_, i) => `C${i + 2}`); // C2..C33
+    expect(atCap).toHaveLength(32);
+    expect(nextCalculationId(atCap)).toBe("C34");
+  });
+
+  it("ignores anything that is not a marker", () => {
+    expect(nextCalculationId(["", "E4", "not-a-marker", "C7"])).toBe("C8");
+  });
+
+  it("does not reuse a marker after notes are restored from state", () => {
+    // A resumption replays the ids into a fresh instance. A counter would
+    // restart at zero here and hand out markers a previous attempt already
+    // used; reading the list cannot.
+    const restored = ["C9", "C10", "C11"];
+    expect(nextCalculationId(restored)).toBe("C12");
   });
 });

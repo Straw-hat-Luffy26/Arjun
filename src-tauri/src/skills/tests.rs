@@ -784,14 +784,22 @@ fn every_shipped_skill_validates_and_is_trusted() {
         "sandbox-code-task",
         "vendor-evaluator",
     ];
-    assert_eq!(snapshot.count(), expected.len(), "unexpected skill count");
+    // The ten this product shipped with. Fifty-five more were imported from an
+    // outside collection on 2026-09-11; this assertion is about the ten not
+    // going missing, so it names them, and the `available() == count()` check
+    // below covers every skill on disk regardless of where it came from.
+    let shipped_cards: Vec<_> = snapshot
+        .cards()
+        .into_iter()
+        .filter(|card| expected.contains(&card.name.as_str()))
+        .collect();
+    assert_eq!(
+        shipped_cards.len(),
+        expected.len(),
+        "one of the ten skills this product ships with has gone missing"
+    );
 
-    for card in snapshot.cards() {
-        assert!(
-            expected.contains(&card.name.as_str()),
-            "unexpected skill {:?}",
-            card.name
-        );
+    for card in shipped_cards {
         assert!(
             card.is_available(),
             "{} is quarantined: {}",
@@ -802,12 +810,27 @@ fn every_shipped_skill_validates_and_is_trusted() {
                 .unwrap_or_default()
         );
     }
-    assert_eq!(snapshot.available(), expected.len());
+    // Everything on disk is available, imported or not: a quarantined skill is
+    // never offered to a model, so one that has quietly stopped loading is
+    // exactly the failure this file exists to catch.
+    assert_eq!(
+        snapshot.available(),
+        snapshot.count(),
+        "{} of {} skills are quarantined",
+        snapshot.count() - snapshot.available(),
+        snapshot.count()
+    );
 }
 
 #[test]
 fn every_shipped_skill_states_what_a_reader_needs() {
-    // The nine sections are the contract with whoever writes the next skill.
+    // The ten sections are the contract with whoever writes the next skill,
+    // and every skill on disk is held to them — the ten this product was
+    // written with and the fifty-five imported on 2026-09-11 alike. An
+    // imported skill's body is the outside collection's, unchanged; what was
+    // added is an `## ARJUN contract` block stating the ten things a reader
+    // here needs, eight of them read from that skill's own frontmatter.
+    //
     // Checked against the body rather than the frontmatter, because this is
     // about what the model and the reviewer are told.
     let registry = SkillRegistry::open(shipped());
@@ -838,6 +861,54 @@ fn every_shipped_skill_states_what_a_reader_needs() {
             );
         }
     }
+}
+
+#[test]
+fn the_whole_listing_still_fits_a_small_model() {
+    // `capability.search` with no query returns every skill this person may
+    // see, and the result goes into the model's context. Sixty-five skills is
+    // not a number anybody chose — fifty-five arrived in one import on
+    // 2026-09-11 — so this measures what a listing costs rather than trusting
+    // that it is small.
+    //
+    // The bound is the smallest window this product serves, 8192 tokens
+    // (`ai_engine::manager::DEFAULT_WORKING_CONTEXT`). A listing may have an
+    // eighth of it; past that, one unprompted search crowds out the person's
+    // own documents on exactly the hardware this is built for.
+    let registry = SkillRegistry::open(shipped());
+    let session = user();
+    let permits = ToolName::ALL;
+    let found = registry.search("", &context(&session, permits));
+
+    assert_eq!(
+        found.len(),
+        registry.snapshot().count(),
+        "an empty query is the whole listing, and that is what is being measured"
+    );
+
+    // What the model is actually sent: one page of the slimmed shape.
+    let page: Vec<_> = found
+        .iter()
+        .filter(|card| card.is_available())
+        .take(CAPABILITY_PAGE)
+        .map(SkillCard::for_model)
+        .collect();
+    let bytes = serde_json::to_string(&page).expect("cards serialise").len();
+    // Four bytes per token is the conservative end for English prose.
+    let budget = (8192 / 8) * 4;
+    assert!(
+        bytes <= budget,
+        "one page of the skill listing is {bytes} bytes (~{} tokens); the budget          is {budget}. Shorten descriptions, or lower CAPABILITY_PAGE.",
+        bytes / 4
+    );
+
+    // And the reason the page exists: the unbounded listing does not fit, so a
+    // future change that quietly returns them all is caught here too.
+    let whole = serde_json::to_string(&found).expect("cards serialise").len();
+    assert!(
+        whole > budget,
+        "the full listing now fits in {budget} bytes, so the paging in          `capability_search` is no longer earning its complexity — delete it          rather than leaving a cap nobody needs"
+    );
 }
 
 #[test]

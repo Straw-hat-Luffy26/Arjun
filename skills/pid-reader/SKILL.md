@@ -1,10 +1,8 @@
 ---
 name: pid-reader
 description: >-
-  Read a P&ID image or text excerpt, identify equipment by tag, and trace the
-  line route from one tag to the next. The skill reports what was actually
-  read from the drawing and what was inferred from the prompt, and refuses
-  to invent tags that are not on the page.
+  Read a P&ID image or text excerpt, identify equipment by tag, and trace
+  the line route from one tag to the next.
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

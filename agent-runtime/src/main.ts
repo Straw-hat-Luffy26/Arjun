@@ -180,8 +180,35 @@ function main(): void {
   process.stdin.on("end", () => {
     // The core went away. Nothing left to serve, and lingering would leave an
     // orphan holding a model server connection.
+    //
+    // `abort` only signals; it does not wait. Exiting on the same tick gave
+    // in-flight work no chance to unwind, so a tool that was mid-write was
+    // killed rather than stopped. One turn of the event loop is not a
+    // guarantee, but it is the difference between "asked to stop" and "asked
+    // and immediately shot", and the exit still happens without the core
+    // having to wait on us.
     for (const run of active.values()) run.abort("core closed the channel");
-    process.exit(0);
+    setTimeout(() => process.exit(0), 0).unref?.();
+  });
+
+  // An unhandled rejection is a crash by default, and this process crashing
+  // looks to the core exactly like the pipe closing — no reason, no run
+  // outcome, and a turn that simply stops. Anything that reaches here is a bug,
+  // so it is reported on stderr where the core's log collector picks it up,
+  // rather than taken as grounds to kill a run that may still be answering.
+  process.on("unhandledRejection", (reason) => {
+    process.stderr.write(
+      `[agent-runtime:log] unhandled rejection: ${
+        reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
+      }
+`,
+    );
+  });
+  process.on("uncaughtException", (error) => {
+    process.stderr.write(
+      `[agent-runtime:log] uncaught exception: ${error.stack ?? error.message}
+`,
+    );
   });
 
   process.stderr.write(`[agent-runtime:log] ready pid=${process.pid} node=${process.version}\n`);

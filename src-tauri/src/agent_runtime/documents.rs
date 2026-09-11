@@ -144,6 +144,15 @@ pub struct ExtractedDocument {
     pub extracted_at: String,
     /// Every page that produced text, in page order.
     pub page_text: Vec<PageText>,
+    /// What slider stop each page was read at, so a later, better read can
+    /// replace it and a later, cheaper one cannot.
+    ///
+    /// Absent in files written before this existed, which read as empty — and
+    /// an unknown quality compares as the lowest, so the first read after an
+    /// upgrade wins. That is the safe direction: the worst case is re-reading a
+    /// page that was already good.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub page_quality: std::collections::BTreeMap<u32, u8>,
     /// The document cut into retrievable passages, in reading order.
     ///
     /// Derived from [`Self::page_text`] by [`crate::knowledge::chunking`] and
@@ -421,6 +430,7 @@ impl DocumentStore {
                     truncated: extraction.truncated,
                     extracted_at: now.clone(),
                     page_text: Vec::new(),
+                    page_quality: Default::default(),
                     chunks: Vec::new(),
                     completeness: Completeness::default(),
                     seen: Vec::new(),
@@ -430,19 +440,47 @@ impl DocumentStore {
             .into_iter()
             .map(|page| (page.page, page.text))
             .collect();
+        // What each held page was read at. Absent for pages written before this
+        // was recorded, which read as the lowest quality — so the first read
+        // after an upgrade replaces them, which is the safe direction.
+        let mut quality: BTreeMap<u32, u8> = std::mem::take(&mut document.page_quality);
+        // How good this read is, on the slider's own scale. A file that carried
+        // its own text layer needed no model and is treated as the best
+        // available — nothing a vision model produces improves on the text the
+        // document already contains.
+        let incoming_quality = extraction
+            .sighting
+            .ocr_detent
+            .map_or(u8::MAX, |detent| detent.quality());
+
         for (number, text) in extraction.page_text {
             if text.trim().is_empty() {
                 continue;
             }
-            // A page nobody has read yet is filled in; one that is already held
-            // is left alone. See the doc comment: the first read to succeed on a
-            // page wins, so a later cheaper pass cannot degrade it.
-            pages.entry(number).or_insert(text);
+            // Better reads win; equal and worse ones leave the page alone.
+            //
+            // This was `pages.entry(number).or_insert(text)` — first write wins
+            // — under a comment claiming "the first read to succeed on a page
+            // wins, so a later cheaper pass cannot degrade it". The first half
+            // was true and the second did not follow: the store had no notion
+            // of quality, so a *better* pass could not improve it either. A
+            // page first read at Fastest and cut to forty characters by the
+            // repetition guard was that page forever, and re-attaching the same
+            // file at Maximum was a silent no-op — the person's only recourse
+            // was to find and delete `documents/<sha>.json` by hand.
+            match quality.get(&number) {
+                Some(&held) if held >= incoming_quality => {}
+                _ => {
+                    pages.insert(number, text);
+                    quality.insert(number, incoming_quality);
+                }
+            }
         }
         document.page_text = pages
             .into_iter()
             .map(|(page, text)| PageText { page, text })
             .collect();
+        document.page_quality = quality;
         document.pages = document.pages.max(extraction.pages);
         document.truncated = document.truncated || extraction.truncated;
 
@@ -745,6 +783,60 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let store = DocumentStore::open(dir.path()).expect("the store opens");
         (dir, store)
+    }
+
+    /// Re-reading a document at a better stop replaces what the cheap pass left.
+    ///
+    /// This is what `record`'s comment always claimed — "a later cheaper pass
+    /// cannot degrade it" — and half of what it did. The merge was
+    /// `pages.entry(n).or_insert(text)`, first write wins, with no notion of
+    /// quality at all: so a page first read at `Fastest` and cut short by the
+    /// repetition guard was that page permanently, and re-attaching the same
+    /// file at `Maximum` changed nothing and said nothing.
+    #[test]
+    fn a_better_read_replaces_a_worse_one_and_a_worse_one_does_not() {
+        let (_dir, store) = store();
+        let sha = sha(0xd1);
+
+        let mut fast = extraction(&sha, &[(1, "P-1O1 seal")], "u1", "c1");
+        fast.sighting.ocr_detent = Some(OcrDetent::Fastest);
+        store.record(fast).expect("the fast read records");
+
+        let mut best = extraction(&sha, &[(1, "P-101 mechanical seal, 65 mm")], "u1", "c1");
+        best.sighting.ocr_detent = Some(OcrDetent::Maximum);
+        let after_best = store.record(best).expect("the careful read records");
+        assert_eq!(
+            after_best.page_text[0].text, "P-101 mechanical seal, 65 mm",
+            "the careful read did not replace the cheap one"
+        );
+
+        // And the other direction still holds: a cheap pass afterwards leaves
+        // the good text alone.
+        let mut fast_again = extraction(&sha, &[(1, "P-1O1 seal")], "u1", "c1");
+        fast_again.sighting.ocr_detent = Some(OcrDetent::Fastest);
+        let after_fast = store.record(fast_again).expect("the second fast read records");
+        assert_eq!(
+            after_fast.page_text[0].text, "P-101 mechanical seal, 65 mm",
+            "a cheaper pass degraded a page that had been read well"
+        );
+    }
+
+    /// A file that carried its own text needs no model, and nothing a vision
+    /// model produces improves on it.
+    #[test]
+    fn a_text_layer_outranks_every_slider_stop() {
+        let (_dir, store) = store();
+        let sha = sha(0xd2);
+
+        let mut native = extraction(&sha, &[(1, "the document's own text")], "u1", "c1");
+        native.sighting.ocr_detent = None;
+        native.sighting.ocr_model_id = None;
+        store.record(native).expect("the native read records");
+
+        let mut ocr = extraction(&sha, &[(1, "the d0cument's own text")], "u1", "c1");
+        ocr.sighting.ocr_detent = Some(OcrDetent::Maximum);
+        let after = store.record(ocr).expect("the ocr read records");
+        assert_eq!(after.page_text[0].text, "the document's own text");
     }
 
     /// The whole point: a page that budgeting left out is still readable.

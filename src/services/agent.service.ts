@@ -1065,6 +1065,29 @@ export interface PinOutcome {
 export interface RunContextSnapshot {
   ledger: ContextLedgerRecord | null;
   compactions: CompactionRecord[];
+  /** Conversation this turn could not carry, or `null` if all of it fitted. */
+  historyTrim: HistoryTrim | null;
+}
+
+/**
+ * What a turn could not fit of its own conversation.
+ *
+ * Not a compaction. A compaction replaces older history with a summary and
+ * tells the model it did; this is history that was never sent at all, so the
+ * answer rests on less than the thread holds and nothing in the answer says so.
+ * The distinction is the whole reason it has its own type: to a person, "the
+ * assistant forgot" and "the assistant was never told" look identical, and only
+ * one of them is fixed by choosing a different model.
+ */
+export interface HistoryTrim {
+  /** Earlier messages left out. */
+  dropped: number;
+  /** Earlier messages sent. */
+  carried: number;
+  /** Roughly what the carried ones cost. */
+  tokens: number;
+  /** The served window they were budgeted against. */
+  windowTokens: number;
 }
 
 /** One time a run's older history was replaced by a summary. */
@@ -1306,6 +1329,20 @@ export type AgentEvent =
       /** `turn` or `compaction` — why this reading was taken. */
       reason: string;
       ledger: ContextLedgerRecord;
+    }
+  | {
+      /**
+       * The turn could not carry all of its own conversation.
+       *
+       * Emitted once, before the model is called, and only when something was
+       * actually left out — a turn that carried the whole thread says nothing,
+       * so this is never noise.
+       */
+      type: 'context_trimmed';
+      dropped: number;
+      carried: number;
+      tokens: number;
+      windowTokens: number;
     }
   | {
       /**

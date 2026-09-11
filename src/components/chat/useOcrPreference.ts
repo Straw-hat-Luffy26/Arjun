@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   OCR_DETENT_ORDER,
   getOcrDetents,
@@ -87,10 +87,26 @@ export function useOcrPreference(): OcrPreference {
 
   const index = Math.max(0, OCR_DETENT_ORDER.indexOf(detent));
   const active = detents[index] ?? null;
+
+  /**
+   * The tier that was in force when this surface opened.
+   *
+   * Held so the warning below can describe a *move* rather than a position.
+   * It used to be `active.tier !== detents[1].tier`, which is just "the current
+   * stop is in the High tier" — permanently true at `Detailed`, the default, so
+   * the "first use reloads the model" note was on screen before anyone had
+   * touched the slider. Rust has the correct predicate already
+   * (`OcrDetent::reloads_from`), exported for nobody.
+   */
+  const openedAtTier = useRef<string | null>(null);
+  if (openedAtTier.current === null && active != null) {
+    openedAtTier.current = active.tier;
+  }
+
   const crossesReload =
-    detents.length === OCR_DETENT_ORDER.length &&
     active != null &&
-    active.tier !== detents[1].tier;
+    openedAtTier.current != null &&
+    active.tier !== openedAtTier.current;
 
   return { detent, setDetent, index, detents, active, crossesReload };
 }

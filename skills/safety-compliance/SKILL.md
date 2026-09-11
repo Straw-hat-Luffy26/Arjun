@@ -1,10 +1,8 @@
 ---
 name: safety-compliance
 description: >-
-  Check a document, work instruction, or change against a referenced standard
-  (IS 15656, API 510, OSHA 1910, equivalent). The skill reports the clause,
-  the requirement, the gap, and the citation, and refuses to assert a
-  compliance claim the documents do not support.
+  Check a document, work instruction, or change against a referenced
+  standard (IS 15656, API 510, OSHA 1910, equivalent).
 version: 1.0.0
 license: Apache-2.0
 author: ARJUN

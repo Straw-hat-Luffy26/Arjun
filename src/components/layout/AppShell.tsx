@@ -92,7 +92,6 @@ function PageTitle() {
     '/demo': 'SIH Demo',
     '/sih': 'SIH Dashboard',
     '/models': 'Models',
-    '/browse': 'Browse',
     '/system': 'System',
     '/settings': 'Settings',
   };

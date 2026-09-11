@@ -246,12 +246,12 @@ export const SystemInfo: React.FC = () => {
           <Button
             variant="primary"
             icon={<Sparkles size={16} />}
-            // Discover, not Storage: this offers models to find, and `/models`
-            // is the installed-models page — which is empty for the people most
-            // likely to press it.
-            onClick={() => navigate('/browse')}
+            // Storage, not Discover. There is no Discover: this build reaches
+            // no model catalogue, so models arrive by a reviewed offline
+            // transfer into the model directory and are picked up there.
+            onClick={() => navigate('/models')}
           >
-            Find Models For My PC
+            Models On This Machine
           </Button>
           <Button
             variant="secondary"
@@ -720,15 +720,18 @@ export const SystemInfo: React.FC = () => {
               <h3>Ready to Explore Local AI Models for Your PC</h3>
             </div>
             <p>
-              Based on your detected hardware profile, Sarathi's Recommendation Engine calculates the optimal LLMs your machine can run comfortably.
+              Based on your detected hardware profile, Sarathi&apos;s Recommendation Engine
+              calculates the optimal LLMs your machine can run comfortably. Copy the weights
+              into the model directory and press <em>Detect models</em> &mdash; this build
+              reaches no catalogue, by design.
             </p>
           </div>
           <Button
             variant="primary"
-            onClick={() => navigate('/browse')}
+            onClick={() => navigate('/models')}
             className={styles.bannerButton}
           >
-            Find Models For My PC
+            Models On This Machine
             <ArrowRight size={18} style={{ marginLeft: 8 }} />
           </Button>
         </div>

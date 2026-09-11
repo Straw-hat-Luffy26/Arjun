@@ -673,7 +673,7 @@ async fn ocr_one_image(
     })?;
 
     // arjun-egress-ok: loopback only, enforced by the check above.
-    let client = reqwest::Client::new();
+    let client = ocr_http_client().clone();
     let text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let sink = text.clone();
     let emitter = app.clone();
@@ -758,7 +758,55 @@ async fn ocr_one_image(
             looped,
         },
     );
+
+    // A page stopped part-way through is not a page that was read.
+    //
+    // `stream_ocr` returns whatever text arrived alongside `cancelled: true`,
+    // and this function used to take the text and drop the flag — so pressing
+    // Stop while page 7 was decoding wrote page 7's half-transcription into
+    // `by_page` as an ordinary page, then into `DocumentStore` as the durable
+    // text for that page. Pages 8 onward were correctly listed as unread; page
+    // 7 quietly lied, and (because the store is first-write-wins) went on
+    // lying to every later turn.
+    //
+    // Reported as an error so the caller's `unread` list picks it up, which is
+    // the same treatment every other unreadable page gets.
+    if summary.cancelled {
+        return Err(
+            "the turn was stopped while this page was being read, so what arrived is only part              of it"
+                .to_string(),
+        );
+    }
+
     Ok(read)
+}
+
+/// The HTTP client used to talk to the local OCR server.
+///
+/// Two things it fixes, both of which were "no bound at all":
+///
+/// - **Timeouts.** `Client::new()` has none. The two waits in `stream_ocr` are
+///   cancellable, but only by an explicit `CancelToken` — so a server that
+///   accepted the request, sent headers and then stalled forever was caught by
+///   nothing except the person pressing Stop. A page is minutes of honest work,
+///   so the read timeout is generous; what it rules out is *never*.
+/// - **Reuse.** It was constructed per page, so a forty-page scan built forty
+///   clients and forty connection pools to the same loopback address.
+///
+/// `read_timeout` rather than `timeout`: the whole-request bound would cut a
+/// page that is streaming correctly but slowly, which is the normal case on a
+/// small GPU. This bounds the gap *between* bytes instead.
+fn ocr_http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(120))
+            .build()
+            // A client that will not build is a programming error in the two
+            // constants above, not a condition a caller can do anything about.
+            .expect("the OCR http client builds from constants")
+    })
 }
 
 /// Runs the local one-shot extractor over a stored document.
@@ -766,6 +814,21 @@ async fn ocr_one_image(
 /// A separate short-lived process rather than the long-lived document
 /// sidecar: this needs no state between calls, and a crash in a PDF parser
 /// then takes nothing else down with it.
+/// How many pages of a scanned document are rendered for reading.
+///
+/// The extractor has always had a `--max-pages` flag and a default of 12, and
+/// nothing here ever passed it — so every scan was silently cut at twelve pages
+/// while this module's own comments described reading "a forty-page drawing
+/// set". Pages past the cap land in the unread list, which is honest at the
+/// prompt, but they never reach `page_text` either, so `document.read_pages(31)`
+/// answers "no such page" for the life of the document.
+///
+/// Sixty rather than twelve. A page is minutes of GPU time, so this is still a
+/// bound and not a licence — but it is the number at which a drawing set is
+/// genuinely unusual rather than the number at which an ordinary inspection
+/// report is cut in half.
+const MAX_RENDERED_PAGES: u32 = 60;
+
 fn run_extractor(path: &std::path::Path, out_dir: &std::path::Path) -> Result<Extracted, String> {
     let script = extractor_script()?;
     let python = crate::deployment::dependency("python");
@@ -775,6 +838,8 @@ fn run_extractor(path: &std::path::Path, out_dir: &std::path::Path) -> Result<Ex
         .arg(&script)
         .arg(path)
         .arg(out_dir)
+        .arg("--max-pages")
+        .arg(MAX_RENDERED_PAGES.to_string())
         .output()
         // The spawn is the probe. A failure here is almost always a machine
         // with no interpreter rather than a broken extractor, so the remedy
@@ -910,7 +975,25 @@ pub async fn read_attachment(
                     .map_err(|e| format!("could not store {}: {e}", attachment.name))?;
             }
             progress(app, tag, &attachment.name, "preparing", None, None, None);
-            let extracted = run_extractor(&stored, &base)?;
+            // Off the async executor.
+            //
+            // `run_extractor` is `std::process::Command::output()` — fully
+            // synchronous and unbounded — and it was being called straight from
+            // this `async fn`. For the whole of a pypdf parse plus a PyMuPDF
+            // rasterisation of every page, tens of seconds on a large scan, it
+            // held a Tokio worker thread and stalled unrelated Tauri commands
+            // that happened to be scheduled on it.
+            let extracted = {
+                let stored = stored.clone();
+                let base = base.clone();
+                tokio::task::spawn_blocking(move || run_extractor(&stored, &base))
+                    .await
+                    // The task panicked rather than returning an error, which
+                    // is a bug in the extractor wrapper and not something the
+                    // person attaching a file can act on — but they still need
+                    // to be told the document was not read.
+                    .map_err(|e| format!("the document extractor did not finish: {e}"))??
+            };
             let pages = extracted.pages.max(1);
 
             read_kind = extracted.kind.clone();
@@ -929,8 +1012,25 @@ pub async fn read_attachment(
                     Some(extracted.kind.clone()),
                 );
                 let mut blob = extracted.text;
-                // One blob, so one page — and page 1 is what `pages` reports it
-                // as. Stored before the truncation note is appended, so what is
+                // One blob, so one page — and the page count is corrected to
+                // say so.
+                //
+                // `extracted.pages` is the *reader's* count, and for two
+                // formats it is not a count of what was stored: `extract_xlsx`
+                // reports `len(sheets)` and `extract_pptx` reports
+                // `len(slides)`, while both hand back a single blob that lands
+                // here as page 1. `doc_pipeline::measure` then computed
+                // `pages_failed = [2..=n]`, so a perfectly-read five-sheet
+                // workbook was described to the model as "1 of 5 pages read; no
+                // text from pages 2-5" — a false alarm on every multi-sheet
+                // workbook and every deck, permanently.
+                //
+                // The reader's own count is not lost: it is still what the
+                // progress events reported while the file was being read. What
+                // is corrected is the number attached to the stored text, which
+                // is the one everything downstream reasons about.
+                read_pages = 1;
+                // Stored before the truncation note is appended, so what is
                 // kept is the reader's output rather than the reader's output
                 // plus a sentence about the reader.
                 page_text.insert(1, blob.trim().to_string());
@@ -1015,7 +1115,21 @@ pub async fn read_attachment(
                             Some(queued),
                             Some(extracted.kind.clone()),
                         );
-                        let page_text = ocr_one_image(
+                        // One page's failure costs that page, and nothing else.
+                        //
+                        // This was `ocr_one_image(...).await?`, and the `?` left
+                        // `read_attachment` entirely — which left `drive_run`
+                        // entirely, because the call site there propagates too.
+                        // So a transport blip, a 500, or `admission` reporting
+                        // `WontFit` on page 20 of 40 discarded pages 1-19 —
+                        // minutes of GPU time — wrote nothing to the document
+                        // store, and gave the person a failed turn instead of a
+                        // partial answer.
+                        //
+                        // The cancellation branch a few lines up already had
+                        // this right: keep what was read, name the rest as
+                        // unread. The error path simply had no equivalent.
+                        let read = match ocr_one_image(
                             app,
                             registry,
                             servers,
@@ -1026,8 +1140,20 @@ pub async fn read_attachment(
                             pages,
                             cancel,
                         )
-                        .await?;
-                        match settle_ocr_page(&page_text, &detail.layer_text) {
+                        .await
+                        {
+                            Ok(read) => read,
+                            Err(reason) => {
+                                log::warn!(
+                                    "[ocr] {}: page {} could not be read, and the rest of the                                      document carries on: {reason}",
+                                    attachment.name,
+                                    detail.page
+                                );
+                                unread.push((detail.page, reason));
+                                continue;
+                            }
+                        };
+                        match settle_ocr_page(&read, &detail.layer_text) {
                             Ok(text) => {
                                 by_page.insert(detail.page, text);
                             }
@@ -1266,7 +1392,7 @@ pub async fn scan_page(
     // arjun-egress-ok: loopback only. The check above rejects any
     // non-loopback base URL, so the only host this client can address is the
     // local llama.cpp server ARJUN itself started. Sovereignty: no remote.
-    let client = reqwest::Client::new();
+    let client = ocr_http_client().clone();
     let emitter = app.clone();
     let result = stream_ocr(
         &client,

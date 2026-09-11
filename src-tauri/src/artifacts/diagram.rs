@@ -136,6 +136,30 @@ fn wrap(label: &str) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     for word in label.split_whitespace() {
+        // A word wider than the box.
+        //
+        // Splitting on whitespace has nothing to split when there is none, so
+        // a long unbroken label used to be placed on one line and left there —
+        // and the clip below only runs once there are three lines, so a single
+        // over-long word reached the page untouched and was drawn through the
+        // side of its box. In a plant these are the ordinary labels:
+        // `PT-2201-HIGH-PRESSURE-TRANSMITTER` is thirty-three characters.
+        //
+        // Broken at the column rather than dropped, so the tag stays readable
+        // and stays identifiable.
+        if word.chars().count() > PER_LINE {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let chars: Vec<char> = word.chars().collect();
+            let mut pieces: Vec<String> = chars
+                .chunks(PER_LINE)
+                .map(|chunk| chunk.iter().collect())
+                .collect();
+            current = pieces.pop().unwrap_or_default();
+            lines.extend(pieces);
+            continue;
+        }
         if current.is_empty() {
             current = word.to_string();
         } else if current.chars().count() + 1 + word.chars().count() <= PER_LINE {
@@ -417,6 +441,31 @@ pub fn render_svg(spec: &DiagramSpec) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A tag with no spaces in it still has to fit its box.
+    ///
+    /// `wrap` splits on whitespace, so a label that contains none was placed on
+    /// a single line however long it was — and the clip that guards the
+    /// two-line case only runs when there are three or more lines. In a plant
+    /// the labels that do this are the ordinary ones:
+    /// `PT-2201-HIGH-PRESSURE-TRANSMITTER` is thirty-three characters against a
+    /// twenty-two character box, and it was drawn straight through the edge.
+    #[test]
+    fn a_long_unbroken_tag_is_not_drawn_past_the_box() {
+        for label in [
+            "PT-2201-HIGH-PRESSURE-TRANSMITTER",
+            "A-101-001-REV6-PROCESS-FLOW-DIAGRAM-SHEET-2",
+        ] {
+            for line in wrap(label) {
+                assert!(
+                    line.chars().count() <= 22,
+                    "{label:?} produced a {}-character line: {line:?}",
+                    line.chars().count()
+                );
+            }
+        }
+    }
+
     use super::*;
 
     fn node(id: &str, label: &str, shape: Shape) -> Node {

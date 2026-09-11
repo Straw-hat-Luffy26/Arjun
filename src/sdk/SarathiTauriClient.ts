@@ -4,7 +4,8 @@ import * as appService from '../services/app.service';
 import * as dbService from '../services/database.service';
 import * as themeService from '../services/theme.service';
 import * as systemService from '../services/system.service';
-import * as modelService from '../services/model.service';
+import { registryService } from '../services/registry.service';
+import { getBackendService } from '../services/api';
 import * as providerService from '../services/provider.service';
 import * as aiService from '../services/ai.service';
 import { AppConfig } from '../types/config';
@@ -50,10 +51,20 @@ export class SarathiTauriClient implements ISarathiClient {
   };
 
   // Phase 3: Model Manager
+  //
+  // These used to be wired to `services/model.service.ts`, whose four functions
+  // were stubs: `listModels` and `getRecommendations` returned `[]`, and
+  // `getModelCompatibility` returned `{ modelId, score: 0 }` — a fabricated
+  // number on a public interface. They are now the real commands.
+  //
+  // `getModelCompatibility` is gone rather than reimplemented: no backend
+  // computes a per-model compatibility score, so there was nothing to point it
+  // at. `get_compatible_packages` answers a different question (which packages
+  // will run at all) and is not a score.
   readonly modelManager = {
-    listModels: async () => modelService.listModels(),
-    getModelCompatibility: async (id: string) => modelService.getModelCompatibility(id),
-    getRecommendations: async () => modelService.getRecommendations(),
+    listModels: async () => registryService.listModels(),
+    getRecommendations: async () =>
+      getBackendService().invoke<unknown[]>('get_model_recommendations', {}),
   };
 
   // Phase 4: Model Providers

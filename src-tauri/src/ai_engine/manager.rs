@@ -34,6 +34,9 @@ pub struct InferenceManager {
     last_used_model_id: Arc<Mutex<Option<String>>>,
     /// Intent classification, switch hysteresis, and capability resolution.
     capability: Arc<CapabilityLayer>,
+    /// The opening user turn of the conversation the capability layer is
+    /// currently sticky for. See `prepare_capability_turn`.
+    capability_thread: std::sync::Mutex<Option<String>>,
     /// Which model is in VRAM, and how long it has been idle. Kept here rather
     /// than inside the runtime so residency can be inspected without taking the
     /// generation lock, which a running generation holds for minutes.
@@ -48,6 +51,7 @@ impl InferenceManager {
             last_used_model_id: Arc::new(Mutex::new(None)),
             residency: Arc::new(Mutex::new(Residency::new())),
             capability: Arc::new(CapabilityLayer::default()),
+            capability_thread: std::sync::Mutex::new(None),
         }
     }
 
@@ -609,6 +613,33 @@ impl InferenceManager {
         else {
             return untouched();
         };
+
+        // A different thread starts with no stickiness from the last one.
+        //
+        // `CapabilityTracker` is one global on this manager and its Schmitt
+        // trigger holds a capability for up to three turns. Nothing reset it
+        // when the person switched conversation, so a coding directive and its
+        // sampling followed them into an unrelated thread and stayed for the
+        // next few turns of it.
+        //
+        // Keyed on the conversation's opening user turn rather than on an id,
+        // because `send_chat_message` is not given one — adding the parameter
+        // would change the IPC contract and every caller of it. The opening
+        // turn is stable for the life of a thread and differs between threads,
+        // which is exactly the property needed; two conversations that genuinely
+        // begin with the same words share stickiness, which is the same
+        // behaviour as continuing one of them and costs nothing.
+        let thread = messages
+            .iter()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .unwrap_or_default();
+        if let Ok(mut last) = self.capability_thread.lock() {
+            if last.as_deref() != Some(thread) {
+                self.capability.reset();
+                *last = Some(thread.to_string());
+            }
+        }
 
         let turn = self.capability.resolve_turn(prompt, manual_capability);
 

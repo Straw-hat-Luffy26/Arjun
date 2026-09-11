@@ -125,8 +125,18 @@ export const ScanView: React.FC<ScanViewProps> = ({
   // Stops 1-2 share one weight file and 3-4 the other, so only the 2->3 move
   // reloads. Marking that boundary is the difference between a slider that
   // feels instant and one that mysteriously stalls.
-  const crossesReload =
-    detents.length === 4 && detentIndex >= 2 && detents[detentIndex].tier !== detents[1].tier;
+  //
+  // Compared against the tier this view opened at, not against `detents[1]`.
+  // The old form reduced to "the current stop is in the High tier", which is
+  // true at `Detailed` — the default — so the note was showing before anyone
+  // had moved the slider, on a move that was not going to reload anything.
+  const openedAtTier = useRef<string | null>(null);
+  if (openedAtTier.current === null && active) {
+    openedAtTier.current = active.tier;
+  }
+  const crossesReload = Boolean(
+    active && openedAtTier.current && active.tier !== openedAtTier.current,
+  );
 
   return (
     <div className={styles.wrap}>
@@ -171,7 +181,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         />
         <span className={styles.sliderValue}>
           {active
-            ? `${active.label} · ${active.tierLabel} · ${active.maxImageTokens} vision tokens`
+            ? `${active.label} · ${active.tierLabel} · up to ${active.maxDecodeTokens} tokens a page`
             : DETENT_ORDER[detentIndex]}
         </span>
       </div>

@@ -1,170 +1,176 @@
-/// Comprehensive Real Production Execution Trace Test
-/// Verifies the full GUI path (IPC → Memory Engine → Retrieval → Injected Prompt → SHA-256 Hash → llama.cpp Runtime)
-/// Across 4 scenarios: New Chat, Model Reload, Base Model Switch, and Application Restart.
+//! The injected memory survives the chat template.
+//!
+//! `prepare_injected_messages` puts what the person is known to have said into
+//! a system message. What actually reaches llama.cpp is that list rendered
+//! through *the model's own* chat template, and templates differ: some render
+//! a system turn, some fold it into the first user turn, and a template that
+//! does neither drops it silently. The model then answers as though it was
+//! never told, and every layer above reports success.
+//!
+//! So this checks the last step — the rendered string — for every installed
+//! model's template, and then runs one real generation end to end so the claim
+//! is not only about a string.
+//!
+//! ## What this file used to do
+//!
+//! It computed a SHA-256 of each rendered prompt and printed it. Four hashes,
+//! four `println!`s, no assertion — a trace, not a test. The hashes are now
+//! used for something: templating the same messages twice must produce the
+//! same bytes, because a prompt that differs run to run cannot be reproduced
+//! from a task record, and reproducing one is what the record is for.
+//!
+//! It also loaded models that are on nobody's machine, wrote its fixture into
+//! the live profile database, and asserted on a real person's name. Those are
+//! dealt with the same way as in `verify_real_world_model_switching`.
 
-use std::path::PathBuf;
+mod common;
+
 use std::sync::Arc;
+
 use sha2::{Digest, Sha256};
+
 use sarathi_lib::ai_engine::manager::InferenceManager;
 use sarathi_lib::ai_engine::traits::{ChatMessage, GenerationParams};
 use sarathi_lib::memory_engine::MemoryManager;
 
-fn get_app_data_dir() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| r"C:\Users\lenovo\AppData\Roaming".to_string());
-    PathBuf::from(appdata).join("com.sarathi.app")
-}
+const SECRET_KEY: &str = "commissioning_tag";
+const SECRET_VALUE: &str = "VX-7741-QRT";
+const QUESTION: &str = "What is the commissioning tag? Answer with the tag only.";
 
-fn compute_sha256(text: &str) -> String {
+fn sha256(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
-#[tokio::test]
-async fn test_full_production_gui_execution_trace() {
-    println!("\n========================================================================");
-    println!("   SARATHI PRODUCTION GUI EXECUTION TRACE & MEMORY INJECTION AUDIT       ");
-    println!("========================================================================\n");
+/// `#[test]` with a hand-built runtime, not `#[tokio::test]`: `MemoryManager`
+/// owns a Tokio runtime through the Python sidecar provider, and dropping one
+/// runtime inside another panics with "Cannot drop a runtime in a context
+/// where blocking is not allowed". The manager is built and dropped out here
+/// where blocking is allowed; only the async calls go through `block_on`.
+#[test]
+fn injected_memory_reaches_the_prompt_the_runtime_is_handed() {
+    let Some(models) = common::need_models(1, "the prompt-injection trace") else {
+        return;
+    };
+    let app_data = common::app_data_dir();
+    let rt = tokio::runtime::Runtime::new().expect("a runtime for the async calls");
 
-    let app_data = get_app_data_dir();
-    let memory_mgr = Arc::new(MemoryManager::new(&app_data));
-    let inference_mgr = Arc::new(InferenceManager::new());
+    // A temporary store. The live profile database is not a test fixture.
+    let store = tempfile::tempdir().expect("a temporary directory for the memory store");
+    let inference = Arc::new(InferenceManager::new());
+    let memory = Arc::new(MemoryManager::new(&store.path().to_path_buf()));
 
-    // Step 0: Ensure long-term memory exists in SQLite
-    let _ = memory_mgr.set_user_profile_fact("name", "Shreyash Patil", "user_fact");
-    let _ = memory_mgr.set_user_profile_fact("preferred_language", "Rust", "user_fact");
-    println!("[SETUP] Seeded user_profile in SQLite: name='Shreyash Patil', language='Rust'");
+    memory
+        .set_user_profile_fact(SECRET_KEY, SECRET_VALUE, "user_fact")
+        .expect("the fact is written before anything is asked");
 
-    let params = GenerationParams {
-        temperature: 0.1,
-        max_tokens: 60,
-        ..Default::default()
+    let messages = vec![ChatMessage {
+        role: "user".to_string(),
+        content: QUESTION.to_string(),
+        timestamp: None,
+    }];
+
+    let injected = rt.block_on(async {
+        let retrieved = memory.search_memories(QUESTION, None).await.unwrap_or_default();
+        println!("retrieval returned {} memory/ies", retrieved.len());
+        memory
+            .prepare_injected_messages(&messages, QUESTION)
+            .await
+            .expect("memory injection")
+    });
+    assert!(
+        injected.iter().any(|m| m.content.contains(SECRET_VALUE)),
+        "the fact never entered the message list, so nothing below is about templating"
+    );
+
+    // Reading a template means loading the model that carries it, so this is
+    // the expensive part and it is bounded. Two different templates is what
+    // proves the assertion is about templating rather than about one model.
+    // `ARJUN_LOAD_ALL_MODELS=1` checks every installed model.
+    let take = if std::env::var("ARJUN_LOAD_ALL_MODELS").is_ok() {
+        models.len()
+    } else {
+        2.min(models.len())
     };
 
-    // ========================================================================
-    // SCENARIO 1: Opening a New Chat (First message in new session)
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [SCENARIO 1] Opening New Chat & Loading Qwen 2.5 Coder 7B...");
-    println!("------------------------------------------------------------------------");
+    for model in models.iter().take(take) {
+        let template = template_of(&inference, &app_data, model);
+        let rendered = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(
+            &injected, &template,
+        );
 
-    let model1_info = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-Coder-7B", "Q4_0")
-        .expect("Failed to load Qwen 2.5 Coder 7B");
+        assert!(
+            rendered.contains(SECRET_VALUE),
+            "{}'s chat template dropped the injected memory. The message list \
+             carried it and the rendered prompt does not, so the model would \
+             answer as though it had never been told.\n--- rendered ---\n{rendered}",
+            model.id
+        );
 
-    let user_msg_1 = ChatMessage { role: "user".to_string(), content: "What is my name?".to_string(), timestamp: None };
-    let input_messages_1 = vec![user_msg_1.clone()];
+        // Deterministic. A task record that names a prompt hash is only
+        // evidence if the same messages render to the same bytes.
+        let again = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(
+            &injected, &template,
+        );
+        assert_eq!(
+            sha256(&rendered),
+            sha256(&again),
+            "{} renders the same messages to different bytes on two calls",
+            model.id
+        );
 
-    // 1. Retrieval
-    let retrieved_1 = memory_mgr.search_memories("What is my name?", None).await.unwrap_or_default();
-    println!("[TRACE SCENARIO 1 - RETRIEVAL] Executed: true | Count: {} | IDs: {:?}", retrieved_1.len(), retrieved_1.iter().map(|m| &m.id).collect::<Vec<_>>());
+        println!("  {} -> {} ({} chars)", model.id, sha256(&rendered), rendered.len());
+    }
 
-    // 2. Prompt Injection
-    let injected_1 = memory_mgr.prepare_injected_messages(&input_messages_1, &user_msg_1.content).await.expect("Injection failed");
-    let sys_prompt_1 = &injected_1[0].content;
-    println!("[TRACE SCENARIO 1 - INJECTION] Injected System Prompt Length: {} chars | Has User Profile: {}", sys_prompt_1.len(), sys_prompt_1.contains("Shreyash Patil"));
+    // And once for real, so this is not only a claim about a string.
+    let model = &models[0];
+    inference
+        .load_installed_model_direct(&app_data, &model.provider, &model.id, &model.quantization)
+        .unwrap_or_else(|e| panic!("{} is installed and did not load: {e:?}", model.id));
 
-    // 3. Runtime SHA-256 Hash & Inference Execution
-    let mut text_1 = String::new();
-    let gen_res_1 = inference_mgr.generate_direct(&injected_1, &params, |chunk| { text_1.push_str(&chunk.text); });
-    let prompt_raw_1 = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(&injected_1, &model1_info.chat_template);
-    let hash_1 = compute_sha256(&prompt_raw_1);
+    let mut answer = String::new();
+    inference
+        .generate_direct(
+            &injected,
+            &GenerationParams {
+                temperature: 0.1,
+                max_tokens: 60,
+                ..Default::default()
+            },
+            |chunk| answer.push_str(&chunk.text),
+        )
+        .unwrap_or_else(|e| panic!("{} failed to generate: {e:?}", model.id));
 
-    println!("[TRACE SCENARIO 1 - RUNTIME] SHA-256 Hash: {}", hash_1);
-    println!("[TRACE SCENARIO 1 - RUNTIME] Injected Memory Present in Prompt: {}", prompt_raw_1.contains("Shreyash"));
-    println!("[TRACE SCENARIO 1 - RESPONSE] \"{}\"", text_1.trim());
+    println!("\n{} answered: {}", model.id, answer.trim());
+    let normalised: String = answer
+        .to_ascii_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    assert!(
+        normalised.contains(SECRET_VALUE),
+        "{} was handed the fact in its prompt and did not repeat it: {answer:?}",
+        model.id
+    );
 
-    assert!(gen_res_1.is_ok());
-    assert!(prompt_raw_1.contains("Shreyash"));
-    assert!(text_1.to_lowercase().contains("shreyash"));
+    inference.unload_active_model_direct().ok();
+}
 
-    // ========================================================================
-    // SCENARIO 2: Unloading & Reloading the Same Model
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [SCENARIO 2] Unloading & Reloading Qwen 2.5 Coder 7B...");
-    println!("------------------------------------------------------------------------");
-
-    let _ = inference_mgr.unload_active_model_direct();
-    let model1_reloaded = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-Coder-7B", "Q4_0")
-        .expect("Failed to reload Qwen 2.5 Coder 7B");
-
-    let user_msg_2 = ChatMessage { role: "user".to_string(), content: "What is my name and preferred programming language?".to_string(), timestamp: None };
-    let input_messages_2 = vec![user_msg_2.clone()]; // New session message list
-
-    let injected_2 = memory_mgr.prepare_injected_messages(&input_messages_2, &user_msg_2.content).await.expect("Injection failed");
-    let mut text_2 = String::new();
-    let gen_res_2 = inference_mgr.generate_direct(&injected_2, &params, |chunk| { text_2.push_str(&chunk.text); });
-    let prompt_raw_2 = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(&injected_2, &model1_reloaded.chat_template);
-    let hash_2 = compute_sha256(&prompt_raw_2);
-
-    println!("[TRACE SCENARIO 2 - RUNTIME] SHA-256 Hash: {}", hash_2);
-    println!("[TRACE SCENARIO 2 - RUNTIME] Injected Memory Present in Prompt: {}", prompt_raw_2.contains("Shreyash"));
-    println!("[TRACE SCENARIO 2 - RESPONSE] \"{}\"", text_2.trim());
-
-    assert!(gen_res_2.is_ok());
-    assert!(prompt_raw_2.contains("Shreyash"));
-    assert!(text_2.to_lowercase().contains("shreyash"));
-
-    // ========================================================================
-    // SCENARIO 3: Switching to another Base Model (meta-llama/Llama-3.2-1B)
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [SCENARIO 3] Base Model Switch to meta-llama/Llama-3.2-1B...");
-    println!("------------------------------------------------------------------------");
-
-    let _ = inference_mgr.unload_active_model_direct();
-    let model3_info = inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "meta-llama/Llama-3.2-1B", "Q4_K_M")
-        .expect("Failed to load Llama 3.2 1B");
-
-    let injected_3 = memory_mgr.prepare_injected_messages(&input_messages_1, &user_msg_1.content).await.expect("Injection failed");
-    let mut text_3 = String::new();
-    let gen_res_3 = inference_mgr.generate_direct(&injected_3, &params, |chunk| { text_3.push_str(&chunk.text); });
-    let prompt_raw_3 = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(&injected_3, &model3_info.chat_template);
-    let hash_3 = compute_sha256(&prompt_raw_3);
-
-    println!("[TRACE SCENARIO 3 - RUNTIME] SHA-256 Hash: {}", hash_3);
-    println!("[TRACE SCENARIO 3 - RUNTIME] Injected Memory Present in Prompt: {}", prompt_raw_3.contains("Shreyash"));
-    println!("[TRACE SCENARIO 3 - RESPONSE] \"{}\"", text_3.trim());
-
-    assert!(gen_res_3.is_ok());
-    assert!(prompt_raw_3.contains("Shreyash"));
-    assert!(text_3.to_lowercase().contains("shreyash"));
-
-    // ========================================================================
-    // SCENARIO 4: Restarting Sarathi Completely (Fresh Engine Instances)
-    // ========================================================================
-    println!("\n------------------------------------------------------------------------");
-    println!(" [SCENARIO 4] Restarting Sarathi Completely (Fresh Instances)...");
-    println!("------------------------------------------------------------------------");
-
-    drop(inference_mgr);
-    drop(memory_mgr);
-
-    let fresh_memory_mgr = Arc::new(MemoryManager::new(&app_data));
-    let fresh_inference_mgr = Arc::new(InferenceManager::new());
-
-    let model_restart_info = fresh_inference_mgr
-        .load_installed_model_direct(&app_data, "huggingface", "Qwen/Qwen2.5-Coder-7B", "Q4_0")
-        .expect("Failed to load model after restart");
-
-    let injected_4 = fresh_memory_mgr.prepare_injected_messages(&input_messages_1, &user_msg_1.content).await.expect("Injection failed");
-    let mut text_4 = String::new();
-    let gen_res_4 = fresh_inference_mgr.generate_direct(&injected_4, &params, |chunk| { text_4.push_str(&chunk.text); });
-    let prompt_raw_4 = sarathi_lib::ai_engine::runtime::format_chat_prompt_with_template(&injected_4, &model_restart_info.chat_template);
-    let hash_4 = compute_sha256(&prompt_raw_4);
-
-    println!("[TRACE SCENARIO 4 - RUNTIME] SHA-256 Hash: {}", hash_4);
-    println!("[TRACE SCENARIO 4 - RUNTIME] Injected Memory Present in Prompt: {}", prompt_raw_4.contains("Shreyash"));
-    println!("[TRACE SCENARIO 4 - RESPONSE] \"{}\"", text_4.trim());
-
-    assert!(gen_res_4.is_ok());
-    assert!(prompt_raw_4.contains("Shreyash"));
-    assert!(text_4.to_lowercase().contains("shreyash"));
-
-    println!("\n========================================================================");
-    println!("   ALL 4 PRODUCTION EXECUTION TRACE SCENARIOS PASSED 100%!               ");
-    println!("========================================================================\n");
+/// A model's chat template, which only the loader knows.
+///
+/// Loading is the only way to read it, so this loads and immediately unloads.
+/// It is the expensive part of this test and the reason the render checks come
+/// first: a template bug is found without waiting for the generation.
+fn template_of(
+    inference: &InferenceManager,
+    app_data: &std::path::Path,
+    model: &common::InstalledModel,
+) -> String {
+    let info = inference
+        .load_installed_model_direct(app_data, &model.provider, &model.id, &model.quantization)
+        .unwrap_or_else(|e| panic!("{} is installed and did not load: {e:?}", model.id));
+    let template = info.chat_template.clone();
+    inference.unload_active_model_direct().ok();
+    template
 }

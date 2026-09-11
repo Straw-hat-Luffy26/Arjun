@@ -132,3 +132,72 @@ describe("a generation that does not come back", () => {
     }
   });
 });
+
+/**
+ * Stop has to reach a call that is already running.
+ *
+ * `execute` took `(toolCallId, params)` and dropped the third argument
+ * agent-core has always passed it: the run's `AbortSignal`. So `run.abort` —
+ * the operator's Stop button — could not touch an in-flight tool. The loop sat
+ * in `Promise.all` over the launched calls until each one's own ceiling
+ * expired, which for a document is two minutes of a turn the person had already
+ * cancelled.
+ */
+describe("stopping a run that is inside a tool call", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("gives up on a call that is still running", async () => {
+    const ledger = new GrantLedger();
+    const [tool] = buildTools(
+      wedgedPeer(),
+      ledger,
+      "run-1",
+      "m",
+      undefined,
+      eligible("artifact.create_approval_note", 120),
+    );
+    if (!tool) throw new Error("the tool is not in the catalogue");
+
+    const controller = new AbortController();
+    ledger.put("call-1", "g-1");
+    const settled = tool.execute("call-1", {}, controller.signal).then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+
+    controller.abort();
+    const outcome = await settled;
+
+    expect(outcome).toContain("stopped");
+    // And it does not claim the effect did not happen. `Promise.race` abandons
+    // the loser; it does not reach into Rust and undo a file that was written.
+    expect(outcome).toContain("may already have happened");
+  });
+
+  it("does not start a call on a run that is already stopped", async () => {
+    const ledger = new GrantLedger();
+    const [tool] = buildTools(
+      wedgedPeer(),
+      ledger,
+      "run-1",
+      "m",
+      undefined,
+      eligible("artifact.create_approval_note", 120),
+    );
+    if (!tool) throw new Error("the tool is not in the catalogue");
+
+    const controller = new AbortController();
+    controller.abort();
+    ledger.put("call-1", "g-1");
+
+    const outcome = await tool.execute("call-1", {}, controller.signal).then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+
+    // Refused before the request goes out, so this one *cannot* have happened
+    // and says so plainly.
+    expect(outcome).toContain("did not run");
+  });
+});

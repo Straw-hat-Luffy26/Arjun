@@ -21,7 +21,6 @@ pub mod runtime_validator;
 
 use std::path::Path;
 use crate::system_analyzer::traits::HardwareProfile;
-use crate::model_providers::huggingface::catalog_provider::HuggingFaceCatalogProvider;
 use traits::*;
 
 /// Generate model recommendations from a HardwareProfile and dynamic Hugging Face catalog.
@@ -37,12 +36,15 @@ pub async fn generate_recommendations(
     let budget_config = BudgetConfig::default();
     let memory_budget = budget::calculate_budget(profile, &budget_config);
 
-    // 2. Discover model catalog from Hugging Face Hub (or cached/bootstrap fallback)
-    let models = if let Some(data_dir) = app_data_dir {
-        HuggingFaceCatalogProvider::fetch_catalog(data_dir, force_refresh).await
-    } else {
-        catalog::bootstrap_models()
-    };
+    // 2. The catalogue this build ships with.
+    //
+    // This used to call `HuggingFaceCatalogProvider::fetch_catalog`, which
+    // reached the Hub for a live listing and fell back to this same bootstrap
+    // list when it could not. The Hub is gone from this build, so the fallback
+    // is now the only path — recommendations are made from what is checked in,
+    // and `force_refresh` has nothing left to refresh.
+    let _ = (app_data_dir, force_refresh);
+    let models = catalog::bootstrap_models();
     log::info!("[RECOMMENDATION] Discovered/loaded {} models from catalog", models.len());
 
     // 3. Evaluate all models against budget and score
