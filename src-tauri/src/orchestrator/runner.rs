@@ -692,6 +692,36 @@ impl<'a> LocalToolRunner<'a> {
         let path = path.ok_or("no path was resolved for this write")?;
         let content = call.text("content").unwrap_or_default();
 
+        // Checked against the format the extension claims, before anything is
+        // written.
+        //
+        // This used to be an untyped byte writer: a `.csv` whose rows had
+        // different widths, a `.json` with a trailing comma, an `.html` with no
+        // `lang` and unescaped content in it were all written and all reported
+        // as produced, because the only check a text file got was that it
+        // existed. See `artifacts::text_formats` for what each format is held
+        // to, and for what its parser does and does not claim.
+        //
+        // A file whose extension this does not recognise is still written
+        // unchanged. There is no structure to check it against, and inventing
+        // one would refuse the plain notes this tool exists for.
+        let format = crate::artifacts::text_formats::Format::of_path(path);
+        if let Some(format) = format {
+            let check = crate::artifacts::text_formats::check(format, content);
+            let mut problems = check.problems.clone();
+            if problems.is_empty() {
+                problems.extend(crate::artifacts::text_formats::quality(format, content));
+            }
+            if !problems.is_empty() {
+                return Err(format!(
+                    "{} was not written: as {} it {}. Correct the content and write it again.",
+                    path.display(),
+                    format.name(),
+                    problems.join("; ")
+                ));
+            }
+        }
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("could not prepare {}: {e}", parent.display()))?;
@@ -700,11 +730,15 @@ impl<'a> LocalToolRunner<'a> {
         std::fs::write(path, content)
             .map_err(|e| format!("{} could not be written: {e}", path.display()))?;
 
-        Ok(format!(
-            "Wrote {} byte(s) to {}.",
-            content.len(),
-            path.display()
-        ))
+        Ok(match format {
+            Some(format) => format!(
+                "Wrote {} byte(s) to {}. It was checked as {} before writing.",
+                content.len(),
+                path.display(),
+                format.name()
+            ),
+            None => format!("Wrote {} byte(s) to {}.", content.len(), path.display()),
+        })
     }
 
     fn calculate(&self, call: &ToolCall) -> Result<String, String> {

@@ -12,7 +12,7 @@ import {
   type GraphView,
   type TypingOutcome,
 } from '../../services/notebook.service';
-import { describeEdge } from './edgeLabel';
+import { describeClaim, describeEdge } from './edgeLabel';
 import { FlowCanvas } from './FlowCanvas';
 import { buildFlow, describeFlow } from './flow';
 import {
@@ -596,6 +596,20 @@ export const NotebookGraphPanel: React.FC<NotebookGraphPanelProps> = ({
                   {selected.occurrences === 1 ? 'passage' : 'passages'} ·{' '}
                   {plural(selected.documentCount, 'file', 'files')}
                 </p>
+                {/* Two documents typed the same term differently. The header
+                    shows the best-supported answer; this says what the others
+                    were, rather than the view silently keeping one. */}
+                {(selected.typeCandidates ?? []).length > 1 && (
+                  <p className={styles.nodeMeta}>
+                    Typed differently across files:{' '}
+                    {(selected.typeCandidates ?? [])
+                      .map(
+                        (candidate) =>
+                          `${candidate.nodeType} (${plural(candidate.documents, 'file', 'files')})`,
+                      )
+                      .join(', ')}
+                  </p>
+                )}
                 <div className={styles.nodeActions}>
                   <Button size="sm" variant="ghost" onClick={() => focusOn(selected)}>
                     Centre here
@@ -622,6 +636,15 @@ export const NotebookGraphPanel: React.FC<NotebookGraphPanelProps> = ({
                               between two terms invites the reader to supply a
                               relation the extractor never observed. */}
                           <span className={styles.evidencePage}>{describeEdge(edge, selected.id)}</span>
+                          {/* The directed claims behind the link, each in the
+                              order it was made and each with its standing. A
+                              link carrying two of these is contested, and the
+                              line above says so rather than picking one. */}
+                          {(edge.assertions ?? []).map((assertion) => (
+                            <span key={assertion.id} className={styles.quote}>
+                              {describeClaim(assertion)}
+                            </span>
+                          ))}
                         </li>
                       ))}
                     </ul>

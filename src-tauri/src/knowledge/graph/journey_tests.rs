@@ -35,6 +35,23 @@ const BOB: &str = "user-bob";
 const LOG_SHA: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const CONTRACT_SHA: &str = "b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1";
 
+/// The extraction revision the relation pass records against these fixtures.
+const REVISION: &str = "2026-01-01T00:00:00Z";
+
+/// What `completed_units` compares a recorded unit against here.
+///
+/// A unit whose recorded revision does not match what the caller says is on
+/// disk is treated as out of date — the safe direction — so these tests name
+/// the revision they wrote.
+fn revisions() -> BTreeMap<String, String> {
+    [
+        (LOG_SHA.to_string(), REVISION.to_string()),
+        (CONTRACT_SHA.to_string(), REVISION.to_string()),
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// A maintenance log and a contract that name the same supplier.
 ///
 /// The point of the whole feature is that this connection is invisible when the
@@ -135,6 +152,7 @@ fn build_graph(documents: &DocumentStore, notebooks: &NotebookStore, notebook_id
                 &page_of,
                 &draft,
                 EXTRACTOR_VERSION,
+                &document.extracted_at,
             )
             .expect("the graph should store");
     }
@@ -261,6 +279,7 @@ fn a_relation_survives_from_the_model_to_the_drawn_diagram() {
             LOG_SHA,
             &verdict,
             relations::RELATION_VERSION,
+                REVISION,
         )
         .expect("relations store");
 
@@ -386,6 +405,7 @@ fn naming_the_same_document_twice_produces_the_same_graph() {
                 LOG_SHA,
                 &verdict,
                 relations::RELATION_VERSION,
+                REVISION,
             )
             .expect("relations store");
         j.notebooks
@@ -410,7 +430,7 @@ fn naming_the_same_document_twice_produces_the_same_graph() {
     // rather than paying for the model again to reach the same answer.
     let done = j
         .notebooks
-        .completed_units(&j.notebook_id, "relations", relations::RELATION_VERSION)
+        .completed_units(&j.notebook_id, "relations", relations::RELATION_VERSION, "rebel", &revisions())
         .unwrap();
     assert!(done.contains(LOG_SHA));
 }

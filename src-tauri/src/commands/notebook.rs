@@ -97,6 +97,33 @@ pub struct AddDocumentsRequest {
     pub ocr_detent: Option<OcrDetent>,
 }
 
+/// The extraction revision currently on disk for each of a notebook's sources.
+///
+/// What [`NotebookStore::completed_units`] compares a build unit against. A
+/// document whose extraction cannot be read is simply absent from the map,
+/// which reads as "not done" — the safe direction, because claiming a pass is
+/// complete for a source we cannot even open is the failure the revision check
+/// exists to prevent.
+fn source_revisions(
+    documents: &DocumentsState,
+    owner: &str,
+    notebook_id: &str,
+    members: &[NotebookDocument],
+) -> BTreeMap<String, String> {
+    let conversation = format!("notebook:{notebook_id}");
+    members
+        .iter()
+        .filter_map(|member| {
+            documents
+                .0
+                .get(&member.document_sha256, owner, Some(&conversation))
+                .ok()
+                .flatten()
+                .map(|document| (member.document_sha256.clone(), document.extracted_at))
+        })
+        .collect()
+}
+
 /// Every notebook the signed-in person owns.
 #[tauri::command]
 pub async fn notebook_list(
@@ -359,11 +386,19 @@ pub async fn notebook_build_graph(
         .documents(&notebook.id, owner)
         .map_err(|error| format!("the notebook's documents could not be read: {error}"))?;
 
+    let revisions = source_revisions(&documents, owner, &notebook.id, &members);
+
     let already = if rebuild.unwrap_or(false) {
         Default::default()
     } else {
         store
-            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION)
+            .completed_units(
+                &notebook.id,
+                "statistical",
+                EXTRACTOR_VERSION,
+                "statistical",
+                &revisions,
+            )
             .map_err(|error| format!("the build state could not be read: {error}"))?
     };
 
@@ -425,6 +460,7 @@ pub async fn notebook_build_graph(
             &page_of,
             &draft,
             EXTRACTOR_VERSION,
+            &document.extracted_at,
         ) {
             Ok(()) => outcome.documents_built += 1,
             Err(error) => {
@@ -576,8 +612,18 @@ pub async fn notebook_type_graph(
     let members = store
         .documents(&notebook.id, owner)
         .map_err(|error| format!("the notebook's documents could not be read: {error}"))?;
+    let revisions = source_revisions(&documents, owner, &notebook.id, &members);
+    // The model that will do the typing is part of the pass's identity: a graph
+    // typed by a 3B model is not "already done" once a larger one is loaded.
+    let extractor_id = format!("llm:{}", endpoint.served_model_id);
     let already = store
-        .completed_units(&notebook.id, "typing", TYPING_VERSION)
+        .completed_units(
+            &notebook.id,
+            "typing",
+            TYPING_VERSION,
+            &extractor_id,
+            &revisions,
+        )
         .map_err(|error| format!("the build state could not be read: {error}"))?;
 
     let mut outcome = TypingOutcome {
@@ -686,6 +732,8 @@ pub async fn notebook_type_graph(
             &member.document_sha256,
             &verdict,
             TYPING_VERSION,
+            &document.extracted_at,
+            &extractor_id,
         ) {
             Ok(()) => outcome.documents_typed += 1,
             Err(error) => {
@@ -771,8 +819,15 @@ pub async fn notebook_extract_relations(
     let members = store
         .documents(&notebook.id, owner)
         .map_err(|error| format!("the notebook documents could not be read: {error}"))?;
+    let revisions = source_revisions(&documents, owner, &notebook.id, &members);
     let already = store
-        .completed_units(&notebook.id, "relations", RELATION_VERSION)
+        .completed_units(
+            &notebook.id,
+            "relations",
+            RELATION_VERSION,
+            "rebel",
+            &revisions,
+        )
         .map_err(|error| format!("the build state could not be read: {error}"))?;
 
     let mut outcome = RelationOutcome {
@@ -895,6 +950,7 @@ pub async fn notebook_extract_relations(
             &member.document_sha256,
             &verdict,
             RELATION_VERSION,
+            &document.extracted_at,
         ) {
             Ok(()) => outcome.documents_named += 1,
             Err(error) => {

@@ -141,12 +141,17 @@ pub struct TypedNode {
     pub quote: String,
 }
 
-/// An edge the gates accepted.
+/// A relationship the gates accepted, in the direction the model claimed it.
+///
+/// `subject` and `object`, not `source` and `target`. The old names went with
+/// an implementation that sorted the pair alphabetically before storing it, so
+/// "Acme manufactures PV-2201" was recorded with whichever term sorted first as
+/// the source — and read back, for half of all pairs, reversed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TypedEdge {
-    pub source: String,
-    pub target: String,
+    pub subject: String,
+    pub object: String,
     pub relation: String,
     pub chunk_id: String,
     pub quote: String,
@@ -285,7 +290,7 @@ pub fn verify(
     stats.kept_nodes = nodes.len() as u32;
 
     let mut edges: Vec<TypedEdge> = Vec::new();
-    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
     for proposed in &proposal.edges {
         let source = normalise_phrase(&proposed.source);
         let target = normalise_phrase(&proposed.target);
@@ -306,19 +311,25 @@ pub fn verify(
         ) {
             continue;
         }
-        // Stored the way the statistical pass stores an edge: ends ordered, so
-        // one relationship is one row however the model happened to phrase it.
-        let (a, b) = if source < target {
-            (source, target)
-        } else {
-            (target, source)
-        };
-        if !seen.insert((a.clone(), b.clone())) {
+        // The model's order, kept.
+        //
+        // This used to sort the pair — "ends ordered, so one relationship is one
+        // row however the model happened to phrase it" — which confused two
+        // different things. Storing one *co-occurrence* per unordered pair is
+        // right: the observation has no direction. Storing one *relationship*
+        // that way is not: it discards which term the model said was the
+        // subject, and for every pair whose subject sorts second the claim came
+        // back inverted.
+        //
+        // Deduplication is on the whole claim now, so the same relationship
+        // proposed twice is still one row, and a genuinely different claim
+        // about the same two terms survives to be shown as a conflict.
+        if !seen.insert((source.clone(), relation.clone(), target.clone())) {
             continue;
         }
         edges.push(TypedEdge {
-            source: a,
-            target: b,
+            subject: source,
+            object: target,
             relation,
             chunk_id: proposed.evidence_chunk_id.clone(),
             quote: proposed.quote.trim().to_string(),
@@ -891,7 +902,7 @@ mod tests {
     // ── Shape and bookkeeping ───────────────────────────────────────────────
 
     #[test]
-    fn a_grounded_edge_is_kept_with_its_ends_ordered() {
+    fn a_grounded_relationship_keeps_the_direction_the_model_claimed() {
         let proposal = Proposal {
             nodes: vec![],
             edges: vec![edge(
@@ -905,8 +916,11 @@ mod tests {
         let verdict = verify(&proposal, &known(), &chunks());
 
         assert_eq!(verdict.edges.len(), 1);
-        // Ordered, so one relationship is one row however it was phrased.
-        assert!(verdict.edges[0].source < verdict.edges[0].target);
+        // The model said PV-2201 is supplied by Northern Valve Company. The
+        // subject sorts *after* the object, which is exactly the case the old
+        // sort-the-ends rule inverted.
+        assert_eq!(verdict.edges[0].subject, "pv-2201");
+        assert_eq!(verdict.edges[0].object, "northern valve company");
         assert_eq!(verdict.edges[0].relation, "supplied by");
     }
 

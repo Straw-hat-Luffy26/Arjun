@@ -402,20 +402,55 @@
       "consumer": "frontend",
       "note": "Called from src/. Reads files through the same attachment pipeline a chat turn uses and puts them in a notebook."
     },
+    "notebook_assertions": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The directed relationship claims over a notebook, with their provenance, review status, direction certainty and evidence."
+    },
+    "notebook_bind_conversation": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Records that a conversation belongs to a notebook, so reopening the notebook restores its own thread rather than whatever the general chat was last on."
+    },
     "notebook_build_graph": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. Runs the statistical extraction pass over a notebook's documents; resumable, skips documents already built at this extractor version."
+    },
+    "notebook_correct_assertion": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Corrects a relationship's wording or which way round it runs; the result is the person's own accepted claim."
     },
     "notebook_create": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "notebook_create_assertion": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Records a relationship a person asserts themselves. It has no passage behind it and every surface that uses it says so."
+    },
+    "notebook_create_note": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Creates a note a person writes themselves, which carries no evidence and is never reported as source-verified."
+    },
     "notebook_delete": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. Deletes a notebook and the graph built over it; the documents are untouched."
+    },
+    "notebook_delete_assertion": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Deletes a relationship a person added by hand. Model proposals are rejected rather than deleted."
+    },
+    "notebook_delete_note": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Deletes one of a notebook's notes."
     },
     "notebook_documents": {
       "owner": "notebook",
@@ -442,6 +477,16 @@
       "consumer": "frontend",
       "note": "Called from src/. The passages behind one node, so the interface can answer 'why do you think that?'."
     },
+    "notebook_notes": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The notes and generated reports a notebook holds."
+    },
+    "notebook_open_citation": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Resolves one [En] marker against the turn's stored manifest and returns the passage as used plus the page as it reads now, reporting removed, changed and unreadable sources as distinct states."
+    },
     "notebook_remove_document": {
       "owner": "notebook",
       "consumer": "frontend",
@@ -454,13 +499,48 @@
     },
     "notebook_render_subgraph": {
       "owner": "notebook",
+      "consumer": "frontend-pending",
+      "note": "Renders a chosen subgraph as Markdown. No longer used by the Notebooks screen: 'Ask about selection' now sends the graph node ids as a research scope and the backend retrieves the original passages, so the answer cites documents rather than a summary of a graph. Kept registered for export, and unreferenced from src/ until an export surface exists."
+    },
+    "notebook_review_assertion": {
+      "owner": "notebook",
       "consumer": "frontend",
-      "note": "Called from src/. Renders a chosen subgraph as Markdown; the frontend attaches it to a chat turn through the ordinary attachment path, which gives it a content address, a budget and pinning."
+      "note": "Called from src/. Accepts or rejects one extracted relationship. A rejection keeps the row, so a later extraction pass cannot re-propose the same claim with nothing to say it was refused."
+    },
+    "notebook_save_answer": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Saves an assistant answer into the notebook with the evidence it used. The body is read from the conversation store, never from the caller, so nothing else can be saved as a cited answer."
+    },
+    "notebook_scope_preview": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. What the next question would read — how many sources, which are unreadable, what the graph selection narrows it to, and how passages will be found — so the scope is visible before the question is asked rather than after it is answered."
+    },
+    "notebook_source_page": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. One page of a notebook source's extracted text, for the reader. Scoped to the notebook as well as the owner, so a document held in another notebook is not readable through this one."
+    },
+    "notebook_threads": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The conversations started from one notebook, skipping bindings whose conversation has since been deleted."
+    },
+    "notebook_turn_evidence": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The evidence manifest one answer was built on: which chunk, which document, which page, at which extraction revision. Returns null for a turn that was not notebook-scoped."
     },
     "notebook_type_graph": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. Asks an already-loaded local model to type a notebook's terms and name relations; every claim must cite a passage and quote it, and anything unverified is dropped and counted."
+    },
+    "notebook_update_note": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Edits a note. The saved-body hash is not refreshed, so an edited answer starts reporting that it has been edited rather than keeping the standing it earned before the edit."
     },
     "observe_process_connections": {
       "owner": "sovereignty",

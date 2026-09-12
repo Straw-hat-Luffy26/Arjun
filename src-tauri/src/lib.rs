@@ -1065,6 +1065,25 @@ pub fn run() {
             commands::notebook::notebook_render_subgraph,
             commands::notebook::notebook_type_graph,
             commands::notebook::notebook_extract_relations,
+            // The research workspace: sources, chat scope, citations, notes and
+            // relationship review. Registered beside the import and graph
+            // commands above because they address the same store.
+            commands::notebook_research::notebook_bind_conversation,
+            commands::notebook_research::notebook_threads,
+            commands::notebook_research::notebook_turn_evidence,
+            commands::notebook_research::notebook_open_citation,
+            commands::notebook_research::notebook_source_page,
+            commands::notebook_research::notebook_notes,
+            commands::notebook_research::notebook_create_note,
+            commands::notebook_research::notebook_update_note,
+            commands::notebook_research::notebook_delete_note,
+            commands::notebook_research::notebook_save_answer,
+            commands::notebook_research::notebook_assertions,
+            commands::notebook_research::notebook_review_assertion,
+            commands::notebook_research::notebook_correct_assertion,
+            commands::notebook_research::notebook_create_assertion,
+            commands::notebook_research::notebook_delete_assertion,
+            commands::notebook_research::notebook_scope_preview,
 
             // The ten `memory_engine::api::*` commands were removed. See
             // `memory_engine::api` for the reasoning; in short, every one of

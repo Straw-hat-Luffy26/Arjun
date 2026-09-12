@@ -184,6 +184,31 @@ export interface StartRunRequest {
    * `agent_append_turn`. Required when `conversationId` is set.
    */
   messageId?: string;
+  /**
+   * Which notebook, which of its sources, and which graph selections this
+   * question is scoped to.
+   *
+   * Identifiers only — never document text, never a rendered graph, never a
+   * citation label. The backend resolves every id against the store for the
+   * signed-in owner and builds the evidence itself; anything sent from here
+   * would be evidence nobody checked. See
+   * `src-tauri/src/knowledge/notebook_retrieval.rs`.
+   */
+  research?: ResearchScope;
+}
+
+/**
+ * What a notebook question is aimed at.
+ *
+ * Mirrors `knowledge::graph::research::ResearchScope`. An empty
+ * `sourceSha256s` means every source in the notebook — a choice the interface
+ * makes explicit, not a fallback for a list that failed to load.
+ */
+export interface ResearchScope {
+  notebookId: string;
+  sourceSha256s?: string[];
+  nodeIds?: string[];
+  assertionIds?: string[];
 }
 
 /** Why a model was chosen. Rendered verbatim in the task trace. */

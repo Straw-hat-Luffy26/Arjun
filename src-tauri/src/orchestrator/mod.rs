@@ -28,6 +28,7 @@ pub mod executor;
 pub mod gateway;
 pub mod grammar;
 pub mod plan;
+pub mod progress;
 pub mod runner;
 pub mod sandbox;
 pub mod sandbox_exec;

@@ -49,6 +49,12 @@ pub enum Block {
     /// A row of a table, already joined. Drawn in a monospaced face so columns
     /// line up without a layout engine.
     Fixed(String),
+    /// Start the next block on a new page.
+    ///
+    /// A document that says "the procedure starts on its own page" is making a
+    /// layout claim, and honouring it is the difference between a printed
+    /// deliverable and a wall of text.
+    PageBreak,
 }
 
 #[derive(Debug, Clone)]
@@ -334,6 +340,16 @@ fn paginate(spec: &PdfSpec) -> Vec<Page> {
                     );
                 }
             }
+            Block::PageBreak => {
+                // Flush what is on the page so the next block starts on a
+                // fresh one. A break at the very start, or two in a row, adds
+                // no blank page: an empty page is not what "start this on its
+                // own page" asked for.
+                if !page.lines.is_empty() {
+                    pages.push(std::mem::replace(&mut page, Page { lines: Vec::new() }));
+                    used = 0.0;
+                }
+            }
         }
     }
 
@@ -355,6 +371,86 @@ fn font_of(line: &Line, fixed: bool) -> &'static str {
 }
 
 /// Writes the PDF bytes, or says why it cannot.
+/// Turns a composed [`crate::artifacts::doc_model::Document`] into a page spec.
+///
+/// The same model that becomes a `.docx` becomes a `.pdf`, which is the point
+/// of having one model: asking for the same content in two formats cannot
+/// produce two different documents.
+///
+/// Lists are rendered as bullets, tables as fixed-width rows in the monospaced
+/// face (the writer has no layout engine, and columns that line up are worth
+/// more than columns that are styled), and a `PageBreak` becomes a real one.
+pub fn spec_from_document(document: &crate::artifacts::doc_model::Document) -> PdfSpec {
+    use crate::artifacts::doc_model::Block as Model;
+
+    let mut blocks = Vec::new();
+    for section in &document.sections {
+        blocks.push(Block::Heading(section.heading.clone()));
+        for block in &section.blocks {
+            match block {
+                Model::Paragraph { text } => blocks.push(Block::Paragraph(text.clone())),
+                Model::Bullets { items } => {
+                    for item in items {
+                        blocks.push(Block::Bullet(item.clone()));
+                    }
+                }
+                Model::Numbered { items } => {
+                    for (index, item) in items.iter().enumerate() {
+                        blocks.push(Block::Bullet(format!("{}. {item}", index + 1)));
+                    }
+                }
+                Model::Table { header, rows, caption } => {
+                    if let Some(caption) = caption.as_deref().filter(|c| !c.trim().is_empty()) {
+                        blocks.push(Block::Paragraph(caption.to_string()));
+                    }
+                    // Column widths from the widest cell, so the table lines up
+                    // when it is drawn in the fixed-width face.
+                    let mut widths: Vec<usize> =
+                        header.iter().map(|h| h.chars().count()).collect();
+                    for row in rows {
+                        for (index, cell) in row.iter().enumerate() {
+                            if index < widths.len() {
+                                widths[index] = widths[index].max(cell.chars().count());
+                            }
+                        }
+                    }
+                    let line = |cells: &[String]| -> String {
+                        cells
+                            .iter()
+                            .enumerate()
+                            .map(|(index, cell)| {
+                                let width = widths.get(index).copied().unwrap_or(0);
+                                format!("{cell:<width$}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                            .trim_end()
+                            .to_string()
+                    };
+                    blocks.push(Block::Fixed(line(header)));
+                    // A rule under the header, so the header reads as one.
+                    let rule: String = widths
+                        .iter()
+                        .map(|w| "-".repeat(*w))
+                        .collect::<Vec<_>>()
+                        .join("  ");
+                    blocks.push(Block::Fixed(rule));
+                    for row in rows {
+                        blocks.push(Block::Fixed(line(row)));
+                    }
+                }
+                Model::PageBreak => blocks.push(Block::PageBreak),
+            }
+        }
+    }
+
+    PdfSpec {
+        title: document.title.clone(),
+        classification: document.classification.clone(),
+        blocks,
+    }
+}
+
 pub fn render(spec: &PdfSpec) -> Result<Vec<u8>, String> {
     if spec.title.trim().is_empty() {
         return Err("A PDF needs a title. Nothing was written.".to_string());
@@ -449,6 +545,27 @@ pub fn render(spec: &PdfSpec) -> Result<Vec<u8>, String> {
         ));
     }
 
+    // The document information dictionary.
+    //
+    // This is what a reader's Properties panel shows, and what a document
+    // management system indexes on. A deliverable that opens as "Untitled" is
+    // one somebody has to rename by hand before they can file it, and until
+    // this existed every PDF this product wrote was untitled.
+    //
+    // `/Producer` names the application rather than the model: this is a claim
+    // about the software that assembled the bytes, and the model that wrote the
+    // words is recorded separately in the run's own record. Overstating it here
+    // would put an unverifiable claim in a field tools treat as authoritative.
+    let info = objects.len() + 1;
+    objects.push(format!(
+        "<< /Title ({}) /Producer (ARJUN) /Creator (ARJUN) >>",
+        esc(if spec.title.trim().is_empty() {
+            "Untitled document"
+        } else {
+            spec.title.trim()
+        })
+    ));
+
     // Assemble, measuring as we go: the cross-reference table is byte offsets
     // and nothing else may be guessed.
     let mut out: Vec<u8> = Vec::with_capacity(4096);
@@ -471,7 +588,7 @@ pub fn render(spec: &PdfSpec) -> Result<Vec<u8>, String> {
     }
     out.extend_from_slice(
         format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
+            "trailer\n<< /Size {} /Root 1 0 R /Info {info} 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
             objects.len() + 1
         )
         .as_bytes(),

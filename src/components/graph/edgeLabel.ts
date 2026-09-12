@@ -43,7 +43,50 @@ export function describeEdge(edge: GraphEdge, from?: string): string {
       ? `appears in, in ${passages(edge.weight)}`
       : `contains, in ${passages(edge.weight)}`;
   }
+  // Two passages saying different things is a finding, not a tie to break. The
+  // link is described as observed and the disagreement is named, because
+  // printing one of the two claims would present a coin toss as a fact — which
+  // is exactly what the `MAX(relation)` in the query behind this used to do.
+  if (edge.contested) {
+    return `appears with, in ${passages(edge.weight)} · sources disagree on what the link means`;
+  }
   return edge.relation
     ? `${edge.relation}, in ${passages(edge.weight)}`
     : `appears with, in ${passages(edge.weight)}`;
+}
+
+/** The shape {@link describeClaim} needs. A subset of `EdgeAssertion`. */
+export interface ClaimLike {
+  subjectLabel: string;
+  predicate: string;
+  objectLabel: string;
+  provenance: 'model' | 'user';
+  status: 'proposed' | 'accepted' | 'rejected';
+  directionCertain: boolean;
+}
+
+/**
+ * One directed claim, written out in the order it was made.
+ *
+ * Always subject-first, whichever end of the edge the reader is standing on.
+ * Reversing the words to suit the viewpoint is how the direction got lost in
+ * storage, and it would be just as wrong on the screen — "PV-2201 → supplied by
+ * → Northern Valve Company" reads correctly from either node, and reads
+ * *falsely* if flipped to suit the one you clicked.
+ *
+ * The standing is part of the sentence rather than a separate badge, because a
+ * claim nobody has checked and a claim somebody confirmed are different
+ * statements, not the same statement with decoration.
+ */
+export function describeClaim(assertion: ClaimLike): string {
+  const standing =
+    assertion.status === 'rejected'
+      ? 'rejected'
+      : assertion.status === 'accepted'
+        ? 'confirmed'
+        : assertion.provenance === 'user'
+          ? 'yours, unverified'
+          : 'proposed, unreviewed';
+  const direction = assertion.directionCertain ? '' : ' · direction unverified';
+  return `${assertion.subjectLabel} → ${assertion.predicate} → ${assertion.objectLabel} (${standing}${direction})`;
 }

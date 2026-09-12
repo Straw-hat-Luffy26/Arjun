@@ -210,8 +210,17 @@ impl ToolGateway {
 
     /// Confirms every declared argument is present and of the right kind.
     fn check_arguments(call: &ToolCall, spec: &ToolSpec) -> Result<(), String> {
-        for argument in spec.arguments {
+        // Required first, then the optional ones — which are checked for kind
+        // when they are present and skipped when they are not. Omitting one is
+        // allowed; supplying the wrong shape is not.
+        let required = spec.arguments.iter().map(|argument| (argument, true));
+        let optional = spec.optional_arguments.iter().map(|argument| (argument, false));
+
+        for (argument, must_be_present) in required.chain(optional) {
             let Some(value) = call.arguments.get(argument.name) else {
+                if !must_be_present {
+                    continue;
+                }
                 return Err(format!(
                     "{} needs a {:?} argument, which was missing.",
                     spec.name.as_str(),

@@ -826,7 +826,14 @@ fn capability_search(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wi
     // Within each group the order is still alphabetical, so the listing stays
     // predictable. This only affects the model's paged view; the operator's
     // `skill_search` is unpaged and unchanged.
-    usable.sort_by_key(|card| (card.imported, card.name.clone()));
+    //
+    // Three groups, not two. A *format* skill — one that declares
+    // `metadata.for-format` — is selected by `skills::selection` from the file
+    // the run is producing, so the model never has to find it by browsing. It
+    // is still listed, because hiding an installed skill would be worse, but it
+    // sits behind the domain skills: a refinery asking what this machine can do
+    // should see `pid-reader` before `docx-authoring`.
+    usable.sort_by_key(|card| (card.imported, !card.formats.is_empty(), card.name.clone()));
     let listed: Vec<Value> = usable
         .iter()
         .take(crate::skills::CAPABILITY_PAGE)
@@ -1761,10 +1768,37 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
 
     let outcome = match tool {
         ToolName::CreateDocx => {
-            artifacts::create_docx(&call, resolved_path.as_deref(), &session, &tool_call)
+            // The run's own evidence, passed in rather than left empty.
+            //
+            // It decides the document's standing: `production::produce` runs
+            // the verifier over the draft before it writes, and a document
+            // whose claims the run's passages and calculations cannot support
+            // is stamped DRAFT on the page rather than presented as finished.
+            // Passing `&[]` here would make every document unsupported and so
+            // every document a draft, which is the same as not checking.
+            let passages = retrieval::for_run(&deps.passages, &call.run_id);
+            let calculations = deps
+                .calculations
+                .lock()
+                .ok()
+                .and_then(|table| table.get(&call.run_id).cloned())
+                .unwrap_or_default();
+            artifacts::create_docx_with_evidence(
+                &call,
+                resolved_path.as_deref(),
+                &session,
+                &tool_call,
+                &passages,
+                &calculations,
+            )
         }
         ToolName::CreateXlsx => {
-            artifacts::create_xlsx(resolved_path.as_deref(), &deps.calculations, &call.run_id)
+            artifacts::create_xlsx(
+                resolved_path.as_deref(),
+                &deps.calculations,
+                &call.run_id,
+                Some(&tool_call),
+            )
         }
         ToolName::CreatePptx => {
             artifacts::create_pptx(&call, resolved_path.as_deref(), &tool_call)
@@ -3077,36 +3111,158 @@ fn create_pdf(
     // so the gateway has nothing to resolve and cannot report the path itself.
     written: &mut Option<std::path::PathBuf>,
 ) -> Result<String, String> {
-    use crate::artifacts::pdf::{Block, PdfSpec};
-
     let title = tool_call.text("title").unwrap_or_default().trim().to_string();
     let blocks = drop_repeated_title(
         &title,
         parse_document_body(&tool_call.text("body").unwrap_or_default()),
     );
+    let classification = tool_call
+        .text("classification")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
-    let bytes = crate::artifacts::pdf::render(&PdfSpec {
-        title: title.clone(),
-        classification: tool_call
-            .text("classification")
-            .unwrap_or_default()
-            .trim()
-            .to_string(),
-        blocks,
-    })?;
-
+    // Through the content model and its production loop, not straight to disk.
+    //
+    // This used to render once and write the bytes wherever they landed. If the
+    // renderer produced something malformed — a truncated object table, a page
+    // with nothing painted on it — nobody found out, because the only check a
+    // PDF got was that the file existed and was not empty.
+    //
+    // Now the body becomes a `doc_model::Document`, which is validated and
+    // repaired in memory, and `produce_pdf` writes it as a numbered revision
+    // and reads it back with the real parser before anything is accepted.
+    let mut document = document_from_pdf_blocks(&title, &classification, blocks);
     let (path, name) = artifact_path(deps, call, &title, "pdf")?;
-    let size = bytes.len();
-    std::fs::write(&path, bytes)
-        .map_err(|error| format!("the PDF could not be written: {error}"))?;
+
+    let outcome = crate::artifacts::produce_model::produce_pdf(&path, &mut document);
+    let Some(artifact) = outcome.artifact else {
+        return Err(outcome
+            .failure
+            .unwrap_or_else(|| "the PDF could not be produced".to_string()));
+    };
+
+    // The caller asked for this name, the artifact table records it, and the
+    // preview opens it — so the accepted revision is placed there too. Copied
+    // rather than renamed: the numbered revision is the record of what was
+    // produced and must survive.
+    if artifact != path {
+        std::fs::copy(&artifact, &path)
+            .map_err(|error| format!("the PDF could not be placed at {name}: {error}"))?;
+    }
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
     // After the write, not before: a path recorded for a file that failed to
     // write is a row in the chat pointing at nothing.
     *written = Some(path);
 
+    let corrected = if outcome.repairs.is_empty() {
+        String::new()
+    } else {
+        format!(" Corrected before writing: {}.", outcome.repairs.join("; "))
+    };
+
     Ok(format!(
-        "Wrote \"{title}\" as {name} ({size} bytes). It is in this run's artifacts, where it \
-         can be previewed and opened."
+        "Wrote \"{title}\" as {name} ({size} bytes). It was re-opened and checked: \
+         {} page(s) of text.{corrected} It is in this run's artifacts, where it can be \
+         previewed and opened.",
+        crate::artifacts::pdf_validate::check_pdf(&artifact).pages
     ))
+}
+
+/// Turns the parsed body of a `create_pdf` call into a document model.
+///
+/// The body arrives as a flat list of PDF blocks, because that is what the
+/// markdown parser produces. A `Document` needs sections, so headings start
+/// them and everything else falls into the section it follows.
+///
+/// Content before the first heading — which is the common case for a short
+/// note — goes into one section named after the document. The alternative is a
+/// model that fails validation for having blocks outside any section, which
+/// would refuse documents this product has always produced.
+fn document_from_pdf_blocks(
+    title: &str,
+    classification: &str,
+    blocks: Vec<crate::artifacts::pdf::Block>,
+) -> crate::artifacts::doc_model::Document {
+    use crate::artifacts::doc_model::{Block as Model, Document, Properties, Section};
+    use crate::artifacts::pdf::Block;
+
+    let mut sections: Vec<Section> = Vec::new();
+    let mut pending: Vec<Model> = Vec::new();
+    let mut bullets: Vec<String> = Vec::new();
+    let mut fixed: Vec<String> = Vec::new();
+
+    // Runs of bullets and of fixed-width rows are gathered, so a list stays a
+    // list and a table stays a table rather than becoming loose paragraphs.
+    fn flush(pending: &mut Vec<Model>, bullets: &mut Vec<String>, fixed: &mut Vec<String>) {
+        if !bullets.is_empty() {
+            pending.push(Model::Bullets { items: std::mem::take(bullets) });
+        }
+        if !fixed.is_empty() {
+            // Kept as preformatted lines. Splitting them back into cells would
+            // be guessing at a column layout the writer flattened.
+            for line in std::mem::take(fixed) {
+                pending.push(Model::Paragraph { text: line });
+            }
+        }
+    }
+
+    for block in blocks {
+        match block {
+            Block::Heading(text) => {
+                flush(&mut pending, &mut bullets, &mut fixed);
+                if !pending.is_empty() {
+                    let heading = sections
+                        .last()
+                        .map(|s: &Section| s.heading.clone())
+                        .unwrap_or_else(|| title.to_string());
+                    if sections.is_empty() {
+                        sections.push(Section {
+                            heading,
+                            level: 1,
+                            blocks: std::mem::take(&mut pending),
+                        });
+                    } else if let Some(last) = sections.last_mut() {
+                        last.blocks.append(&mut pending);
+                    }
+                }
+                sections.push(Section { heading: text, level: 1, blocks: Vec::new() });
+            }
+            Block::Paragraph(text) => {
+                flush(&mut pending, &mut bullets, &mut fixed);
+                pending.push(Model::Paragraph { text });
+            }
+            Block::Bullet(text) => bullets.push(text),
+            Block::Fixed(text) => fixed.push(text),
+            Block::PageBreak => {
+                flush(&mut pending, &mut bullets, &mut fixed);
+                pending.push(Model::PageBreak);
+            }
+        }
+        if let Some(last) = sections.last_mut() {
+            if !pending.is_empty() && !last.heading.is_empty() {
+                last.blocks.append(&mut pending);
+            }
+        }
+    }
+    flush(&mut pending, &mut bullets, &mut fixed);
+    match sections.last_mut() {
+        Some(last) => last.blocks.append(&mut pending),
+        None if !pending.is_empty() => sections.push(Section {
+            heading: if title.is_empty() { "Document".to_string() } else { title.to_string() },
+            level: 1,
+            blocks: pending,
+        }),
+        None => {}
+    }
+
+    Document {
+        title: title.to_string(),
+        classification: classification.to_string(),
+        sections,
+        properties: Properties::default(),
+    }
 }
 
 /// Writes a table as a spreadsheet, and returns it for the chat to draw.
@@ -3712,6 +3868,7 @@ Detail."),
                 Block::Paragraph(text) => format!("P:{text}"),
                 Block::Bullet(text) => format!("B:{text}"),
                 Block::Fixed(text) => format!("F:{text}"),
+                Block::PageBreak => "BREAK".to_string(),
             })
             .collect()
     }
@@ -3727,6 +3884,7 @@ Detail."),
                 Block::Paragraph(text) => format!("P:{text}"),
                 Block::Bullet(text) => format!("B:{text}"),
                 Block::Fixed(text) => format!("F:{text}"),
+                Block::PageBreak => "BREAK".to_string(),
             })
             .collect()
     }

@@ -35,7 +35,9 @@ import {
   type RunOutcomeKind,
   type RunSummary,
   type ComposerAttachment,
+  type ResearchScope,
 } from '../services/agent.service';
+import { notebookResearchService } from '../services/notebookResearch.service';
 import type { OcrDetent } from '../services/ocr.service';
 import {
   applyProgress,
@@ -895,8 +897,23 @@ export interface UseConversation {
       scenarioInstructions?: string;
       attachments?: ComposerAttachment[];
       ocrDetent?: OcrDetent;
+      /**
+       * Which notebook, sources and graph selections this question is scoped
+       * to. Identifiers only; the backend resolves and authorises them.
+       */
+      research?: ResearchScope;
     },
   ) => Promise<void>;
+  /**
+   * Opens a notebook's most recent thread, or starts one bound to it.
+   *
+   * Binding is what lets the notebook restore its own conversation on the next
+   * visit instead of showing whatever thread the general chat happened to be
+   * on. Resolves with the conversation so the caller can scope its next turn.
+   */
+  openForNotebook: (notebookId: string) => Promise<Conversation | null>;
+  /** Starts a fresh thread bound to a notebook. */
+  newNotebookConversation: (notebookId: string, title: string) => Promise<Conversation | null>;
   open: (conversationId: string) => Promise<void>;
   newConversation: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -1098,6 +1115,13 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
         attachments?: ComposerAttachment[];
         /** Where the accuracy-to-speed slider was left. Reading only. */
         ocrDetent?: OcrDetent;
+        /**
+         * The notebook scope for this question, when it came from a notebook.
+         *
+         * Passed straight through to the backend, which resolves it. Nothing
+         * here is evidence — see `StartRunRequest.research`.
+         */
+        research?: ResearchScope;
       },
     ) => {
       // A turn with an attachment and no words is still a turn: "read this"
@@ -1189,6 +1213,10 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
           // a later turn cannot inherit this turn's document.
           attachments: options?.attachments,
           ocrDetent: options?.ocrDetent,
+          // The notebook scope travels with the turn it belongs to. Held
+          // nowhere between runs, so a later question in the same thread does
+          // not silently inherit an earlier turn's source selection.
+          research: options?.research,
           conversationId: conv.id,
           messageId,
           correlationId: runId,
@@ -1293,9 +1321,58 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
         scenarioInstructions?: string;
         attachments?: ComposerAttachment[];
         ocrDetent?: OcrDetent;
+        research?: ResearchScope;
       },
     ) => sendTo(conversationRef.current, prompt, classification, options),
     [sendTo],
+  );
+
+  /**
+   * Opens the notebook's own thread, or starts one bound to it.
+   *
+   * ## Why the binding is a backend row and not a ref
+   *
+   * A notebook's conversation has to survive a restart, and it has to be the
+   * *notebook's* — switching from one notebook to another and back must not
+   * show the other one's messages. Held in React it would survive neither.
+   * `notebook_bind_conversation` records it against the notebook and the
+   * signed-in owner, so reopening reads it back from disk.
+   */
+  const openForNotebook = useCallback(
+    async (notebookId: string): Promise<Conversation | null> => {
+      const threads = await notebookResearchService.threads(notebookId).catch(() => []);
+      for (const thread of threads) {
+        const existing = await agentService
+          .getConversation(thread.conversationId)
+          .catch(() => null);
+        if (existing) {
+          setConversation(existing);
+          rememberConversation(existing.id);
+          await reloadActive(existing.id).catch(() => undefined);
+          return existing;
+        }
+      }
+      // Bound threads that no longer exist are skipped above rather than
+      // reported: a conversation somebody deleted is not an error here.
+      return null;
+    },
+    [reloadActive],
+  );
+
+  const newNotebookConversation = useCallback(
+    async (notebookId: string, title: string): Promise<Conversation | null> => {
+      const created = await agentService.createConversation(title.slice(0, 80));
+      // Bound before it is shown. A thread that failed to bind would look
+      // right now and be missing from the notebook after a restart, which is
+      // the worse of the two failures — so the error is surfaced rather than
+      // swallowed.
+      await notebookResearchService.bindConversation(notebookId, created.id);
+      setConversation(created);
+      rememberConversation(created.id);
+      await refresh().catch(() => undefined);
+      return created;
+    },
+    [refresh],
   );
 
   const complete = useCallback(
@@ -1479,6 +1556,8 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
       progressByMessage,
       reasoningByMessage,
       send,
+      openForNotebook,
+      newNotebookConversation,
       open,
       newConversation,
       refresh,
@@ -1495,6 +1574,8 @@ export function ConversationProvider({ children }: { children: React.ReactNode }
       progressByMessage,
       reasoningByMessage,
       send,
+      openForNotebook,
+      newNotebookConversation,
       open,
       newConversation,
       refresh,

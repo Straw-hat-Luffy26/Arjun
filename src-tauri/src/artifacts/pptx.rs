@@ -200,6 +200,183 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
 </Relationships>"#;
 
+/// Renders a [`crate::artifacts::doc_model::Deck`] into a `.pptx`.
+///
+/// ## Why this exists beside `write_deck`
+///
+/// `write_deck` renders one deck: the four sections in [`BRIEFING_SECTIONS`],
+/// in that order, and it refuses anything else. Every presentation this product
+/// has produced is Findings / Recommendation / Assumptions / Evidence. A
+/// shutdown briefing, a vendor comparison or a training pack cannot be
+/// expressed at all.
+///
+/// This renders a deck the model composed. The narrative is its own, and the
+/// density limits that `write_deck` enforced by silently truncating to
+/// `BULLETS_PER_SLIDE` are enforced in the model instead — where an overflowing
+/// slide is *split* rather than cut short, so nothing is lost.
+///
+/// The title slide is still built here rather than supplied, so classification
+/// and draft standing appear on every deck whatever the model wrote.
+pub fn write_deck_model(
+    path: &Path,
+    deck: &crate::artifacts::doc_model::Deck,
+    is_draft: bool,
+) -> Result<(), DeckError> {
+    let problems = deck.problems();
+    if !problems.is_empty() {
+        return Err(DeckError {
+            message: format!(
+                "The deck is not fit to render: {}. Nothing was written.",
+                problems.join("; ")
+            ),
+            missing: Vec::new(),
+        });
+    }
+
+    let mut cover = vec![format!("Classification: {}", deck.classification)];
+    if is_draft {
+        cover.insert(
+            0,
+            "DRAFT — not verified. Do not act on this deck until it has been reviewed.".to_string(),
+        );
+    }
+
+    // (heading, bullets, notes). Overflow is zero throughout: the model's own
+    // repair splits a long slide, so nothing reaches here that does not fit.
+    let mut slides: Vec<(String, Vec<String>, Option<String>)> =
+        vec![(deck.title.clone(), cover, None)];
+
+    for slide in &deck.slides {
+        let mut bullets = slide.bullets.clone();
+        // A table on a slide is rendered as its rows. A real graphic frame
+        // would be better and is a larger piece of work; this is honest about
+        // being text, and it is legible.
+        if let Some(crate::artifacts::doc_model::Block::Table { header, rows, caption }) =
+            &slide.table
+        {
+            if let Some(caption) = caption.as_deref().filter(|c| !c.trim().is_empty()) {
+                bullets.push(caption.to_string());
+            }
+            bullets.push(header.join(" | "));
+            for row in rows {
+                bullets.push(row.join(" | "));
+            }
+        }
+        slides.push((slide.heading.clone(), bullets, slide.notes.clone()));
+    }
+
+    let count = slides.len();
+    let notes: Vec<(usize, String)> = slides
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, _, notes))| {
+            notes
+                .as_deref()
+                .filter(|n| !n.trim().is_empty())
+                .map(|n| (index + 1, n.to_string()))
+        })
+        .collect();
+
+    let mut parts: Vec<(String, String)> = vec![
+        ("[Content_Types].xml".to_string(), model_content_types(count, &notes)),
+        ("_rels/.rels".to_string(), ROOT_RELS.to_string()),
+        ("ppt/presentation.xml".to_string(), presentation_xml(count)),
+        ("ppt/_rels/presentation.xml.rels".to_string(), presentation_rels(count)),
+        ("ppt/slideMasters/slideMaster1.xml".to_string(), SLIDE_MASTER.to_string()),
+        (
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels".to_string(),
+            SLIDE_MASTER_RELS.to_string(),
+        ),
+        ("ppt/slideLayouts/slideLayout1.xml".to_string(), SLIDE_LAYOUT.to_string()),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels".to_string(),
+            SLIDE_LAYOUT_RELS.to_string(),
+        ),
+        ("ppt/theme/theme1.xml".to_string(), THEME.to_string()),
+    ];
+
+    for (index, (heading, bullets, _)) in slides.iter().enumerate() {
+        let n = index + 1;
+        parts.push((format!("ppt/slides/slide{n}.xml"), slide_xml(heading, bullets, 0)));
+        // A slide carrying notes needs a relationship to the notes part, so
+        // the two rels differ by slide.
+        let has_notes = notes.iter().any(|(slide, _)| *slide == n);
+        parts.push((
+            format!("ppt/slides/_rels/slide{n}.xml.rels"),
+            if has_notes {
+                model_slide_rels_with_notes(n)
+            } else {
+                SLIDE_RELS.to_string()
+            },
+        ));
+    }
+
+    // Speaker notes: where the detail that will not fit on the slide belongs.
+    for (slide, text) in &notes {
+        parts.push((format!("ppt/notesSlides/notesSlide{slide}.xml"), notes_xml(text)));
+        parts.push((
+            format!("ppt/notesSlides/_rels/notesSlide{slide}.xml.rels"),
+            model_notes_rels(*slide),
+        ));
+    }
+
+    let borrowed: Vec<(&str, String)> =
+        parts.iter().map(|(name, body)| (name.as_str(), body.clone())).collect();
+    write_parts(path, &borrowed).map_err(|e| DeckError {
+        message: format!("The deck could not be written: {e}"),
+        missing: Vec::new(),
+    })
+}
+
+fn model_content_types(slides: usize, notes: &[(usize, String)]) -> String {
+    let extra: String = notes
+        .iter()
+        .map(|(slide, _)| {
+            format!(
+                "<Override PartName=\"/ppt/notesSlides/notesSlide{slide}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml\"/>"
+            )
+        })
+        .collect();
+    content_types(slides).replace("</Types>", &format!("{extra}</Types>"))
+}
+
+fn model_slide_rels_with_notes(slide: usize) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide{slide}.xml"/>
+</Relationships>"#
+    )
+}
+
+fn model_notes_rels(slide: usize) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide{slide}.xml"/>
+</Relationships>"#
+    )
+}
+
+fn notes_xml(text: &str) -> String {
+    let paragraphs: String = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| format!("<a:p><a:r><a:t>{}</a:t></a:r></a:p>", escape(line)))
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld><p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr/>
+<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>{paragraphs}</p:txBody></p:sp>
+</p:spTree></p:cSld></p:notes>"#
+    )
+}
+
 /// Writes a briefing deck: a title slide, then one slide per fixed section.
 ///
 /// `sections` supplies bullets by heading. A missing required section is an

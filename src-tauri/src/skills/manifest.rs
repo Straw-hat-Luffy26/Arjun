@@ -229,6 +229,13 @@ pub struct SkillCard {
     pub sha256: String,
     /// Absent when the skill is available.
     pub quarantined: Option<Quarantine>,
+    /// Formats this skill is written for, from `metadata.for-format`.
+    ///
+    /// Empty for a skill that is about a domain rather than about a file type.
+    /// This is what lets a request for a `.docx` pull in the skill describing
+    /// what a professional Word document contains, without the model having to
+    /// think to ask for it.
+    pub formats: Vec<String>,
     /// Whether this skill came from an outside collection rather than being
     /// written for this product.
     ///
@@ -257,6 +264,17 @@ impl SkillCard {
             sha256: manifest.sha256.clone(),
             quarantined,
             imported: manifest.metadata.contains_key("imported-from"),
+            formats: manifest
+                .metadata
+                .get("for-format")
+                .map(|declared| {
+                    declared
+                        .split(|c: char| c == ',' || c.is_whitespace())
+                        .filter(|token| !token.is_empty())
+                        .map(|token| token.trim_start_matches('.').to_lowercase())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -306,8 +324,9 @@ impl SkillCard {
             sha256: String::new(),
             quarantined: Some(quarantined),
             // Nothing is known about a directory that did not validate,
-            // including where it came from.
+            // including where it came from or what it is for.
             imported: false,
+            formats: Vec::new(),
         }
     }
 

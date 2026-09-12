@@ -37,6 +37,7 @@ import { previewDisplay } from '../../services/artifactPreview';
 import { InlineErrorBoundary } from '../ui';
 import { ChatOrb } from './ChatOrb';
 import { ThinkingTree, type ThinkingNode } from './ThinkingTree';
+import { parseThinking } from './parseThinking';
 import { RunProgressPanel } from './RunProgressPanel';
 import type { ProgressStep } from './runProgress';
 import { useTokenMetrics, type TokenMetrics } from './useTokenMetrics';
@@ -51,31 +52,18 @@ function size(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function parseThinking(content: string): { reasoning: string; answer: string; nodes: ThinkingNode[] } {
-  let reasoning = '';
-  let answer = content;
-
-  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
-  if (thinkMatch) {
-    reasoning = thinkMatch[1].trim();
-    answer = content.replace(thinkMatch[0], '').trim();
-  }
-
-  const nodes: ThinkingNode[] = [];
-  if (reasoning) {
-    const lines = reasoning.split('\n').filter(l => l.trim());
-    lines.forEach((line, idx) => {
-      const trimmed = line.trim().replace(/^[-·]\s*/, '');
-      nodes.push({
-        id: `r-${idx}`,
-        label: trimmed,
-        status: 'done',
-        icon: 'none',
-      });
-    });
-  }
-
-  return { reasoning, answer, nodes };
+/** One row per line of reasoning, for the collapsed timeline. */
+function thinkingNodes(reasoning: string): ThinkingNode[] {
+  if (!reasoning) return [];
+  return reasoning
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line, idx) => ({
+      id: `r-${idx}`,
+      label: line.trim().replace(/^[-·]\s*/, ''),
+      status: 'done' as const,
+      icon: 'none' as const,
+    }));
 }
 
 /**
@@ -289,12 +277,19 @@ export function AssistantMessageCell({
     elapsedMs,
   );
 
-  // FIX 3: Parse thinking / reasoning.
-  const { reasoning, answer, nodes } = useMemo(
-    () => parseThinking(content),
-    [content],
-  );
-  const displayContent = reasoning ? answer : content;
+  // The model's reasoning, and the answer with the reasoning taken out.
+  //
+  // `parseThinking` reports an *open* block as well as a closed one, which is
+  // what makes a reasoning pass visible while it happens instead of only after
+  // it ends. See the note in that file: matching only closed pairs is what
+  // made a reasoning model look like it had frozen.
+  const parsed = useMemo(() => parseThinking(content), [content]);
+  const { reasoning, answer } = parsed;
+  const nodes = useMemo(() => thinkingNodes(reasoning), [reasoning]);
+  // Keyed on whether a tag was seen, not on whether the thought is non-empty:
+  // the instant `<think>` arrives and before a single character follows it,
+  // the raw buffer already holds a tag that Markdown would swallow whole.
+  const displayContent = parsed.sawTag ? answer : content;
 
   /**
    * The reasoning to show, from whichever channel carried it.

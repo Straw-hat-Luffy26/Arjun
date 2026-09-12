@@ -1,0 +1,955 @@
+/* The notebook research workspace.
+ *
+ * Monochrome, like the rest of the application: every value here is a token
+ * from index.css, so the screen follows the theme switch and nothing depends on
+ * distinguishing a hue. See the palette note at index.css:117.
+ *
+ * The one place colour carries meaning is a warning, which uses --error like
+ * every other warning in the product — and never alone: a warning always has an
+ * icon and a sentence beside it. */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: var(--space-5);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The reader is a third column rather than an overlay: reading a source while
+ * looking at the answer that cited it is the point, and a modal would hide the
+ * thing being checked. */
+.workspace[data-reading='true'] {
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1.2fr) minmax(0, 1fr);
+}
+
+/* ── Panes ─────────────────────────────────────────────────────────────── */
+
+.sourcesPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  border-right: 1px solid var(--border-default);
+  padding-right: var(--space-4);
+}
+
+.mainPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  min-width: 0;
+}
+
+.paneHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.paneTitleBlock {
+  min-width: 0;
+}
+
+.notebookName {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.notebookMeta {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.sectionLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ── Sources ───────────────────────────────────────────────────────────── */
+
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.sourceListHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sourceListActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sourceListNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+}
+
+.sourceRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sourceRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.sourceRow[data-open] {
+  background: var(--bg-tertiary);
+}
+
+.sourceRow:hover {
+  background: var(--bg-hover);
+}
+
+.sourceCheck {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bg-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.sourceCheck[data-checked] {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+.sourceCheck:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sourceName {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+.sourceName:hover {
+  color: var(--text-primary);
+}
+
+.sourceNameText {
+  overflow-wrap: anywhere;
+}
+
+.sourceProblem {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--error);
+  font-size: var(--text-xs);
+}
+
+.sourceRemove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--motion-fast), color var(--motion-fast);
+}
+
+.sourceRow:hover .sourceRemove,
+.sourceRemove:focus-visible {
+  opacity: 1;
+}
+
+.sourceRemove:hover {
+  color: var(--error);
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-default);
+  padding-bottom: var(--space-2);
+}
+
+.tab {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.tab[data-active] {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tabSpacer {
+  flex: 1;
+}
+
+.tabBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
+/* ── Chat ──────────────────────────────────────────────────────────────── */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
+}
+
+.scopeBar,
+.focusBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.scopeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.scopeChip[data-tone='strong'] {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.scopeChip[data-tone='refused'] {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+.scopeProblem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--error);
+}
+
+.focusChip {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.focusChip[data-relationship='true'] {
+  border: 1px dashed var(--border-default);
+  background: none;
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-right: var(--space-2);
+}
+
+.userTurn {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistantTurn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.answerBody {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* A citation is a control, and is drawn as one. Anything that looked like body
+ * text here would be a claim nobody thinks to check. */
+.citation {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  margin: 0 2px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: 0.72rem;
+  font-weight: var(--font-medium);
+  color: var(--text-secondary);
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.citation:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.limitations {
+  margin: 0;
+  padding-left: var(--space-4);
+  list-style: disc;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+}
+
+.limitationNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.answerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.answerMeta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-3);
+}
+
+.composerInput {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.composerInput:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.composerInput:disabled {
+  opacity: 0.6;
+}
+
+/* ── Reader ────────────────────────────────────────────────────────────── */
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  border-left: 1px solid var(--border-default);
+  padding-left: var(--space-4);
+}
+
+.readerHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.readerTitleBlock {
+  min-width: 0;
+}
+
+.readerTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.readerMeta {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.readerWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--error-bg);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--error);
+}
+
+.quoteAsUsed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border-default);
+  background: var(--bg-tertiary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+
+.readerBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.readerText {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.readerMark {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  box-shadow: inset 0 -1px 0 var(--text-secondary);
+  border-radius: 2px;
+}
+
+.readerLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.readerFoot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-2);
+}
+
+.pageStep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pageStep:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pageNumber {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  min-width: 60px;
+  text-align: center;
+}
+
+.iconAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.iconAction:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* ── Notes ─────────────────────────────────────────────────────────────── */
+
+.notes,
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.notesHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.notesActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.notesLayout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+  flex: 1;
+}
+
+.noteList {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) 0 0;
+  overflow-y: auto;
+  min-height: 0;
+  border-right: 1px solid var(--border-default);
+}
+
+.noteList li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.noteList li:hover {
+  background: var(--bg-hover);
+}
+
+.noteRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.noteRow[data-open] {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.noteTitle {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.noteMeta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.noteEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.noteTitleInput {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.noteTitleInput:focus,
+.addInput:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.noteBadges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.noteBody {
+  min-height: 220px;
+  resize: vertical;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.noteBody:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.noteEditorFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.noteEvidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-3);
+}
+
+.evidenceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.evidenceRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.evidenceRow:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.evidenceName {
+  white-space: nowrap;
+}
+
+.evidenceQuote {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Relationship review ───────────────────────────────────────────────── */
+
+.reviewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.reviewRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* A refused claim stays legible but stops looking like something to act on. */
+.reviewRow[data-tone='refused'] {
+  opacity: 0.62;
+}
+
+.claim {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.claimTerm {
+  font-weight: var(--font-medium);
+  overflow-wrap: anywhere;
+}
+
+.claimPredicate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.claimMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.reviewActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.addInput {
+  flex: 1;
+  min-width: 110px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.addArrow {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+/* ── Shared ────────────────────────────────────────────────────────────── */
+
+.linkAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.linkAction:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.linkAction:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-tertiary);
+  flex: 1;
+}
+
+.empty p {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.emptyHint {
+  max-width: 42ch;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-tertiary);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--error-bg);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--error);
+}
+
+/* Narrow windows: the reader takes the main column rather than squeezing three
+ * columns into a width none of them can use. */
+@media (max-width: 1100px) {
+  .workspace,
+  .workspace[data-reading='true'] {
+    grid-template-columns: minmax(180px, 220px) 1fr;
+  }
+
+  .workspace[data-reading='true'] .mainPane {
+    display: none;
+  }
+
+  .notesLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .noteList {
+    border-right: none;
+    border-bottom: 1px solid var(--border-default);
+    max-height: 180px;
+    padding-right: 0;
+  }
+}

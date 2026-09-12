@@ -222,6 +222,244 @@ fn rows_for(records: &[CalculationRecord], classification: &str) -> Vec<Vec<Cell
 }
 
 /// Writes the calculation workbook.
+/// Renders a [`crate::artifacts::doc_model::Workbook`] into a `.xlsx`.
+///
+/// ## Why this exists beside `write_workbook`
+///
+/// `write_workbook` renders the run's calculation records: one fixed sheet,
+/// three fixed columns. It is the only workbook this product has been able to
+/// produce, and it cannot express a sheet of readings, a schedule or a bill of
+/// quantities.
+///
+/// This renders a workbook the model composed, with typed cells. The type
+/// matters: a number written as an inline string is text that looks like a
+/// number, and every formula referring to it silently evaluates to zero.
+///
+/// Column widths, freeze panes and `fullCalcOnLoad` are set because a workbook
+/// a person has to widen by hand before they can read it is not finished.
+pub fn write_workbook_model(
+    path: &Path,
+    workbook: &crate::artifacts::doc_model::Workbook,
+) -> Result<(), String> {
+    let problems = workbook.problems();
+    if !problems.is_empty() {
+        return Err(format!(
+            "The workbook is not fit to render: {}. Nothing was written.",
+            problems.join("; ")
+        ));
+    }
+
+    let mut parts: Vec<(String, String)> = vec![
+        (
+            "[Content_Types].xml".to_string(),
+            model_content_types(workbook.sheets.len()),
+        ),
+        ("_rels/.rels".to_string(), MODEL_ROOT_RELS.to_string()),
+        (
+            "xl/_rels/workbook.xml.rels".to_string(),
+            model_workbook_rels(workbook.sheets.len()),
+        ),
+        ("xl/workbook.xml".to_string(), model_workbook_xml(workbook)),
+    ];
+    for (index, sheet) in workbook.sheets.iter().enumerate() {
+        parts.push((
+            format!("xl/worksheets/sheet{}.xml", index + 1),
+            model_sheet_xml(sheet),
+        ));
+    }
+
+    let borrowed: Vec<(&str, String)> = parts
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.clone()))
+        .collect();
+    write_parts(path, &borrowed).map_err(|e| format!("The workbook could not be written: {e}"))
+}
+
+/// One cell, typed from its column.
+fn model_cell_xml(
+    row: usize,
+    column: usize,
+    kind: crate::artifacts::doc_model::ColumnType,
+    value: &str,
+) -> String {
+    use crate::artifacts::doc_model::ColumnType;
+
+    let reference = format!("{}{}", column_letter(column), row);
+    let value = value.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    match kind {
+        ColumnType::Text | ColumnType::Date => format!(
+            "<c r=\"{reference}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+            escape(value)
+        ),
+        ColumnType::Number | ColumnType::Currency | ColumnType::Percent => {
+            let bare = value.replace(',', "").replace('%', "");
+            match bare.parse::<f64>() {
+                // A real number, so Excel can sum it and a formula can
+                // reference it.
+                Ok(number) => {
+                    let number = if matches!(kind, ColumnType::Percent) {
+                        number / 100.0
+                    } else {
+                        number
+                    };
+                    format!("<c r=\"{reference}\"><v>{number}</v></c>")
+                }
+                // Unparseable values are refused by `Workbook::problems` before
+                // this runs, so reaching here means the model changed under us.
+                // Written as text rather than as a zero: a wrong number is
+                // worse than a visible string.
+                Err(_) => format!(
+                    "<c r=\"{reference}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+                    escape(value)
+                ),
+            }
+        }
+        ColumnType::Formula => format!(
+            "<c r=\"{reference}\"><f>{}</f></c>",
+            escape(value.trim_start_matches('='))
+        ),
+    }
+}
+
+fn model_sheet_xml(sheet: &crate::artifacts::doc_model::Sheet) -> String {
+    let mut body = String::new();
+
+    let header: String = sheet
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            format!(
+                "<c r=\"{}1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+                column_letter(index),
+                escape(&column.header)
+            )
+        })
+        .collect();
+    body.push_str(&format!("<row r=\"1\">{header}</row>"));
+
+    for (index, row) in sheet.rows.iter().enumerate() {
+        let number = index + 2; // row 1 is the header
+        let cells: String = row
+            .iter()
+            .enumerate()
+            .map(|(column, value)| {
+                let kind = sheet
+                    .columns
+                    .get(column)
+                    .map(|c| c.kind)
+                    .unwrap_or(crate::artifacts::doc_model::ColumnType::Text);
+                model_cell_xml(number, column, kind, value)
+            })
+            .collect();
+        body.push_str(&format!("<row r=\"{number}\">{cells}</row>"));
+    }
+
+    // Widths, from the declared width or the widest thing in the column.
+    let cols: String = sheet
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let width = column.width.unwrap_or_else(|| {
+                let widest = sheet
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(index))
+                    .map(|cell| cell.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .max(column.header.chars().count());
+                // A little air, and a ceiling so one long cell does not make a
+                // column nobody can see past.
+                (widest as u32 + 3).clamp(10, 60)
+            });
+            format!(
+                "<col min=\"{n}\" max=\"{n}\" width=\"{width}\" customWidth=\"1\"/>",
+                n = index + 1
+            )
+        })
+        .collect();
+
+    // The frozen header, so the columns stay named while scrolling.
+    let pane = if sheet.freeze_header {
+        "<sheetViews><sheetView workbookViewId=\"0\">\
+         <pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/>\
+         </sheetView></sheetViews>"
+    } else {
+        ""
+    };
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+{pane}<cols>{cols}</cols><sheetData>{body}</sheetData></worksheet>"#
+    )
+}
+
+fn model_workbook_xml(workbook: &crate::artifacts::doc_model::Workbook) -> String {
+    let sheets: String = workbook
+        .sheets
+        .iter()
+        .enumerate()
+        .map(|(index, sheet)| {
+            format!(
+                "<sheet name=\"{}\" sheetId=\"{n}\" r:id=\"rId{n}\"/>",
+                escape(&sheet.name),
+                n = index + 1
+            )
+        })
+        .collect();
+    // `fullCalcOnLoad` is what makes Excel recompute every formula when the
+    // file is opened. Without it a formula shows its cached value, and this
+    // writer caches none - so the cells would read as empty.
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>{sheets}</sheets><calcPr fullCalcOnLoad="1"/></workbook>"#
+    )
+}
+
+fn model_content_types(sheets: usize) -> String {
+    let overrides: String = (1..=sheets)
+        .map(|n| {
+            format!(
+                "<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+            )
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+{overrides}</Types>"#
+    )
+}
+
+fn model_workbook_rels(sheets: usize) -> String {
+    let rels: String = (1..=sheets)
+        .map(|n| {
+            format!(
+                "<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{n}.xml\"/>"
+            )
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>"#
+    )
+}
+
+const MODEL_ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#;
+
 pub fn write_workbook(
     path: &Path,
     records: &[CalculationRecord],

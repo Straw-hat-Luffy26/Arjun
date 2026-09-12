@@ -27,6 +27,7 @@ pub mod hybrid;
 pub mod index;
 pub mod ingest;
 pub mod multimodal;
+pub mod notebook_retrieval;
 
 pub use chunking::{chunk_document, Chunk, ChunkKind};
 pub use connector::{discover, plan_sync, Collection, SourceKind, SyncPlan};
@@ -35,7 +36,11 @@ pub use hybrid::{reciprocal_rank_fusion, Embedder, Hybrid, HybridResults};
 pub use index::{KnowledgeIndex, Retrieval, SearchResult};
 pub use evidence::{present, EvidenceBlock, PresentedPassage};
 pub use collections::CollectionStore;
-pub use graph::{Notebook, NotebookDocument, NotebookStore};
+pub use graph::{
+    Assertion, AssertionProvenance, AssertionStatus, EvidenceManifest, Note, NoteKind, Notebook,
+    NotebookDocument, NotebookStore, ResearchScope, RetrievalMode,
+};
+pub use notebook_retrieval::{NotebookRetrieval, ResolvedScope};
 pub use ingest::{ingest_collection, DocumentReader, IngestOutcome};
 pub use multimodal::{
     BBox, DocumentMeta, ImageRegion, Method as MultimodalMethod, MultimodalIndex,

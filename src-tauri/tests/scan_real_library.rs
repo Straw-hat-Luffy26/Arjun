@@ -153,3 +153,57 @@ fn the_scanner_agrees_with_the_directory_it_scanned() {
 
     println!("checked {checked} files across {} root(s)", present.len());
 }
+
+/// The reasoning capability every installed model reports, read from its own
+/// header.
+///
+/// This is a report, not a pass/fail: which models on a given machine reason is
+/// that machine's business. It exists because the answer was silently wrong for
+/// a model that *does* reason \u2014 NVIDIA-Nemotron3-Nano-4B carries no
+/// `tokenizer.chat_template` at all, so reading only the template called it a
+/// non-reasoning model, and the runtime then set `thinkingLevel: "off"`, which
+/// drops reasoning deltas and holds the visible answer back with them. No
+/// thinking panel and no token-by-token streaming, from a metadata read.
+///
+/// Printing what each model claims is how that stays visible.
+#[test]
+fn every_installed_model_reports_its_reasoning_capability() {
+    let present: Vec<PathBuf> = roots().into_iter().filter(|r| r.is_dir()).collect();
+    let mut files: Vec<PathBuf> = present.iter().flat_map(|r| walk(r)).collect();
+
+    // The app's own model directory, which is where the installed models live.
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let managed = PathBuf::from(appdata).join("com.arjun.workbench").join("models");
+        if managed.is_dir() {
+            files.extend(walk(&managed));
+        }
+    }
+    files.retain(|p| !is_projector(p));
+    files.sort();
+    files.dedup();
+
+    if files.is_empty() {
+        println!("no model weights on this machine; nothing to report");
+        return;
+    }
+
+    let mut reasoning = 0usize;
+    for file in &files {
+        let meta = match sarathi_lib::ai_engine::gguf_meta::read_gguf_metadata(file) {
+            Ok(meta) => meta,
+            Err(error) => {
+                println!("{}: header unreadable ({error})", file.display());
+                continue;
+            }
+        };
+        let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        println!(
+            "{name}: emits_reasoning={} toggle={}",
+            meta.emits_reasoning, meta.supports_toggled_reasoning
+        );
+        if meta.emits_reasoning {
+            reasoning += 1;
+        }
+    }
+    println!("{reasoning} of {} installed model(s) reason", files.len());
+}

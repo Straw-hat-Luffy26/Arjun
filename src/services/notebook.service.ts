@@ -124,6 +124,43 @@ export interface GraphNode {
   documentSha256: string | null;
   /** For a term, how many of the notebook's files it was found in. */
   documentCount: number;
+  /**
+   * Every type proposed for this term, best-supported first.
+   *
+   * Usually one entry, or none. More than one means two documents were typed
+   * differently, and the disagreement is carried rather than resolved:
+   * `nodeType` is the best-supported answer and this says what the others were.
+   */
+  typeCandidates?: TypeCandidate[];
+}
+
+/** One type proposed for a term, and how much of the notebook proposed it. */
+export interface TypeCandidate {
+  nodeType: string;
+  /** Documents whose typing pass proposed this type. */
+  documents: number;
+}
+
+/**
+ * A directed claim about a pair of terms, as the graph view carries it.
+ *
+ * Mirrors `knowledge::graph::assertions::EdgeAssertion`. `subject` and `object`
+ * are the extractor's, never the storage order — see the note on
+ * {@link GraphEdge.relation}.
+ */
+export interface EdgeAssertion {
+  id: string;
+  subject: string;
+  subjectLabel: string;
+  predicate: string;
+  object: string;
+  objectLabel: string;
+  provenance: 'model' | 'user';
+  status: 'proposed' | 'accepted' | 'rejected';
+  /** False for a claim migrated from storage that could not express direction. */
+  directionCertain: boolean;
+  stale: boolean;
+  evidenceCount: number;
 }
 
 export interface GraphEdge {
@@ -132,7 +169,23 @@ export interface GraphEdge {
   kind: EdgeKind;
   /** Passages containing both. A count, not a score. */
   weight: number;
+  /**
+   * The label to draw on this link, when one claim can stand for it.
+   *
+   * Derived from {@link GraphEdge.assertions}: the accepted claim if there is
+   * one, otherwise the only proposed claim, and `null` when two disagree. It
+   * cannot express which way round the claim runs — a caller that needs the
+   * direction reads `assertions`.
+   */
   relation: string | null;
+  /**
+   * Every directed claim about this pair, in subject-to-object order.
+   *
+   * Empty for a link the passes have only observed and never named.
+   */
+  assertions?: EdgeAssertion[];
+  /** Two or more unrejected claims about this pair say different things. */
+  contested?: boolean;
 }
 
 

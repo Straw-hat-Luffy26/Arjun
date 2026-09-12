@@ -131,16 +131,28 @@ pub struct Triplet {
     pub object: String,
 }
 
-/// One relation that survived every gate, addressed the way the graph stores it.
+/// One relation that survived every gate, in the direction it was claimed.
+///
+/// The fields used to be `source` and `target`, and they were filled from the
+/// *stored* co-occurrence pair rather than from the model's triplet — so a
+/// claim whose subject sorted after its object came out of here reversed. They
+/// are named `subject` and `object` now because that is what they are, and
+/// because the old names invited exactly the substitution that broke them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedRelation {
-    /// Normalised source term, as `graph_edges.source` holds it.
-    pub source: String,
-    /// Normalised target term, as `graph_edges.target` holds it.
-    pub target: String,
+    /// Normalised subject term, as `graph_nodes.normalised` holds it.
+    pub subject: String,
+    /// Normalised object term.
+    pub object: String,
     pub relation: String,
     /// The passage this was read out of, so the claim stays traceable.
     pub chunk_id: String,
+    /// The sentence of that passage naming both terms, when one can be found.
+    ///
+    /// Stored so the inspector can show what was actually read rather than only
+    /// a page number. `None` when the two terms are not in one sentence, which
+    /// is honest: the claim spans the passage, not a quotable line of it.
+    pub quote: Option<String>,
 }
 
 /// What the gates rejected, and why.
@@ -261,10 +273,25 @@ pub fn verify(
         ..Default::default()
     };
 
-    // One relation per edge. The first passage to support an edge names it, and
-    // a later disagreement does not silently overwrite it — an edge whose label
-    // changes depending on read order is not reproducible.
-    let mut claimed: BTreeSet<(String, String)> = BTreeSet::new();
+    // One row per distinct claim, not per edge.
+    //
+    // This used to be keyed on the unordered pair, so the first passage to
+    // support a link named it and every later passage that said something
+    // different was dropped as "already named" — a disagreement between two
+    // documents resolved by read order, with nothing recorded to say it had
+    // happened. Keyed on the triplet, a second passage repeating the same claim
+    // is still ignored (it is the same fact) and a passage making a *different*
+    // claim survives to be shown as a conflict.
+    let mut claimed: BTreeSet<(String, String, String)> = BTreeSet::new();
+    // How many distinct claims one pair of terms may carry out of one document.
+    //
+    // REBEL is generative and will, on a noisy passage, offer several readings
+    // of the same sentence. Keeping all of them turns an inspector into a wall
+    // of near-duplicates; keeping one hides the real disagreements this change
+    // exists to preserve. Three is enough to show that sources differ and small
+    // enough to read.
+    const MAX_CLAIMS_PER_PAIR: usize = 3;
+    let mut per_pair: BTreeMap<(String, String), usize> = BTreeMap::new();
 
     for triplet in triplets {
         // 1. Did this passage go out in the request?
@@ -306,36 +333,86 @@ pub fn verify(
             continue;
         }
 
-        // 4. Is this an edge the document's graph actually has? Checked both
-        //    ways round: co-occurrence is symmetric and `graph_edges` stores one
-        //    row per unordered pair, so the stored order is what gets written
-        //    back regardless of which way the model named it.
-        let forward = (source.clone(), target.clone());
-        let backward = (target, source);
-        let stored = if edges.contains(&forward) {
-            forward
-        } else if edges.contains(&backward) {
-            backward
-        } else {
+        // 4. Is this a link the document's graph actually observed?
+        //
+        //    Checked both ways round, because co-occurrence *is* symmetric and
+        //    `graph_edges` holds one row per unordered pair. That is the whole
+        //    of what the lookup decides: whether these two terms were seen
+        //    together. It does not decide which is the subject.
+        //
+        //    The old code went one step further and *adopted* the stored pair
+        //    as the relation's ends, which is where the direction was lost. The
+        //    subject and object below are the model's, untouched.
+        let observed = edges.contains(&(source.clone(), target.clone()))
+            || edges.contains(&(target.clone(), source.clone()));
+        if !observed {
             verdict.stats.dropped_unknown_edge += 1;
-            continue;
-        };
-
-        if !claimed.insert(stored.clone()) {
-            // Already named by an earlier passage. Not a rejection.
             continue;
         }
 
+        let claim = (source.clone(), relation.clone(), target.clone());
+        if !claimed.insert(claim) {
+            // The same claim, read again from another passage. Not a rejection.
+            continue;
+        }
+
+        let pair = if source <= target {
+            (source.clone(), target.clone())
+        } else {
+            (target.clone(), source.clone())
+        };
+        let seen = per_pair.entry(pair).or_insert(0);
+        if *seen >= MAX_CLAIMS_PER_PAIR {
+            continue;
+        }
+        *seen += 1;
+
         verdict.stats.kept += 1;
         verdict.relations.push(VerifiedRelation {
-            source: stored.0,
-            target: stored.1,
+            subject: source,
+            object: target,
             relation,
             chunk_id: triplet.chunk_id.clone(),
+            quote: sentence_naming_both(chunk_text, &triplet.subject, &triplet.object),
         });
     }
 
     verdict
+}
+
+/// The sentence of a passage that names both entities, if there is one.
+///
+/// Used for the quote shown beside a claim. Returns `None` rather than the whole
+/// passage when no single sentence holds both: a "quote" that is three
+/// paragraphs long is not a quote, and presenting one would suggest the claim
+/// was read from a line that does not exist.
+fn sentence_naming_both(passage: &str, subject: &str, object: &str) -> Option<String> {
+    let wanted_subject = comparable(subject);
+    let wanted_object = comparable(object);
+    let mut start = 0usize;
+    let bytes = passage.as_bytes();
+    let mut sentences: Vec<&str> = Vec::new();
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(byte, b'.' | b'!' | b'?' | b'\n') {
+            if let Some(piece) = passage.get(start..=index) {
+                sentences.push(piece);
+            }
+            start = index + 1;
+        }
+    }
+    if let Some(tail) = passage.get(start..) {
+        sentences.push(tail);
+    }
+
+    sentences
+        .into_iter()
+        .map(str::trim)
+        .filter(|sentence| !sentence.is_empty())
+        .find(|sentence| {
+            let folded = comparable(sentence);
+            folded.contains(&wanted_subject) && folded.contains(&wanted_object)
+        })
+        .map(str::to_string)
 }
 
 /// A running graph sidecar, and the pipes to talk to it.
@@ -549,10 +626,14 @@ mod tests {
         assert_eq!(
             verdict.relations,
             vec![VerifiedRelation {
-                source: "acme pumps ltd".into(),
-                target: "pump pv-2201".into(),
+                subject: "acme pumps ltd".into(),
+                object: "pump pv-2201".into(),
                 relation: "manufacturer".into(),
                 chunk_id: "c-0007".into(),
+                quote: Some(
+                    "Pump PV-2201 was supplied by Acme Pumps Ltd under contract CT-4471."
+                        .into()
+                ),
             }]
         );
     }
@@ -584,7 +665,7 @@ mod tests {
         let verdict = verify(&proposals, &known(), &chunks(), &edges());
 
         assert_eq!(verdict.stats.kept, 1);
-        assert_eq!(verdict.relations[0].source, "acme pumps ltd");
+        assert_eq!(verdict.relations[0].subject, "acme pumps ltd");
     }
 
     #[test]
@@ -648,7 +729,20 @@ mod tests {
     /// The edge is stored under one unordered pair. A triplet naming it the
     /// other way round must still find it.
     #[test]
-    fn an_edge_is_found_whichever_way_the_triplet_names_it() {
+    /// The regression that names the bug this module was rewritten for.
+    ///
+    /// `pump pv-2201` sorts *after* `acme pumps ltd`, so the stored
+    /// co-occurrence pair is `(acme pumps ltd, pump pv-2201)`. The old code
+    /// adopted that pair as the relation's ends, and a triplet naming the pump
+    /// as the subject came back with the manufacturer as the subject instead —
+    /// "Acme Pumps Ltd is the manufacturer of PV-2201" turned into "PV-2201 is
+    /// the manufacturer of Acme Pumps Ltd", silently.
+    ///
+    /// The link is still looked up both ways round, because co-occurrence is
+    /// symmetric and that lookup only asks whether the two were seen together.
+    /// What must not happen is the answer to *that* question deciding which
+    /// term is the subject.
+    fn the_stored_pair_order_does_not_reverse_the_claim() {
         let proposals = vec![triplet(
             "c-0007",
             "Pump PV-2201",
@@ -657,17 +751,37 @@ mod tests {
         )];
         let verdict = verify(&proposals, &known(), &chunks(), &edges());
 
-        assert_eq!(verdict.stats.kept, 1);
-        // Written under the pair the graph already holds, not the model's order.
-        assert_eq!(verdict.relations[0].source, "acme pumps ltd");
-        assert_eq!(verdict.relations[0].target, "pump pv-2201");
+        assert_eq!(verdict.stats.kept, 1, "the link is observed, so it is kept");
+        // The model's order, not the storage order.
+        assert_eq!(verdict.relations[0].subject, "pump pv-2201");
+        assert_eq!(verdict.relations[0].object, "acme pumps ltd");
     }
 
     #[test]
-    fn one_edge_takes_one_relation_however_many_passages_mention_it() {
+    /// Two passages disagreeing is information, not noise.
+    ///
+    /// This used to keep the first claim and drop the second as "already
+    /// named", so which of two contradictory readings survived depended on the
+    /// order REBEL happened to emit them in, and nothing recorded that there
+    /// had been a disagreement at all. Both are kept now; the graph marks the
+    /// link contested and the inspector shows both with their own evidence.
+    fn two_different_claims_about_one_pair_are_both_kept() {
         let proposals = vec![
             triplet("c-0007", "Acme Pumps Ltd", "manufacturer", "Pump PV-2201"),
             triplet("c-0007", "Acme Pumps Ltd", "owned by", "Pump PV-2201"),
+        ];
+        let verdict = verify(&proposals, &known(), &chunks(), &edges());
+
+        assert_eq!(verdict.relations.len(), 2);
+        assert_eq!(verdict.relations[0].relation, "manufacturer");
+        assert_eq!(verdict.relations[1].relation, "owned by");
+    }
+
+    #[test]
+    fn the_same_claim_read_twice_is_recorded_once() {
+        let proposals = vec![
+            triplet("c-0007", "Acme Pumps Ltd", "manufacturer", "Pump PV-2201"),
+            triplet("c-0007", "Acme Pumps Ltd", "manufacturer", "Pump PV-2201"),
         ];
         let verdict = verify(&proposals, &known(), &chunks(), &edges());
 

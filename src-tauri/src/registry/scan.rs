@@ -576,10 +576,22 @@ mod tests {
     }
 
     /// A directory with two weight files, one already registered.
+    ///
+    /// The name carries a counter as well as the clock. `SystemTime::now()` on
+    /// Windows advances in steps of about fifteen milliseconds, so two of these
+    /// tests starting in the same tick got the *same* directory — and the first
+    /// to finish deleted the other's fixture from under it. That produced a
+    /// failure in `a_model_already_registered_is_not_offered_again` that came
+    /// and went with the scheduler and had nothing to do with the code under
+    /// test.
     fn library_with_two_quantisations() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+
         let dir = std::env::temp_dir().join(format!(
-            "arjun-detect-{}-{:?}",
+            "arjun-detect-{}-{}-{:?}",
             std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

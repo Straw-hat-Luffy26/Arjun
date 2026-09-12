@@ -2112,7 +2112,7 @@ mod capability_paging {
 
         // The same ordering `capability_search` applies.
         cards.retain(|card| card.is_available());
-        cards.sort_by_key(|card| (card.imported, card.name.clone()));
+        cards.sort_by_key(|card| (card.imported, !card.formats.is_empty(), card.name.clone()));
 
         let first_page: Vec<&str> = cards
             .iter()
@@ -2126,46 +2126,99 @@ mod capability_paging {
                 "{expected} is not on the first page a model sees: {first_page:?}"
             );
         }
-        // Every skill written for this product, not merely the three named
-        // above. Ten of them and a page of twelve, so they all fit with two
-        // places left over.
-        let own: Vec<&str> = cards
+        // Every *domain* skill written for this product, not merely the three
+        // named above.
+        //
+        // Three groups, not two. A format skill (`metadata.for-format`) is
+        // chosen by `skills::selection` from the file the run is producing, so
+        // a model never has to find it by browsing; it is listed behind the
+        // domain skills rather than competing with them for the first page. A
+        // refinery asking what this machine can do should see `pid-reader`
+        // before `docx-authoring`.
+        let domain: Vec<&str> = cards
             .iter()
-            .filter(|c| !c.imported)
+            .filter(|c| !c.imported && c.formats.is_empty())
             .map(|c| c.name.as_str())
             .collect();
         assert!(
-            own.len() <= CAPABILITY_PAGE,
-            "there are now {} skills written for this product and a page holds \
-             {CAPABILITY_PAGE}; some would be pushed off the first page, which \
-             is the failure this test exists to catch",
-            own.len()
+            domain.len() <= CAPABILITY_PAGE,
+            "there are now {} domain skills written for this product and a page holds \
+             {CAPABILITY_PAGE}; some would be pushed off the first page, which is the \
+             failure this test exists to catch",
+            domain.len()
         );
         assert_eq!(
-            first_page[..own.len()],
-            own[..],
-            "the page does not start with this product's own skills"
+            first_page[..domain.len()],
+            domain[..],
+            "the page does not start with this product's own domain skills"
         );
 
-        // The rest of the page is filled from the imported skills, in order,
-        // so the listing stays predictable rather than merely reordered.
-        let filler: Vec<&str> = cards
+        // Then the format skills, then the imported ones — in order, so the
+        // listing stays predictable rather than merely reordered.
+        let formats: Vec<&str> = cards
+            .iter()
+            .filter(|c| !c.imported && !c.formats.is_empty())
+            .map(|c| c.name.as_str())
+            .collect();
+        let imported: Vec<&str> = cards
             .iter()
             .filter(|c| c.imported)
             .map(|c| c.name.as_str())
-            .take(CAPABILITY_PAGE - own.len())
+            .collect();
+
+        let rest: Vec<&str> = formats
+            .iter()
+            .chain(imported.iter())
+            .copied()
+            .take(CAPABILITY_PAGE - domain.len())
             .collect();
         assert_eq!(
-            first_page[own.len()..],
-            filler[..],
-            "the rest of the page is not the imported skills in order"
+            first_page[domain.len()..],
+            rest[..],
+            "after the domain skills the page must run format skills then imports"
         );
 
         // Alphabetical within each group.
-        for group in [&own, &filler] {
+        for group in [&domain, &formats, &imported] {
             let mut sorted = (*group).clone();
             sorted.sort_unstable();
             assert_eq!(**group, sorted, "not alphabetical within its group: {group:?}");
+        }
+    }
+
+    /// Phase G: a format skill exists for every format this product writes.
+    ///
+    /// The listing test above proves format skills do not displace the domain
+    /// ones. This proves they exist at all — a `for-format` branch in
+    /// `skills::selection` that matched nothing would be dead code no test
+    /// would notice.
+    #[test]
+    fn every_format_this_product_writes_has_a_skill_declaring_itself_for_it() {
+        use crate::skills::SkillRegistry;
+
+        let shipped = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent")
+            .join("skills");
+        let registry = SkillRegistry::open(shipped);
+        let session = Session::open(User::new("priya", "Priya Sharma", vec![Role::Employee]));
+        let cards = registry.search(
+            "",
+            &crate::skills::SkillContext {
+                session: &session,
+                mode: crate::sovereignty::mode::OperatingMode::Work,
+                run_permits: crate::orchestrator::tools::ToolName::ALL,
+            },
+        );
+
+        for format in ["docx", "xlsx", "pptx", "pdf"] {
+            let found = cards
+                .iter()
+                .find(|c| c.is_available() && c.formats.iter().any(|f| f == format));
+            assert!(
+                found.is_some(),
+                "nothing declares itself for .{format}, so selection can never pick one"
+            );
         }
     }
 

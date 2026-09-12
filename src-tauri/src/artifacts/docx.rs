@@ -247,6 +247,261 @@ pub fn write_document(
     })
 }
 
+/// Renders a [`crate::artifacts::doc_model::Document`] into a `.docx`.
+///
+/// ## Why this exists beside `write_document`
+///
+/// `write_document` renders a *template*: a fixed list of fields, of which
+/// exactly one exists (`approval_note`). It is how every Word deliverable this
+/// product has produced, and asking it for a maintenance procedure, an
+/// inspection report or a set of minutes gets "Available templates:
+/// approval_note."
+///
+/// This renders a document the model composed: real heading levels, lists,
+/// tables, page breaks and document properties. The template path is untouched
+/// and still works.
+///
+/// The model is validated before a byte is written. A ragged table or a heading
+/// hierarchy that skips a level is caught in memory, where it can be repaired,
+/// rather than found by re-opening the file afterwards.
+pub fn write_document_model(
+    path: &Path,
+    document: &crate::artifacts::doc_model::Document,
+    metadata: &DocumentMetadata,
+) -> Result<(), TemplateError> {
+    let problems = document.problems();
+    if !problems.is_empty() {
+        return Err(TemplateError {
+            message: format!(
+                "The document is not fit to render: {}. Nothing was written.",
+                problems.join("; ")
+            ),
+            missing: Vec::new(),
+        });
+    }
+
+    let parts = [
+        ("[Content_Types].xml", MODEL_CONTENT_TYPES.to_string()),
+        ("_rels/.rels", MODEL_ROOT_RELS.to_string()),
+        ("docProps/core.xml", core_properties(document, metadata)),
+        ("word/document.xml", model_document_xml(document, metadata)),
+    ];
+
+    write_parts(path, &parts).map_err(|e| TemplateError {
+        message: format!("The document could not be written: {e}"),
+        missing: Vec::new(),
+    })
+}
+
+/// `docProps/core.xml` - what Word's Properties panel shows.
+///
+/// A deliverable that opens as untitled with no author is one somebody has to
+/// fill in by hand before they can file it.
+fn core_properties(
+    document: &crate::artifacts::doc_model::Document,
+    metadata: &DocumentMetadata,
+) -> String {
+    let author = document
+        .properties
+        .author
+        .clone()
+        .unwrap_or_else(|| "ARJUN".to_string());
+    let subject = document.properties.subject.clone().unwrap_or_default();
+    let keywords = document.properties.keywords.join(", ");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<dc:title>{}</dc:title><dc:creator>{}</dc:creator><cp:lastModifiedBy>{}</cp:lastModifiedBy>
+<dc:subject>{}</dc:subject><cp:keywords>{}</cp:keywords>
+<dcterms:created xsi:type="dcterms:W3CDTF">{}</dcterms:created>
+</cp:coreProperties>"#,
+        escape(&document.title),
+        escape(&author),
+        escape(&author),
+        escape(&subject),
+        escape(&keywords),
+        escape(&metadata.created_at),
+    )
+}
+
+/// One heading at its real outline level.
+///
+/// `Heading1`..`Heading6`, so Word's navigation pane, a generated table of
+/// contents and a screen reader all see the structure the author intended. The
+/// template path emits `Heading1` for everything, which is why a templated
+/// document has a flat outline.
+fn heading_at(text: &str, level: u8) -> String {
+    let level = level.clamp(1, 6);
+    format!(
+        "<w:p><w:pPr><w:pStyle w:val=\"Heading{level}\"/><w:outlineLvl w:val=\"{}\"/></w:pPr>\
+         <w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+        level - 1,
+        escape(text)
+    )
+}
+
+/// One list item, indented with its marker.
+///
+/// Rendered as a real indented paragraph rather than through a numbering
+/// definition part: a numbering part a reader does not resolve shows as an
+/// unmarked paragraph, and this shows as a list in every reader, which is the
+/// property a deliverable needs.
+fn list_paragraph(text: &str, numbered: bool, index: usize) -> String {
+    let marker = if numbered {
+        format!("{}.", index + 1)
+    } else {
+        "\u{2022}".to_string()
+    };
+    format!(
+        "<w:p><w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr>\
+         <w:r><w:t xml:space=\"preserve\">{} {}</w:t></w:r></w:p>",
+        marker,
+        escape(text)
+    )
+}
+
+fn table_xml(header: &[String], rows: &[Vec<String>], caption: Option<&str>) -> String {
+    let mut out = String::new();
+    if let Some(caption) = caption.filter(|c| !c.trim().is_empty()) {
+        out.push_str(&paragraph(caption, None));
+    }
+    out.push_str(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>\
+         <w:tblW w:w=\"5000\" w:type=\"pct\"/>\
+         <w:tblBorders>\
+         <w:top w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         <w:left w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         <w:right w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         </w:tblBorders></w:tblPr>",
+    );
+
+    // The header row is marked `tblHeader`, so it repeats when the table breaks
+    // across a page. A printed table whose headings appear only on the first
+    // page is one a reader has to hold in their head.
+    out.push_str("<w:tr><w:trPr><w:tblHeader/></w:trPr>");
+    for cell in header {
+        out.push_str(&format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+             <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p></w:tc>",
+            escape(cell)
+        ));
+    }
+    out.push_str("</w:tr>");
+
+    for row in rows {
+        out.push_str("<w:tr>");
+        for cell in row {
+            out.push_str(&format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+                 <w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p></w:tc>",
+                escape(cell)
+            ));
+        }
+        out.push_str("</w:tr>");
+    }
+    out.push_str("</w:tbl>");
+    // A table butted against the next paragraph is a layout fault in Word.
+    out.push_str("<w:p/>");
+    out
+}
+
+fn model_document_xml(
+    document: &crate::artifacts::doc_model::Document,
+    metadata: &DocumentMetadata,
+) -> String {
+    use crate::artifacts::doc_model::Block;
+
+    let mut body = String::new();
+
+    if metadata.is_draft {
+        body.push_str(&paragraph(
+            "DRAFT - not verified. Do not act on this document until it has been reviewed.",
+            Some("Heading1"),
+        ));
+    }
+    body.push_str(&heading_at(&document.title, 1));
+    body.push_str(&paragraph(
+        &format!("Classification: {}", document.classification),
+        None,
+    ));
+
+    for section in &document.sections {
+        // Section headings sit one level below the document title, which is
+        // level 1. A section the model called level 1 is therefore a level 2
+        // heading in the file, and the outline reads correctly from the top.
+        body.push_str(&heading_at(&section.heading, section.level.saturating_add(1)));
+        for block in &section.blocks {
+            match block {
+                Block::Paragraph { text } => {
+                    for line in text.lines() {
+                        body.push_str(&paragraph(line, None));
+                    }
+                }
+                Block::Bullets { items } => {
+                    for (index, item) in items.iter().enumerate() {
+                        body.push_str(&list_paragraph(item, false, index));
+                    }
+                }
+                Block::Numbered { items } => {
+                    for (index, item) in items.iter().enumerate() {
+                        body.push_str(&list_paragraph(item, true, index));
+                    }
+                }
+                Block::Table { header, rows, caption } => {
+                    body.push_str(&table_xml(header, rows, caption.as_deref()));
+                }
+                Block::PageBreak => {
+                    body.push_str("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
+                }
+            }
+        }
+    }
+
+    body.push_str(&heading_at("How this was produced", 2));
+    body.push_str(&paragraph(
+        &format!(
+            "Task {} - generated {} - content by {} - figures computed by ARJUN's calculation \
+             engine, not by the model.",
+            metadata.task_id, metadata.created_at, metadata.model
+        ),
+        None,
+    ));
+
+    let stamp = super::visible_watermark::stamp_from_metadata(
+        &metadata.task_id,
+        &metadata.model,
+        &metadata.created_at,
+        &metadata.classification,
+        metadata.is_draft,
+    );
+    body = super::visible_watermark::apply_to_docx_body(&body, &stamp);
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body>
+</w:document>"#
+    )
+}
+
+/// Content types for the model path, which carries `docProps/core.xml`.
+const MODEL_CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+</Types>"#;
+
+const MODEL_ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+</Relationships>"#;
+
 /// What re-opening a produced document found.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

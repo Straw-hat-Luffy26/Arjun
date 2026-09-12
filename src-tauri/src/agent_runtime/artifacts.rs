@@ -267,14 +267,65 @@ pub fn check(produced: &Produced) -> ArtifactReport {
             };
             report(check.is_sound(), detail, check.problems, bytes)
         }
-        // A PDF, an SVG and a note are all checked the same way, and the comment
-        // above applies to each: they are re-opened far enough to know a file is
-        // there with content in it. Claiming to have verified a PDF's layout, or
-        // that a diagram says what was asked for, would be inventing a standard
-        // this has no way to hold anything to.
-        Kind::Pdf | Kind::Diagram | Kind::Text => {
-            report(true, format!("Present, {bytes} byte(s)."), Vec::new(), bytes)
+        // A PDF is read back: header, cross-reference table, trailer, page
+        // tree, content streams and the text they paint. See
+        // `artifacts::pdf_validate` for what that does and does not claim.
+        //
+        // This used to be "Present, N byte(s)." alongside SVG and text, with a
+        // comment arguing that verifying a PDF "would be inventing a standard
+        // this has no way to hold anything to". That was true while nothing
+        // could read the file. It stopped being true once the writer emitted a
+        // real object graph, and in the meantime a PDF truncated halfway
+        // through its object table passed as a finished deliverable.
+        Kind::Pdf => {
+            let check = crate::artifacts::pdf_validate::check_pdf(&path);
+            let mut problems = check.problems.clone();
+            // Quality is a separate claim from validity, and both have to hold
+            // before a person is handed the file. A structurally perfect PDF of
+            // near-blank pages is not a deliverable.
+            if problems.is_empty() {
+                problems.extend(crate::artifacts::pdf_validate::quality::inspect(&check));
+            }
+            let sound = problems.is_empty();
+            let detail = if sound {
+                format!(
+                    "Opens, {} page(s), {} characters of text, titled.",
+                    check.pages, check.characters
+                )
+            } else if check.opens {
+                "Opens, but is not sound.".to_string()
+            } else {
+                "Does not open as a PDF.".to_string()
+            };
+            report(sound, detail, problems, bytes)
         }
+        // An SVG is parsed: root element, viewBox, the shapes and labels it
+        // declares, and that every internal reference resolves.
+        Kind::Diagram => {
+            let check = crate::artifacts::svg_validate::check_svg(&path);
+            let mut problems = check.problems.clone();
+            if problems.is_empty() {
+                problems.extend(crate::artifacts::svg_validate::quality::inspect(&check));
+            }
+            let sound = problems.is_empty();
+            let detail = if sound {
+                format!(
+                    "Parses, {} shape(s) and {} label(s) inside the viewBox.",
+                    check.shapes, check.labels
+                )
+            } else if check.parses {
+                "Parses, but is not sound.".to_string()
+            } else {
+                "Does not parse as SVG.".to_string()
+            };
+            report(sound, detail, problems, bytes)
+        }
+        // A note has no structure to check it against, and claiming otherwise
+        // would be inventing a standard. Format-aware text files are checked by
+        // their own validators before they are written — see
+        // `artifacts::text_formats` — so what reaches here is genuinely
+        // unstructured.
+        Kind::Text => report(true, format!("Present, {bytes} byte(s)."), Vec::new(), bytes),
     }
 }
 
@@ -290,14 +341,73 @@ pub fn create_docx(
     session: &Session,
     tool_call: &ToolCall,
 ) -> Result<String, String> {
+    create_docx_with_evidence(call, resolved_path, session, tool_call, &[], &[])
+}
+
+/// Produces a Word document through the correction loop.
+///
+/// ## What changed, and why it matters
+///
+/// This used to render once, check once, and on failure return a sentence
+/// asking the model to try again — leaving the broken file on disk under the
+/// name the person had been told to expect. `artifacts::production::produce`
+/// has always implemented the loop this needs (compose, verify, render,
+/// re-open, feed the renderer's own objections back, revise rather than
+/// overwrite) and had no production caller at all; it was reachable only from
+/// its own tests.
+///
+/// It is now the live path. See [`crate::artifacts::live_source`] for the part
+/// that could not simply be plugged in: `produce` expects to be able to *ask*
+/// the model, and a tool handler cannot — it is already inside the model's
+/// call. So the inner loop makes the repairs that need no new information, and
+/// the outer loop is the model's own next turn, which now receives the
+/// renderer's objections by field name.
+///
+/// `passages` and `calculations` are what the run actually retrieved and
+/// computed. They decide the draft's standing: a document whose claims the run
+/// cannot support is stamped DRAFT rather than presented as finished, and that
+/// is settled before the file is written rather than after.
+pub fn create_docx_with_evidence(
+    call: &CallParams,
+    resolved_path: Option<&Path>,
+    _session: &Session,
+    tool_call: &ToolCall,
+    passages: &[crate::knowledge::SearchResult],
+    calculations: &[crate::orchestrator::calculation::CalculationRecord],
+) -> Result<String, String> {
     let path = resolved_path.ok_or_else(|| {
         "No path was resolved for the document, so nothing was written.".to_string()
     })?;
-    let template = tool_call
-        .text("template")
-        .ok_or_else(|| "The document needs a template. Available templates: approval_note.".to_string())?;
+
+    // The general path, when the caller composed a document rather than filling
+    // in the one template.
+    //
+    // `sections` and `template` are alternatives. A run that supplies sections
+    // is writing a procedure, a report, a specification or a set of minutes —
+    // none of which the approval-note template can express — and it goes
+    // through the same validate / repair / render / re-open loop.
+    if tool_call.arguments.get("sections").is_some() {
+        return create_docx_from_sections(call, path, tool_call);
+    }
+
+    let template = tool_call.text("template").ok_or_else(|| {
+        "The document needs either a \"template\" or a \"sections\" list. Available templates: \
+         approval_note."
+            .to_string()
+    })?;
+
+    // Checked here rather than left to `produce`, whose refusal names the
+    // template that was asked for but not the ones that exist. A model told
+    // only "there is no invoice template" guesses again; one told what is
+    // available picks.
+    if crate::artifacts::docx::template_for(&template).is_none() {
+        return Err(format!(
+            "There is no {template:?} template. Available templates: approval_note."
+        ));
+    }
 
     let content = fields_from(tool_call)?;
+    let supplied = content.len();
 
     let metadata = DocumentMetadata {
         task_id: call.run_id.clone(),
@@ -306,30 +416,282 @@ pub fn create_docx(
         // Recorded per run by the caller; unknown here rather than guessed.
         model: call.model.clone().unwrap_or_else(|| "unrecorded".to_string()),
         classification: "Internal".to_string(),
-        // Every document a run produces is a draft until a person signs it. The
-        // word is printed on the page rather than only stored, so a file that
-        // escapes into an inbox still says what it is.
+        // Overwritten per attempt by `produce`, which settles the standing from
+        // the verifier before it stamps the page.
         is_draft: true,
     };
 
-    write_document(path, template, &content, &metadata).map_err(|error| error.message)?;
+    let evidence = crate::artifacts::verifier::Evidence {
+        // A document assembled from a run's own findings is a claim about the
+        // organisation's record, and has to rest on what the run retrieved.
+        grounding: crate::artifacts::verifier::Grounding::OrganisationRecord,
+        passages,
+        calculations,
+        unread_pages: &[],
+    };
 
-    // Re-opened and checked, not assumed. A renderer that wrote a placeholder
-    // through produces a file that opens and says nothing — the failure a
-    // person only finds in the meeting.
-    let check = check_document(path, template);
-    if !check.problems.is_empty() {
-        return Err(format!(
-            "{} was written but did not pass its own check: {}. Correct the content and produce it again.",
-            path.display(),
-            check.problems.join("; ")
-        ));
+    let mut source = crate::artifacts::live_source::ModelSupplied::new(content);
+    let outcome = crate::artifacts::production::produce(
+        path,
+        &template,
+        &mut source,
+        &metadata,
+        &evidence,
+    );
+
+    let Some(artifact) = outcome.artifact.clone() else {
+        // Honest failure. Every attempt is named with what was wrong with it,
+        // so the model's next turn has the field names rather than a summary.
+        let attempts: Vec<String> = outcome
+            .revisions
+            .iter()
+            .filter_map(|revision| {
+                revision
+                    .superseded_because
+                    .as_ref()
+                    .map(|why| format!("attempt {}: {why}", revision.number))
+            })
+            .collect();
+        let failure = outcome
+            .failure
+            .unwrap_or_else(|| "the document could not be produced".to_string());
+        return Err(if attempts.is_empty() {
+            failure
+        } else {
+            format!("{failure} {}", attempts.join("; "))
+        });
+    };
+
+    // The revision that stands is also placed at the path the caller asked
+    // for.
+    //
+    // `produce` writes every attempt under its own number and never touches
+    // the bare name, which is right for the evidence trail: the attempt that
+    // was corrected stays on disk with the reason. But the caller asked for
+    // `note.docx`, the artifact table records `note.docx`, the preview opens
+    // `note.docx` and the person was told `note.docx` — so if only
+    // `note.r2.docx` exists, every one of those points at nothing.
+    //
+    // Copied, not renamed: the numbered revision is the record and must
+    // survive. What the person opens and what the run was judged on are then
+    // byte-identical, which is the property that matters.
+    if artifact != path {
+        std::fs::copy(&artifact, path).map_err(|error| {
+            format!(
+                "{} was produced but could not be placed at {}: {error}",
+                artifact.display(),
+                path.display()
+            )
+        })?;
     }
 
+    let superseded = outcome
+        .revisions
+        .iter()
+        .filter(|revision| revision.superseded_because.is_some())
+        .count();
+
+    let standing = if outcome.is_ready() {
+        "It passed its checks and its claims are supported by the run's evidence."
+    } else {
+        "It is marked DRAFT: a person has to look before it is relied on."
+    };
+
+    let corrected = if superseded == 0 {
+        String::new()
+    } else {
+        format!(
+            " {superseded} earlier attempt(s) were corrected and kept beside it as revisions."
+        )
+    };
+
     Ok(format!(
-        "Wrote {} from the {template} template ({} field(s)). It is marked DRAFT until somebody approves it.",
+        "Wrote {} from the {template} template ({supplied} field(s) supplied), kept as {}.          {standing}{corrected}",
         path.display(),
-        content.len()
+        artifact
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ))
+}
+
+/// Produces a workbook the model composed, sheet by sheet.
+///
+/// The shape accepted, which is [`crate::artifacts::doc_model::Sheet`]'s own
+/// serialisation:
+///
+/// ```json
+/// {
+///   "sheets": [{
+///     "name": "Readings",
+///     "columns": [
+///       {"header": "Point", "type": "text"},
+///       {"header": "Measured", "type": "number"},
+///       {"header": "Margin", "type": "formula"}
+///     ],
+///     "rows": [["S-01", "9.4", "=B2-9"]],
+///     "freezeHeader": true
+///   }]
+/// }
+/// ```
+///
+/// The column type is not decoration. A number written as text looks identical
+/// on screen and every formula referring to it evaluates to zero, silently;
+/// declaring the type is what lets the writer emit a numeric cell and the
+/// validator catch prose in a column of numbers before anything is written.
+fn create_xlsx_from_sheets(
+    path: &Path,
+    sheets: serde_json::Value,
+    tool_call: Option<&ToolCall>,
+) -> Result<String, String> {
+    use crate::artifacts::doc_model::{Sheet, Workbook};
+
+    let sheets: Vec<Sheet> = serde_json::from_value(sheets).map_err(|error| {
+        format!(
+            "The workbook's \"sheets\" could not be read: {error}. Each sheet is              {{\"name\": \"...\", \"columns\": [{{\"header\": \"...\", \"type\":              \"number\"}}], \"rows\": [[\"...\"]]}}. Column types: text, number, currency,              percent, date, formula."
+        )
+    })?;
+
+    let mut workbook = Workbook {
+        title: tool_call
+            .and_then(|call| call.text("title"))
+            .map(str::to_string)
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| "Workbook".to_string()),
+        classification: tool_call
+            .and_then(|call| call.text("classification"))
+            .map(str::to_string)
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_else(|| "Internal".to_string()),
+        sheets,
+    };
+
+    let outcome = crate::artifacts::produce_model::produce_workbook(path, &mut workbook);
+    let Some(artifact) = outcome.artifact.clone() else {
+        return Err(outcome
+            .failure
+            .unwrap_or_else(|| "the workbook could not be produced".to_string()));
+    };
+    if artifact != path {
+        std::fs::copy(&artifact, path).map_err(|error| {
+            format!(
+                "{} was produced but could not be placed at {}: {error}",
+                artifact.display(),
+                path.display()
+            )
+        })?;
+    }
+
+    let rows: usize = workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum();
+    let corrected = if outcome.repairs.is_empty() {
+        String::new()
+    } else {
+        format!(" Corrected before writing: {}.", outcome.repairs.join("; "))
+    };
+
+    Ok(format!(
+        "Wrote {} with {} sheet(s) and {rows} row(s), kept as {}.{corrected} Formulas are live:          Excel recomputes them when it opens the file.",
+        path.display(),
+        workbook.sheets.len(),
+        artifact.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+    ))
+}
+
+/// Produces a document the model composed, section by section.
+///
+/// The shape accepted, which is [`crate::artifacts::doc_model::Document`]'s own
+/// serialisation:
+///
+/// ```json
+/// {
+///   "title": "Unit Four shell thickness inspection",
+///   "classification": "OFFICIAL",
+///   "sections": [
+///     { "heading": "Scope", "level": 1,
+///       "blocks": [ { "kind": "paragraph", "text": "..." } ] },
+///     { "heading": "Readings", "level": 2,
+///       "blocks": [ { "kind": "table", "header": ["Point", "mm"],
+///                     "rows": [["S-01", "9.4"]], "caption": "..." } ] }
+///   ]
+/// }
+/// ```
+///
+/// Nothing here is written until the model validates: a ragged table, a heading
+/// hierarchy that skips a level, an empty section and a placeholder are all
+/// caught in memory, and the repairable ones are repaired before rendering.
+fn create_docx_from_sections(
+    call: &CallParams,
+    path: &Path,
+    tool_call: &ToolCall,
+) -> Result<String, String> {
+    use crate::artifacts::doc_model::{Document, Properties, Section};
+
+    let sections: Vec<Section> = serde_json::from_value(
+        tool_call.arguments.get("sections").cloned().unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|error| {
+        format!(
+            "The document's \"sections\" could not be read: {error}. Each section is \
+             {{\"heading\": \"...\", \"level\": 1, \"blocks\": [{{\"kind\": \"paragraph\", \
+             \"text\": \"...\"}}]}}. Block kinds: paragraph, bullets, numbered, table, pageBreak."
+        )
+    })?;
+
+    let title = tool_call
+        .text("title")
+        .map(str::to_string)
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| "A composed document needs a \"title\".".to_string())?;
+
+    let mut document = Document {
+        title,
+        classification: tool_call
+            .text("classification")
+            .map(str::to_string)
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_else(|| "Internal".to_string()),
+        sections,
+        properties: Properties::default(),
+    };
+
+    let metadata = DocumentMetadata {
+        task_id: call.run_id.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        model: call.model.clone().unwrap_or_else(|| "unrecorded".to_string()),
+        classification: document.classification.clone(),
+        // A composed document is a draft until a person signs it, exactly as a
+        // templated one is.
+        is_draft: true,
+    };
+
+    let outcome = crate::artifacts::produce_model::produce_document(path, &mut document, &metadata);
+    let Some(artifact) = outcome.artifact.clone() else {
+        return Err(outcome
+            .failure
+            .unwrap_or_else(|| "the document could not be produced".to_string()));
+    };
+    if artifact != path {
+        std::fs::copy(&artifact, path).map_err(|error| {
+            format!(
+                "{} was produced but could not be placed at {}: {error}",
+                artifact.display(),
+                path.display()
+            )
+        })?;
+    }
+
+    let corrected = if outcome.repairs.is_empty() {
+        String::new()
+    } else {
+        format!(" Corrected before writing: {}.", outcome.repairs.join("; "))
+    };
+
+    Ok(format!(
+        "Wrote {} with {} section(s), kept as {}.{corrected} It is marked DRAFT until somebody \
+         approves it.",
+        path.display(),
+        document.sections.len(),
+        artifact.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
     ))
 }
 
@@ -471,30 +833,65 @@ pub fn create_pptx(
         });
     }
 
+    // Through the content model and its production loop.
+    //
+    // The briefing template's contract is unchanged above: the same four
+    // sections are still required and the same refusals still happen before
+    // anything is written. What changes is what happens after — the sections
+    // become a `doc_model::Deck`, which is validated and *repaired* in memory
+    // before rendering, written as a numbered revision, and re-opened.
+    //
+    // The repair matters here more than anywhere else. `write_deck` silently
+    // truncated any section past `BULLETS_PER_SLIDE` and reported the overflow
+    // as a count on the slide; the model splits it across slides instead, so a
+    // ten-bullet findings section becomes two slides rather than seven bullets
+    // and a footnote saying three were dropped.
+    let mut deck = crate::artifacts::doc_model::Deck {
+        title: title.to_string(),
+        classification: "Internal".to_string(),
+        slides: sections
+            .iter()
+            .map(|slide| crate::artifacts::doc_model::SlideModel {
+                heading: slide.heading.clone(),
+                bullets: slide.bullets.clone(),
+                table: None,
+                notes: None,
+            })
+            .collect(),
+    };
+
     // Every deck a run produces is a draft until a person signs it, for the same
     // reason every document is: the word goes on the slide, not only into a
     // field, so a file that escapes into an inbox still says what it is.
-    write_deck(path, title, "Internal", &sections, true).map_err(|error| error.message)?;
+    let outcome = crate::artifacts::produce_model::produce_deck(path, &mut deck, true);
+    let Some(artifact) = outcome.artifact.clone() else {
+        return Err(outcome
+            .failure
+            .unwrap_or_else(|| "the deck could not be produced".to_string()));
+    };
 
-    // Re-opened and checked, not assumed. PowerPoint is stricter than Word about
-    // what it will open, so a deck that wrote without error is not yet a deck
-    // that opens.
-    let check = check_deck(path);
-    if !check.is_sound() {
-        return Err(format!(
-            "{} was written but did not pass its own check: {}. Correct the content and produce              it again.",
-            path.display(),
-            if check.problems.is_empty() {
-                "it does not open as a presentation".to_string()
-            } else {
-                check.problems.join("; ")
-            }
-        ));
+    // The accepted revision is also placed where the caller asked for it: the
+    // artifact table, the preview and the person were all told this path.
+    if artifact != path {
+        std::fs::copy(&artifact, path).map_err(|error| {
+            format!(
+                "{} was produced but could not be placed at {}: {error}",
+                artifact.display(),
+                path.display()
+            )
+        })?;
     }
+
+    let check = check_deck(path);
+    let corrected = if outcome.repairs.is_empty() {
+        String::new()
+    } else {
+        format!(" Corrected before writing: {}.", outcome.repairs.join("; "))
+    };
 
     let _ = call;
     Ok(format!(
-        "Wrote {} with {} slide(s): {}. It is marked DRAFT until somebody approves it.",
+        "Wrote {} with {} slide(s): {}.{corrected} It is marked DRAFT until somebody approves it.",
         path.display(),
         check.slides,
         check.headings.join("; ")
@@ -506,10 +903,23 @@ pub fn create_xlsx(
     resolved_path: Option<&Path>,
     calculations: &Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>>,
     run_id: &str,
+    // `None` from callers that only ever want the calculation workbook.
+    tool_call: Option<&ToolCall>,
 ) -> Result<String, String> {
     let path = resolved_path.ok_or_else(|| {
         "No path was resolved for the workbook, so nothing was written.".to_string()
     })?;
+
+    // The general path, when the caller composed a workbook rather than asking
+    // for the run's calculations.
+    //
+    // Absent `sheets`, this is the calculation workbook it has always been:
+    // the run's own working, which is the thing a reviewer can check. With
+    // `sheets`, it is a workbook of readings, a schedule or a bill of
+    // quantities — none of which the calculation workbook can express.
+    if let Some(sheets) = tool_call.and_then(|call| call.arguments.get("sheets")).cloned() {
+        return create_xlsx_from_sheets(path, sheets, tool_call);
+    }
 
     let records = calculations
         .lock()
@@ -569,6 +979,305 @@ mod tests {
 
     fn author() -> Session {
         Session::open(User::new("priya", "Priya Sharma", vec![Role::Employee]))
+    }
+
+    /// Phase E, live: the tools accept a composed document and workbook, not
+    /// only the one template and the run's calculation records.
+    mod the_general_path {
+        use super::*;
+
+        #[test]
+        fn a_composed_document_is_produced_through_the_tool() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("procedure.docx");
+            let tool_call = ToolCall::new(
+                "create_docx",
+                json!({
+                    "path": "procedure.docx",
+                    "title": "Isolating the cooling water line",
+                    "classification": "OFFICIAL",
+                    "sections": [
+                        {
+                            "heading": "Before you start",
+                            "level": 1,
+                            "blocks": [
+                                {"kind": "paragraph",
+                                 "text": "Confirm the permit is signed and the line is drained."},
+                                {"kind": "numbered",
+                                 "items": ["Close PV-2201.", "Lock and tag the valve.",
+                                           "Verify zero pressure at the gauge."]}
+                            ]
+                        },
+                        {
+                            "heading": "Checks",
+                            "level": 2,
+                            "blocks": [
+                                {"kind": "table",
+                                 "header": ["Step", "Checked by"],
+                                 "rows": [["Valve closed", "-"], ["Tag fitted", "-"]],
+                                 "caption": "To be completed on the day"}
+                            ]
+                        }
+                    ]
+                }),
+            );
+
+            let message = create_docx(&call_params("run-e"), Some(&path), &author(), &tool_call)
+                .expect("a composed document is produced");
+
+            assert!(message.contains("2 section(s)"), "{message}");
+            assert!(path.exists(), "the file is at the path the caller asked for");
+            let body = crate::artifacts::ooxml::read_part(&path, "word/document.xml")
+                .expect("the package opens");
+            assert!(body.contains("<w:tbl>"), "the table must render as a table");
+            assert!(body.contains("Lock and tag the valve."), "the procedure must be in the file");
+        }
+
+        /// The template path is untouched: a call with `template` and `content`
+        /// still produces the approval note it always did.
+        #[test]
+        fn the_template_path_still_works_alongside_it() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("note.docx");
+            let tool_call = ToolCall::new(
+                "create_docx",
+                json!({
+                    "path": "note.docx",
+                    "template": "approval_note",
+                    "content": {
+                        "title": "Replacement of control valve PV-2201",
+                        "recipient": "Head of Maintenance",
+                        "subject": "Valve replacement",
+                        "findings": "The seat showed measurable wear at the March outage.",
+                        "recommendation": "Approve the replacement.",
+                        "references": "Maintenance Report Unit Four, page 1.",
+                        "assumptions": "The outage window is unchanged."
+                    }
+                }),
+            );
+
+            create_docx(&call_params("run-e"), Some(&path), &author(), &tool_call)
+                .expect("the template still produces its document");
+            assert!(path.exists());
+        }
+
+        #[test]
+        fn a_call_with_neither_says_which_is_missing() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let tool_call = ToolCall::new("create_docx", json!({ "path": "x.docx" }));
+            let error = create_docx(
+                &call_params("run-e"),
+                Some(&dir.path().join("x.docx")),
+                &author(),
+                &tool_call,
+            )
+            .expect_err("must refuse");
+            assert!(error.contains("sections"), "{error}");
+            assert!(error.contains("approval_note"), "{error}");
+        }
+
+        #[test]
+        fn a_composed_workbook_is_produced_with_live_formulas() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("readings.xlsx");
+            let table: Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>> = Arc::default();
+            let tool_call = ToolCall::new(
+                "create_xlsx",
+                json!({
+                    "path": "readings.xlsx",
+                    "title": "Shell thickness",
+                    "sheets": [{
+                        "name": "Readings",
+                        "columns": [
+                            {"header": "Point", "type": "text"},
+                            {"header": "Measured", "type": "number"},
+                            {"header": "Margin", "type": "formula"}
+                        ],
+                        "rows": [["S-01", "9.4", "=B2-9"], ["S-02", "8.7", "=B3-9"]],
+                        "freezeHeader": true
+                    }]
+                }),
+            );
+
+            let message = create_xlsx(Some(&path), &table, "run-e", Some(&tool_call))
+                .expect("a composed workbook is produced");
+            assert!(message.contains("2 row(s)"), "{message}");
+
+            let sheet = crate::artifacts::ooxml::read_part(&path, "xl/worksheets/sheet1.xml")
+                .expect("the sheet opens");
+            assert!(sheet.contains("<v>9.4</v>"), "a measurement must be a numeric cell");
+            assert!(sheet.contains("<f>B2-9</f>"), "the formula must be live");
+        }
+
+        /// Prose in a column of numbers is refused before anything is written.
+        #[test]
+        fn a_composed_workbook_whose_types_are_wrong_is_refused() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("bad.xlsx");
+            let table: Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>> = Arc::default();
+            let tool_call = ToolCall::new(
+                "create_xlsx",
+                json!({
+                    "path": "bad.xlsx",
+                    "sheets": [{
+                        "name": "Readings",
+                        "columns": [{"header": "Measured", "type": "number"}],
+                        "rows": [["about nine millimetres"]]
+                    }]
+                }),
+            );
+
+            let error = create_xlsx(Some(&path), &table, "run-e", Some(&tool_call))
+                .expect_err("must refuse");
+            assert!(error.contains("declared a number"), "{error}");
+            assert!(!path.exists(), "nothing may be written");
+        }
+
+        /// Without `sheets` it is still the calculation workbook.
+        #[test]
+        fn the_calculation_workbook_still_works_alongside_it() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("working.xlsx");
+            let table: Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>> = Arc::default();
+            table
+                .lock()
+                .unwrap()
+                .insert("run-e".to_string(), vec![evaluate("2 m * 3 m").expect("calculates")]);
+            let tool_call = ToolCall::new("create_xlsx", json!({ "path": "working.xlsx" }));
+
+            create_xlsx(Some(&path), &table, "run-e", Some(&tool_call))
+                .expect("the calculation workbook still writes");
+            assert!(path.exists());
+        }
+    }
+
+    /// Phase D: the live document path goes through the correction loop.
+    ///
+    /// These are about the *production* call site, not `produce` itself, which
+    /// has its own tests. What is being proved is that the live path reaches
+    /// it at all — it did not, for the entire life of the module.
+    mod through_the_repair_loop {
+        use super::*;
+
+        fn complete() -> serde_json::Value {
+            json!({
+                "path": "note.docx",
+                "template": "approval_note",
+                "content": {
+                    "title": "Replacement of control valve PV-2201",
+                    "recipient": "Head of Maintenance, Unit Four",
+                    "subject": "Valve replacement under the supply agreement",
+                    "findings": "The valve was inspected during the March outage and the seat \
+                                 showed measurable wear.",
+                    "recommendation": "Approve the replacement under the existing agreement.",
+                    "references": "Maintenance Report Unit Four, page 1.",
+                    "assumptions": "The March outage window remains as scheduled."
+                }
+            })
+        }
+
+        fn write(dir: &std::path::Path, args: serde_json::Value) -> Result<String, String> {
+            let path = dir.join("note.docx");
+            let tool_call = ToolCall {
+                tool: "create_docx".into(),
+                arguments: args.clone(),
+            };
+            create_docx_with_evidence(
+                &call_params("run-d"),
+                Some(&path),
+                &author(),
+                &tool_call,
+                &[],
+                &[],
+            )
+        }
+
+        #[test]
+        fn a_complete_document_is_written_as_a_revision() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let message = write(dir.path(), complete()).expect("produces");
+
+            // `produce` numbers every attempt. The bare name is never written,
+            // which is what stops a retry overwriting the evidence of the
+            // attempt before it.
+            assert!(
+                message.contains("note.r1.docx"),
+                "the file that stands must be a numbered revision: {message}"
+            );
+            assert!(dir.path().join("note.r1.docx").is_file(), "the revision is on disk");
+        }
+
+        /// The transcription error the inner loop exists for. The model names
+        /// the box differently; nothing is missing.
+        #[test]
+        fn a_field_under_the_wrong_name_is_repaired_without_asking_the_model_again() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let mut args = complete();
+            let content = args["content"].as_object_mut().expect("content");
+            let value = content.remove("recommendation").expect("present");
+            content.insert("Recommendations".to_string(), value);
+
+            let message = write(dir.path(), args).expect("the repair must recover this");
+            assert!(
+                message.contains("corrected and kept beside it"),
+                "the message must say a correction happened: {message}"
+            );
+            // Attempt 1 failed and is kept; attempt 2 stands. Both on disk.
+            assert!(dir.path().join("note.r2.docx").is_file(), "the corrected revision");
+        }
+
+        /// The line the loop must never cross.
+        #[test]
+        fn content_nobody_supplied_is_never_invented() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let mut args = complete();
+            args["content"]
+                .as_object_mut()
+                .expect("content")
+                .remove("recommendation");
+
+            let error = write(dir.path(), args).expect_err("must not produce a document");
+            assert!(
+                error.to_lowercase().contains("recommendation"),
+                "the failure must name the field that is missing: {error}"
+            );
+        }
+
+        /// Bounded. A model that has been told the same thing three times is
+        /// missing the information, not the instruction.
+        #[test]
+        fn attempts_are_bounded_and_the_failure_is_honest() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let args = json!({
+                "path": "note.docx",
+                "template": "approval_note",
+                "content": { "findings": "Something was found." }
+            });
+            let error = write(dir.path(), args).expect_err("must fail");
+
+            // Never a success message, and never a path to a file that is not
+            // sound. That is the whole point of honest failure.
+            assert!(!error.contains("Wrote "), "{error}");
+            assert!(
+                error.contains("attempt")
+                    || error.to_lowercase().contains("required")
+                    || error.to_lowercase().contains("missing"),
+                "the failure must say what went wrong: {error}"
+            );
+        }
+
+        #[test]
+        fn an_unknown_template_is_refused_before_anything_is_written() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let mut args = complete();
+            args["template"] = json!("maintenance_procedure");
+            let error = write(dir.path(), args).expect_err("must fail");
+            assert!(error.contains("maintenance_procedure"), "{error}");
+            assert!(
+                std::fs::read_dir(dir.path()).expect("read").next().is_none(),
+                "nothing may be written for a template that does not exist"
+            );
+        }
     }
 
     fn deck_content() -> serde_json::Value {
@@ -856,7 +1565,7 @@ mod tests {
             ],
         );
 
-        let message = create_xlsx(Some(&path), &table, "run-1").expect("the workbook is written");
+        let message = create_xlsx(Some(&path), &table, "run-1", None).expect("the workbook is written");
 
         assert!(path.exists());
         assert!(message.contains("2 calculation(s)"), "{message}");
@@ -869,7 +1578,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let table: Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>> = Arc::default();
 
-        let error = create_xlsx(Some(&dir.path().join("working.xlsx")), &table, "run-1").unwrap_err();
+        let error = create_xlsx(Some(&dir.path().join("working.xlsx")), &table, "run-1", None).unwrap_err();
 
         assert!(error.contains("run_calculation first"), "{error}");
         assert!(!dir.path().join("working.xlsx").exists());
@@ -884,7 +1593,7 @@ mod tests {
             .unwrap()
             .insert("run-1".into(), vec![evaluate("2 m * 3 m").expect("evaluates")]);
 
-        let error = create_xlsx(Some(&dir.path().join("other.xlsx")), &table, "run-2").unwrap_err();
+        let error = create_xlsx(Some(&dir.path().join("other.xlsx")), &table, "run-2", None).unwrap_err();
         assert!(error.contains("No calculations have been run in this task"), "{error}");
     }
 }

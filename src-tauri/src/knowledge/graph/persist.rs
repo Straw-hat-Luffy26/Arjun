@@ -21,13 +21,14 @@
 //! this is "why do you think those two are connected?", and a graph that cannot
 //! answer it is decoration.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::assertions::{AssertionProvenance, AssertionStatus, EdgeAssertion};
 use super::statistical::GraphDraft;
 use super::store::NotebookStore;
 
@@ -72,6 +73,27 @@ pub struct GraphNode {
     /// For a term: how many of the notebook's documents it was found in. Zero
     /// for a document node.
     pub document_count: u32,
+    /// Every type proposed for this term, with how many documents proposed it.
+    ///
+    /// Usually one entry, or none. More than one means the typing pass reached
+    /// different conclusions in different documents, and that disagreement is
+    /// carried rather than resolved: `node_type` names the best-supported one
+    /// so the canvas has something to colour by, and this says what the other
+    /// answers were so the inspector can show them.
+    ///
+    /// The view used to read `MAX(node_type)`, which picked whichever string
+    /// sorted highest and left no trace that anything had been discarded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_candidates: Vec<TypeCandidate>,
+}
+
+/// One type proposed for a term, and how much of the notebook proposed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeCandidate {
+    pub node_type: String,
+    /// Documents whose typing pass proposed this type.
+    pub documents: u32,
 }
 
 /// What a link between two nodes means.
@@ -106,9 +128,25 @@ pub struct GraphEdge {
     pub kind: EdgeKind,
     /// Passages containing both, summed across documents. A count, not a score.
     pub weight: u32,
-    /// `None` for a co-occurrence the typing pass has not labelled. Always
-    /// `None` for an `AppearsIn`, whose meaning is fixed and needs no model.
+    /// The label to draw on this link, when one claim can stand for it.
+    ///
+    /// Derived from [`Self::assertions`] rather than stored: it is the accepted
+    /// claim if there is one, otherwise the only proposed claim, and `None`
+    /// when there are none or when two disagree. A caller that needs to know
+    /// *which way round* the claim runs must read `assertions` — this field
+    /// cannot express direction and never could.
     pub relation: Option<String>,
+    /// Every directed claim about this pair of terms, in the subject-to-object
+    /// order the extractor produced.
+    ///
+    /// Empty for a link the passes have only observed and never named, and
+    /// always empty for an `AppearsIn`, whose meaning is fixed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertions: Vec<EdgeAssertion>,
+    /// True when two or more unrejected claims about this pair say different
+    /// things. Surfaced rather than resolved — see [`super::assertions`].
+    #[serde(default)]
+    pub contested: bool,
 }
 
 /// One view of a notebook's graph, and what it is not showing.
@@ -220,8 +258,144 @@ impl NotebookStore {
                 pass              TEXT NOT NULL,
                 extractor_version INTEGER NOT NULL,
                 completed_at      TEXT NOT NULL,
+                source_revision   TEXT,
+                extractor_id      TEXT,
                 PRIMARY KEY (notebook_id, document_sha256, pass, extractor_version)
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_schema_meta (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                applied_at TEXT NOT NULL
             );",
+        )?;
+        Ok(())
+    }
+
+    /// Brings a database written by an earlier build up to this one.
+    ///
+    /// Two things are repaired, both of them data the old schema could not
+    /// express. The second half runs once, recorded in `graph_schema_meta`,
+    /// because it moves rows and running it twice would move them again.
+    pub(super) fn migrate_graph(conn: &Connection) -> Result<()> {
+        // ── 1. Build units learn what they were built from ────────────────
+        //
+        // `ALTER TABLE ADD COLUMN` has no `IF NOT EXISTS` in SQLite, so the
+        // columns are read first. A database created by `prepare_graph` above
+        // already has them and this does nothing.
+        let existing: BTreeSet<String> = {
+            let mut statement = conn.prepare("PRAGMA table_info(graph_build_units)")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<rusqlite::Result<BTreeSet<_>>>()?
+        };
+        if !existing.contains("source_revision") {
+            conn.execute_batch("ALTER TABLE graph_build_units ADD COLUMN source_revision TEXT;")?;
+        }
+        if !existing.contains("extractor_id") {
+            conn.execute_batch("ALTER TABLE graph_build_units ADD COLUMN extractor_id TEXT;")?;
+        }
+
+        // ── 2. Relation labels become directed claims ─────────────────────
+        //
+        // `graph_edges.relation` held a label on a pair whose ends had been
+        // sorted alphabetically, so which term was the subject was destroyed at
+        // write time and cannot be recovered from the row. Each surviving label
+        // therefore becomes an assertion marked `direction_certain = 0` and left
+        // `proposed` — the honest reading of "a model said these two are related
+        // this way, and we no longer know which way round".
+        //
+        // Guessing a direction here would be worse than the bug being fixed: it
+        // would turn an unknown into a confident, wrong, citable claim.
+        let already: Option<String> = conn
+            .query_row(
+                "SELECT value FROM graph_schema_meta WHERE key = 'relations_to_assertions'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if already.is_some() {
+            return Ok(());
+        }
+
+        let legacy: Vec<(String, String, String, String, String, String)> = {
+            let mut statement = conn.prepare(
+                "SELECT notebook_id, document_sha256, source, target, relation, extractor
+                   FROM graph_edges
+                  WHERE relation IS NOT NULL AND TRIM(relation) <> ''",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        for (notebook_id, document_sha256, source, target, relation, extractor) in &legacy {
+            let subject_label =
+                label_in(conn, notebook_id, source)?.unwrap_or_else(|| source.clone());
+            let object_label =
+                label_in(conn, notebook_id, target)?.unwrap_or_else(|| target.clone());
+
+            // The passages the old schema kept against the edge become the
+            // claim's evidence, so a migrated row is still answerable.
+            let evidence = {
+                let subject_key = format!(
+                    "{}|{}",
+                    node_id(notebook_id, source),
+                    node_id(notebook_id, target)
+                );
+                let mut statement = conn.prepare(
+                    "SELECT chunk_id, document_sha256, page, quote
+                       FROM graph_evidence
+                      WHERE notebook_id = ?1 AND subject = ?2 AND subject_kind = 'edge'",
+                )?;
+                let rows = statement.query_map(params![notebook_id, &subject_key], |row| {
+                    Ok(super::assertions::AssertionEvidence {
+                        chunk_id: row.get(0)?,
+                        document_sha256: row.get(1)?,
+                        page: row.get::<_, i64>(2)? as u32,
+                        quote: row.get(3)?,
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            super::assertions::write_assertion(
+                conn,
+                notebook_id,
+                &super::assertions::NewAssertion {
+                    document_sha256: Some(document_sha256.clone()),
+                    subject: source.clone(),
+                    subject_label,
+                    predicate: relation.clone(),
+                    object: target.clone(),
+                    object_label,
+                    provenance: super::assertions::AssertionProvenance::Model,
+                    status: super::assertions::AssertionStatus::Proposed,
+                    // The whole point of the migration.
+                    direction_certain: false,
+                    extractor: extractor.clone(),
+                    extractor_version: 0,
+                    source_revision: None,
+                    evidence,
+                },
+            )?;
+        }
+
+        // The label is now held in one place. Leaving a copy on the edge would
+        // give the view two answers to the same question, and the view would go
+        // on reading the one that cannot express direction.
+        conn.execute("UPDATE graph_edges SET relation = NULL", [])?;
+        conn.execute(
+            "INSERT OR REPLACE INTO graph_schema_meta (key, value, applied_at)
+             VALUES ('relations_to_assertions', ?1, ?2)",
+            params![legacy.len() as i64, chrono::Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }
@@ -231,6 +405,30 @@ impl NotebookStore {
     /// The delete-then-insert is the whole reason this is safe to re-run: a
     /// build interrupted halfway leaves rows behind, and the next attempt must
     /// not add to them.
+    ///
+    /// ## Why it clears the enrichment passes too
+    ///
+    /// This pass writes `node_type = NULL` and no relation, because that is all
+    /// it knows. Re-running it over a document therefore *erased* whatever the
+    /// typing and relation passes had added — and it left their rows in
+    /// `graph_build_units` untouched, so both passes went on skipping the
+    /// document as already done. One rebuild removed the enrichment and made it
+    /// unreachable, permanently, with the screen reporting the notebook fully
+    /// processed.
+    ///
+    /// So the completion records for the passes downstream of this one go in
+    /// the same transaction as the rows they described. Either the enrichment
+    /// and its "this is done" marker both survive, or neither does.
+    ///
+    /// Reviewed claims are not deleted. They are kept and marked stale if their
+    /// terms no longer exist, because a person's judgement is not the
+    /// extractor's to discard — see
+    /// [`purge_document_contributions`] and [`refresh_assertion_staleness`].
+    ///
+    /// `source_revision` identifies the extraction this was built from. A
+    /// document re-read at a better OCR stop gets a new revision, which is what
+    /// makes [`Self::completed_units`] treat the old work as out of date rather
+    /// than as done.
     pub fn store_document_graph(
         &self,
         notebook_id: &str,
@@ -239,6 +437,7 @@ impl NotebookStore {
         page_of_chunk: &dyn Fn(&str) -> u32,
         draft: &GraphDraft,
         extractor_version: u32,
+        source_revision: &str,
     ) -> Result<()> {
         // The owner check is here rather than in the caller, so there is no way
         // to reach the write without it.
@@ -259,6 +458,25 @@ impl NotebookStore {
         )?;
         tx.execute(
             "DELETE FROM graph_evidence WHERE notebook_id = ?1 AND document_sha256 = ?2",
+            params![notebook_id, document_sha256],
+        )?;
+        // The enrichment this rebuild is about to invalidate, and the markers
+        // that would otherwise stop it being redone.
+        tx.execute(
+            "DELETE FROM graph_build_units
+              WHERE notebook_id = ?1 AND document_sha256 = ?2 AND pass <> 'statistical'",
+            params![notebook_id, document_sha256],
+        )?;
+        tx.execute(
+            "DELETE FROM graph_assertion_evidence
+              WHERE assertion_id IN (
+                  SELECT id FROM graph_assertions
+                   WHERE notebook_id = ?1 AND document_sha256 = ?2 AND provenance <> 'user')",
+            params![notebook_id, document_sha256],
+        )?;
+        tx.execute(
+            "DELETE FROM graph_assertions
+              WHERE notebook_id = ?1 AND document_sha256 = ?2 AND provenance <> 'user'",
             params![notebook_id, document_sha256],
         )?;
 
@@ -329,40 +547,87 @@ impl NotebookStore {
 
         tx.execute(
             "INSERT OR REPLACE INTO graph_build_units
-                 (notebook_id, document_sha256, pass, extractor_version, completed_at)
-             VALUES (?1, ?2, 'statistical', ?3, ?4)",
+                 (notebook_id, document_sha256, pass, extractor_version, completed_at,
+                  source_revision, extractor_id)
+             VALUES (?1, ?2, 'statistical', ?3, ?4, ?5, 'statistical')",
             params![
                 notebook_id,
                 document_sha256,
                 extractor_version,
-                chrono::Utc::now().to_rfc3339()
+                chrono::Utc::now().to_rfc3339(),
+                source_revision
             ],
         )?;
+
+        // A person's claims about terms this rebuild may have removed.
+        refresh_assertion_staleness(&tx, notebook_id)?;
 
         tx.commit()?;
         Ok(())
     }
 
-    /// Documents already processed at this extractor version.
+    /// Documents already processed, at this pass's current identity.
     ///
-    /// What makes a build resumable: the caller skips these rather than
-    /// redoing work that is already on disk.
+    /// What makes a build resumable: the caller skips these rather than redoing
+    /// work that is already on disk.
+    ///
+    /// ## What counts as "already processed"
+    ///
+    /// Three things have to match, not one. The pass at this `extractor_version`
+    /// — which is how a change to the algorithm forces a rebuild. The
+    /// `extractor_id`, which names the model or code that did it — so a
+    /// notebook typed by a 3B model is not reported as done when the machine is
+    /// now running a 13B one. And the `source_revision` the unit was built
+    /// from, so a document re-read at a better OCR stop is work again rather
+    /// than being skipped on the strength of a graph built from worse text.
+    ///
+    /// A document whose revision is not in `revisions` is treated as not done:
+    /// the caller could not tell us what is on disk for it, and claiming
+    /// completion on a source we cannot identify is the failure this whole
+    /// signature exists to prevent.
     pub fn completed_units(
         &self,
         notebook_id: &str,
         pass: &str,
         extractor_version: u32,
+        extractor_id: &str,
+        revisions: &BTreeMap<String, String>,
     ) -> Result<BTreeSet<String>> {
         let conn = self.conn.lock().expect("notebook store lock poisoned");
         let mut statement = conn.prepare(
-            "SELECT document_sha256 FROM graph_build_units
+            "SELECT document_sha256, source_revision, extractor_id FROM graph_build_units
               WHERE notebook_id = ?1 AND pass = ?2 AND extractor_version = ?3",
         )?;
         let rows = statement.query_map(params![notebook_id, pass, extractor_version], |row| {
-            row.get::<_, String>(0)
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
-        rows.collect::<rusqlite::Result<BTreeSet<_>>>()
-            .context("the completed build units could not be read")
+
+        let mut done = BTreeSet::new();
+        for row in rows {
+            let (sha, recorded_revision, recorded_extractor) = row?;
+
+            // A unit written before these columns existed carries neither. It
+            // is honoured on the version alone, because the alternative is
+            // silently re-running every pass over every existing notebook on
+            // the first launch after this change — minutes per document, and a
+            // REBEL sidecar the person never asked for.
+            match recorded_extractor {
+                None => {}
+                Some(recorded) if recorded == extractor_id => {}
+                Some(_) => continue,
+            }
+            match (recorded_revision, revisions.get(&sha)) {
+                (None, _) => {}
+                (Some(recorded), Some(current)) if &recorded == current => {}
+                _ => continue,
+            }
+            done.insert(sha);
+        }
+        Ok(done)
     }
 
     /// A view of the notebook's graph.
@@ -407,10 +672,15 @@ impl NotebookStore {
 
         let conn = self.conn.lock().expect("notebook store lock poisoned");
 
+        // `MAX(label)` is kept: two documents spelling the same normalised term
+        // differently is a cosmetic difference and either spelling is correct.
+        // The type is not, so it is read separately below — two documents
+        // *typing* the same term differently is a disagreement about what the
+        // thing is, and picking the alphabetically larger answer is not a way
+        // to settle it.
         let mut node_statement = conn.prepare(
             "SELECT normalised,
                     MAX(label) AS label,
-                    MAX(node_type) AS node_type,
                     SUM(occurrences) AS occurrences,
                     COUNT(DISTINCT document_sha256) AS documents
                FROM graph_nodes
@@ -418,38 +688,67 @@ impl NotebookStore {
                 AND (?2 IS NULL OR document_sha256 = ?2)
               GROUP BY normalised",
         )?;
-        let all_terms: Vec<(String, String, Option<String>, u32, u32)> = node_statement
+        let all_terms: Vec<(String, String, u32, u32)> = node_statement
             .query_map(params![notebook_id, document_sha256], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(2)? as u32,
                     row.get::<_, i64>(3)? as u32,
-                    row.get::<_, i64>(4)? as u32,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        // Every type anybody proposed for each term, with its support.
+        let mut type_statement = conn.prepare(
+            "SELECT normalised, node_type, COUNT(DISTINCT document_sha256) AS documents
+               FROM graph_nodes
+              WHERE notebook_id = ?1
+                AND (?2 IS NULL OR document_sha256 = ?2)
+                AND node_type IS NOT NULL
+              GROUP BY normalised, node_type
+              ORDER BY documents DESC, node_type ASC",
+        )?;
+        let mut types_of: BTreeMap<String, Vec<TypeCandidate>> = BTreeMap::new();
+        for row in type_statement.query_map(params![notebook_id, document_sha256], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                TypeCandidate {
+                    node_type: row.get::<_, String>(1)?,
+                    documents: row.get::<_, i64>(2)? as u32,
+                },
+            ))
+        })? {
+            let (normalised, candidate) = row?;
+            types_of.entry(normalised).or_default().push(candidate);
+        }
+        drop(type_statement);
+
         let mut edge_statement = conn.prepare(
-            "SELECT source, target, SUM(weight) AS weight, MAX(relation) AS relation
+            "SELECT source, target, SUM(weight) AS weight
                FROM graph_edges
               WHERE notebook_id = ?1
                 AND (?2 IS NULL OR document_sha256 = ?2)
               GROUP BY source, target
              HAVING SUM(weight) >= ?3",
         )?;
-        let all_term_edges: Vec<(String, String, u32, Option<String>)> = edge_statement
+        let all_term_edges: Vec<(String, String, u32)> = edge_statement
             .query_map(
                 params![notebook_id, document_sha256, min_weight.max(1)],
                 |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)? as u32,
-                    row.get::<_, Option<String>>(3)?,
-                ))
-            })?
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? as u32,
+                    ))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(edge_statement);
+
+        // The directed claims, looked up by the pair they are about. Read once
+        // for the whole view rather than per edge.
+        let claims = assertions_by_pair(&conn, notebook_id, document_sha256)?;
 
         // The notebook's files, and which terms each contributed. Read whether
         // or not they are wanted as nodes, because the totals have to describe
@@ -498,12 +797,22 @@ impl NotebookStore {
         // breadth-first walk below can cross from a term to a file and back.
         let mut candidate_edges: Vec<GraphEdge> = all_term_edges
             .iter()
-            .map(|(source, target, weight, relation)| GraphEdge {
-                source: node_id(notebook_id, source),
-                target: node_id(notebook_id, target),
-                kind: EdgeKind::Cooccurrence,
-                weight: *weight,
-                relation: relation.clone(),
+            .map(|(source, target, weight)| {
+                let key = if source <= target {
+                    (source.clone(), target.clone())
+                } else {
+                    (target.clone(), source.clone())
+                };
+                let assertions = claims.get(&key).cloned().unwrap_or_default();
+                GraphEdge {
+                    source: node_id(notebook_id, source),
+                    target: node_id(notebook_id, target),
+                    kind: EdgeKind::Cooccurrence,
+                    weight: *weight,
+                    relation: settled_label(&assertions),
+                    contested: is_contested(&assertions),
+                    assertions,
+                }
             })
             .collect();
         let total_cooccurrence = candidate_edges.len() as u32;
@@ -520,6 +829,8 @@ impl NotebookStore {
                     kind: EdgeKind::AppearsIn,
                     weight: *occurrences,
                     relation: None,
+                    assertions: Vec::new(),
+                    contested: false,
                 });
                 appears_in += 1;
             }
@@ -592,20 +903,26 @@ impl NotebookStore {
 
         let mut nodes: Vec<GraphNode> = all_terms
             .iter()
-            .filter_map(|(normalised, label, node_type, occurrences, documents)| {
+            .filter_map(|(normalised, label, occurrences, documents)| {
                 let id = node_id(notebook_id, normalised);
                 match &keep {
                     Some(reached) if !reached.contains(&id) => None,
-                    _ => Some(GraphNode {
-                        label: label.clone(),
-                        kind: NodeKind::Term,
-                        node_type: node_type.clone(),
-                        occurrences: *occurrences,
-                        degree: degree_of(&id),
-                        document_sha256: None,
-                        document_count: *documents,
-                        id,
-                    }),
+                    _ => {
+                        let candidates = types_of.get(normalised).cloned().unwrap_or_default();
+                        Some(GraphNode {
+                            label: label.clone(),
+                            kind: NodeKind::Term,
+                            // The best-supported type, not the alphabetically
+                            // largest. `type_candidates` carries the rest.
+                            node_type: candidates.first().map(|c| c.node_type.clone()),
+                            occurrences: *occurrences,
+                            degree: degree_of(&id),
+                            document_sha256: None,
+                            document_count: *documents,
+                            type_candidates: candidates,
+                            id,
+                        })
+                    }
                 }
             })
             .collect();
@@ -634,6 +951,7 @@ impl NotebookStore {
                     degree: degree_of(&id),
                     document_sha256: Some(sha.clone()),
                     document_count: 0,
+                    type_candidates: Vec::new(),
                     id,
                 });
             }
@@ -699,6 +1017,8 @@ impl NotebookStore {
         document_sha256: &str,
         verdict: &super::typing::Verdict,
         typing_version: u32,
+        source_revision: &str,
+        extractor_id: &str,
     ) -> Result<()> {
         if self.get(notebook_id, owner_user_id)?.is_none() {
             anyhow::bail!("that notebook does not exist");
@@ -735,18 +1055,54 @@ impl NotebookStore {
         }
 
         for edge in &verdict.edges {
+            // Marked as named by the model; the label itself is not written
+            // here, because this row cannot express which way round the claim
+            // runs. Matched both ways because the co-occurrence row's ends are
+            // sorted and the claim's are not.
             tx.execute(
-                "UPDATE graph_edges SET relation = ?5, extractor = 'llm'
+                "UPDATE graph_edges SET extractor = 'llm'
                   WHERE notebook_id = ?1 AND document_sha256 = ?2
-                    AND source = ?3 AND target = ?4",
-                params![
-                    notebook_id,
-                    document_sha256,
-                    &edge.source,
-                    &edge.target,
-                    &edge.relation
-                ],
+                    AND ((source = ?3 AND target = ?4) OR (source = ?4 AND target = ?3))",
+                params![notebook_id, document_sha256, &edge.subject, &edge.object],
             )?;
+
+            let subject_label =
+                label_in(&tx, notebook_id, &edge.subject)?.unwrap_or_else(|| edge.subject.clone());
+            let object_label =
+                label_in(&tx, notebook_id, &edge.object)?.unwrap_or_else(|| edge.object.clone());
+            super::assertions::write_assertion(
+                &tx,
+                notebook_id,
+                &super::assertions::NewAssertion {
+                    document_sha256: Some(document_sha256.to_string()),
+                    subject: edge.subject.clone(),
+                    subject_label,
+                    predicate: edge.relation.clone(),
+                    object: edge.object.clone(),
+                    object_label,
+                    provenance: AssertionProvenance::Model,
+                    status: AssertionStatus::Proposed,
+                    direction_certain: true,
+                    extractor: extractor_id.to_string(),
+                    extractor_version: typing_version,
+                    source_revision: Some(source_revision.to_string()),
+                    evidence: vec![super::assertions::AssertionEvidence {
+                        chunk_id: edge.chunk_id.clone(),
+                        document_sha256: document_sha256.to_string(),
+                        page: page_of_chunk_in(&tx, notebook_id, &edge.chunk_id)?,
+                        quote: Some(edge.quote.clone()),
+                    }],
+                },
+            )?;
+            // The co-occurrence evidence key is built from the *sorted* pair,
+            // because that is how `store_document_graph` wrote it. Sorting here
+            // is a lookup detail and touches nothing about the claim, whose
+            // direction is already recorded above.
+            let (first, second) = if edge.subject <= edge.object {
+                (&edge.subject, &edge.object)
+            } else {
+                (&edge.object, &edge.subject)
+            };
             tx.execute(
                 "UPDATE graph_evidence SET quote = ?4
                   WHERE notebook_id = ?1 AND subject = ?2 AND subject_kind = 'edge'
@@ -755,8 +1111,8 @@ impl NotebookStore {
                     notebook_id,
                     format!(
                         "{}|{}",
-                        node_id(notebook_id, &edge.source),
-                        node_id(notebook_id, &edge.target)
+                        node_id(notebook_id, first),
+                        node_id(notebook_id, second)
                     ),
                     &edge.chunk_id,
                     &edge.quote
@@ -766,13 +1122,16 @@ impl NotebookStore {
 
         tx.execute(
             "INSERT OR REPLACE INTO graph_build_units
-                 (notebook_id, document_sha256, pass, extractor_version, completed_at)
-             VALUES (?1, ?2, 'typing', ?3, ?4)",
+                 (notebook_id, document_sha256, pass, extractor_version, completed_at,
+                  source_revision, extractor_id)
+             VALUES (?1, ?2, 'typing', ?3, ?4, ?5, ?6)",
             params![
                 notebook_id,
                 document_sha256,
                 typing_version,
-                chrono::Utc::now().to_rfc3339()
+                chrono::Utc::now().to_rfc3339(),
+                source_revision,
+                extractor_id
             ],
         )?;
 
@@ -808,17 +1167,25 @@ impl NotebookStore {
             .context("the document's edges could not be read")
     }
 
-    /// Applies a verified relation verdict to one document's edges.
+    /// Applies a verified relation verdict to one document.
     ///
-    /// `UPDATE` only, never `INSERT` — the storage-level expression of "this
-    /// pass names edges, it does not create them". A relation that reached here
-    /// has already been checked against the edges this document actually has,
-    /// but writing it as an update means a bug in that check costs a label
-    /// rather than a fabricated link.
+    /// ## Each relation becomes a directed claim
     ///
-    /// The extractor is recorded as `rebel` rather than `llm`, so a graph built
-    /// by two different passes can still say which named which. That matters
-    /// when the relation is wrong and somebody has to work out why.
+    /// This used to `UPDATE graph_edges SET relation = ?` against the pair the
+    /// verifier had already re-sorted into storage order — so "PV-2201 is
+    /// manufactured by Northern Valve Company" was written onto the row
+    /// `(northern valve company, pv-2201)` and read back as the company being
+    /// manufactured by the valve. The label was preserved and the claim was
+    /// inverted, silently, for every pair whose subject sorts after its object.
+    ///
+    /// The co-occurrence row is still what proves the two terms share a
+    /// passage, and it is still checked before anything is written — this pass
+    /// names links the cheap pass observed, it does not invent them. But the
+    /// *claim* is written to [`super::assertions`], subject and object in the
+    /// order REBEL produced them, and that is the only place direction lives.
+    ///
+    /// A person's earlier review of the same claim survives; see
+    /// [`super::assertions::write_assertion`].
     pub fn store_document_relations(
         &self,
         notebook_id: &str,
@@ -826,6 +1193,7 @@ impl NotebookStore {
         document_sha256: &str,
         verdict: &super::relations::Verdict,
         relation_version: u32,
+        source_revision: &str,
     ) -> Result<()> {
         if self.get(notebook_id, owner_user_id)?.is_none() {
             anyhow::bail!("that notebook does not exist");
@@ -835,17 +1203,52 @@ impl NotebookStore {
         let tx = conn.transaction()?;
 
         for relation in &verdict.relations {
+            // The link itself is marked as named by REBEL, so a graph built by
+            // two passes can still say which named which. The label is not
+            // written here — it has a direction and this row cannot hold one.
             tx.execute(
-                "UPDATE graph_edges SET relation = ?5, extractor = 'rebel'
+                "UPDATE graph_edges SET extractor = 'rebel'
                   WHERE notebook_id = ?1 AND document_sha256 = ?2
-                    AND source = ?3 AND target = ?4",
+                    AND ((source = ?3 AND target = ?4) OR (source = ?4 AND target = ?3))",
                 params![
                     notebook_id,
                     document_sha256,
-                    &relation.source,
-                    &relation.target,
-                    &relation.relation
+                    &relation.subject,
+                    &relation.object
                 ],
+            )?;
+
+            let subject_label = label_in(&tx, notebook_id, &relation.subject)?
+                .unwrap_or_else(|| relation.subject.clone());
+            let object_label = label_in(&tx, notebook_id, &relation.object)?
+                .unwrap_or_else(|| relation.object.clone());
+
+            super::assertions::write_assertion(
+                &tx,
+                notebook_id,
+                &super::assertions::NewAssertion {
+                    document_sha256: Some(document_sha256.to_string()),
+                    subject: relation.subject.clone(),
+                    subject_label,
+                    predicate: relation.relation.clone(),
+                    object: relation.object.clone(),
+                    object_label,
+                    provenance: AssertionProvenance::Model,
+                    status: AssertionStatus::Proposed,
+                    // REBEL emits (subject, relation, object) and the verifier
+                    // carried them through untouched. The direction is the
+                    // model's, and it is a real claim.
+                    direction_certain: true,
+                    extractor: "rebel".to_string(),
+                    extractor_version: relation_version,
+                    source_revision: Some(source_revision.to_string()),
+                    evidence: vec![super::assertions::AssertionEvidence {
+                        chunk_id: relation.chunk_id.clone(),
+                        document_sha256: document_sha256.to_string(),
+                        page: page_of_chunk_in(&tx, notebook_id, &relation.chunk_id)?,
+                        quote: relation.quote.clone(),
+                    }],
+                },
             )?;
         }
 
@@ -854,13 +1257,15 @@ impl NotebookStore {
         // rebuild would spend minutes to reach the same empty answer.
         tx.execute(
             "INSERT OR REPLACE INTO graph_build_units
-                 (notebook_id, document_sha256, pass, extractor_version, completed_at)
-             VALUES (?1, ?2, 'relations', ?3, ?4)",
+                 (notebook_id, document_sha256, pass, extractor_version, completed_at,
+                  source_revision, extractor_id)
+             VALUES (?1, ?2, 'relations', ?3, ?4, ?5, 'rebel')",
             params![
                 notebook_id,
                 document_sha256,
                 relation_version,
-                chrono::Utc::now().to_rfc3339()
+                chrono::Utc::now().to_rfc3339(),
+                source_revision
             ],
         )?;
 
@@ -923,6 +1328,228 @@ impl NotebookStore {
     }
 }
 
+/// The one label that can stand for a link, or `None` when none can.
+///
+/// An accepted claim wins, because a person said so. Failing that a single
+/// proposal stands. Two proposals that disagree produce `None` and
+/// [`is_contested`] produces `true`, so the canvas draws an unlabelled line and
+/// the inspector explains why rather than the view inventing a winner.
+fn settled_label(assertions: &[EdgeAssertion]) -> Option<String> {
+    if let Some(accepted) = assertions
+        .iter()
+        .find(|a| a.status == AssertionStatus::Accepted)
+    {
+        return Some(accepted.predicate.clone());
+    }
+    let mut distinct: BTreeSet<&str> = BTreeSet::new();
+    for assertion in assertions {
+        distinct.insert(assertion.predicate.as_str());
+    }
+    match distinct.len() {
+        1 => assertions.first().map(|a| a.predicate.clone()),
+        _ => None,
+    }
+}
+
+/// Whether the claims about one link disagree.
+///
+/// Two rows naming the same predicate in opposite directions disagree just as
+/// much as two rows naming different predicates — "A supplies B" and "B supplies
+/// A" cannot both be what the documents meant.
+fn is_contested(assertions: &[EdgeAssertion]) -> bool {
+    if assertions.len() < 2 {
+        return false;
+    }
+    let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for assertion in assertions {
+        if assertion.status == AssertionStatus::Accepted {
+            // A person has settled it. Whatever else was proposed is history,
+            // not a live disagreement.
+            return false;
+        }
+        seen.insert((assertion.predicate.as_str(), assertion.subject.as_str()));
+    }
+    seen.len() > 1
+}
+
+/// The page a chunk sits on, as the statistical pass already recorded it.
+///
+/// Read back rather than re-derived, so a claim's citation points at the same
+/// page a node's citation does. Zero when the chunk is not in the evidence
+/// table, which is a real state: the relation pass reads passages the
+/// statistical pass may not have kept a row for.
+fn page_of_chunk_in(conn: &Connection, notebook_id: &str, chunk_id: &str) -> Result<u32> {
+    Ok(conn
+        .query_row(
+            "SELECT page FROM graph_evidence
+              WHERE notebook_id = ?1 AND chunk_id = ?2 LIMIT 1",
+            params![notebook_id, chunk_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .unwrap_or(0) as u32)
+}
+
+/// The display label a notebook holds for a normalised term.
+fn label_in(conn: &Connection, notebook_id: &str, normalised: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT label FROM graph_nodes
+              WHERE notebook_id = ?1 AND normalised = ?2
+              ORDER BY occurrences DESC LIMIT 1",
+            params![notebook_id, normalised],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// Removes everything one document put into a notebook's graph.
+///
+/// Called when the document leaves the notebook, and when a rebuild is about to
+/// re-derive its contribution from scratch. One function rather than two lists
+/// of `DELETE`s, because the two lists drifting is exactly how the original bug
+/// happened: the removal path deleted three of the five tables a document
+/// writes to.
+///
+/// Runs inside the caller's transaction. It does not take the store lock and
+/// must not: the caller already holds it.
+pub(super) fn purge_document_contributions(
+    conn: &Connection,
+    notebook_id: &str,
+    document_sha256: &str,
+) -> Result<()> {
+    // The claims this document produced, and their evidence. Evidence first —
+    // it is keyed by the claim id, and deleting the parent first would strand
+    // it.
+    conn.execute(
+        "DELETE FROM graph_assertion_evidence
+          WHERE assertion_id IN (
+              SELECT id FROM graph_assertions
+               WHERE notebook_id = ?1 AND document_sha256 = ?2)",
+        params![notebook_id, document_sha256],
+    )?;
+    conn.execute(
+        "DELETE FROM graph_assertions
+          WHERE notebook_id = ?1 AND document_sha256 = ?2
+            AND provenance <> 'user'",
+        params![notebook_id, document_sha256],
+    )?;
+
+    // A claim a *person* wrote about this document is not the extractor's to
+    // delete. It keeps its row, loses the evidence that no longer exists, and
+    // is marked stale below so the interface can say the source is gone.
+    conn.execute(
+        "DELETE FROM graph_assertion_evidence
+          WHERE document_sha256 = ?1
+            AND assertion_id IN (SELECT id FROM graph_assertions WHERE notebook_id = ?2)",
+        params![document_sha256, notebook_id],
+    )?;
+
+    for table in ["graph_evidence", "graph_edges", "graph_nodes", "graph_build_units"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE notebook_id = ?1 AND document_sha256 = ?2"),
+            params![notebook_id, document_sha256],
+        )?;
+    }
+
+    refresh_assertion_staleness(conn, notebook_id)?;
+    Ok(())
+}
+
+/// Marks claims whose terms no longer exist in the notebook, and clears the
+/// mark from those whose terms have come back.
+///
+/// Both directions on purpose. A document removed and then added again should
+/// leave the person's reviewed claims exactly as they were, not permanently
+/// flagged because of a state they passed through.
+pub(super) fn refresh_assertion_staleness(conn: &Connection, notebook_id: &str) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE graph_assertions
+            SET stale = 1, updated_at = ?2
+          WHERE notebook_id = ?1
+            AND stale = 0
+            AND (subject NOT IN (SELECT normalised FROM graph_nodes WHERE notebook_id = ?1)
+              OR object  NOT IN (SELECT normalised FROM graph_nodes WHERE notebook_id = ?1))",
+        params![notebook_id, &now],
+    )?;
+    conn.execute(
+        "UPDATE graph_assertions
+            SET stale = 0, updated_at = ?2
+          WHERE notebook_id = ?1
+            AND stale = 1
+            AND subject IN (SELECT normalised FROM graph_nodes WHERE notebook_id = ?1)
+            AND object  IN (SELECT normalised FROM graph_nodes WHERE notebook_id = ?1)",
+        params![notebook_id, &now],
+    )?;
+    Ok(())
+}
+
+/// Every directed claim in a notebook, keyed by the unordered pair it is about.
+///
+/// The key is sorted and the *value* is not: the map exists so an edge drawn
+/// between two terms can find the claims about it, and each claim keeps the
+/// subject and object the extractor gave it. Sorting the key is a lookup
+/// convenience; sorting the claim would be the bug.
+fn assertions_by_pair(
+    conn: &Connection,
+    notebook_id: &str,
+    document_sha256: Option<&str>,
+) -> Result<BTreeMap<(String, String), Vec<EdgeAssertion>>> {
+    let mut statement = conn.prepare(
+        "SELECT a.id, a.subject, a.subject_label, a.predicate, a.object, a.object_label,
+                a.provenance, a.status, a.direction_certain, a.stale,
+                (SELECT COUNT(*) FROM graph_assertion_evidence e
+                  WHERE e.assertion_id = a.id) AS evidence_count
+           FROM graph_assertions a
+          WHERE a.notebook_id = ?1
+            AND a.status <> 'rejected'
+            AND (?2 IS NULL OR a.document_sha256 = ?2 OR a.document_sha256 IS NULL)
+          ORDER BY a.subject_label ASC, a.predicate ASC",
+    )?;
+    let rows = statement.query_map(params![notebook_id, document_sha256], |row| {
+        let provenance: String = row.get(6)?;
+        let status: String = row.get(7)?;
+        Ok((
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(4)?,
+            EdgeAssertion {
+                id: row.get(0)?,
+                subject: row.get(1)?,
+                subject_label: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+                object_label: row.get(5)?,
+                provenance: if provenance == "user" {
+                    AssertionProvenance::User
+                } else {
+                    AssertionProvenance::Model
+                },
+                status: match status.as_str() {
+                    "accepted" => AssertionStatus::Accepted,
+                    "rejected" => AssertionStatus::Rejected,
+                    _ => AssertionStatus::Proposed,
+                },
+                direction_certain: row.get::<_, i64>(8)? != 0,
+                stale: row.get::<_, i64>(9)? != 0,
+                evidence_count: row.get::<_, i64>(10)? as u32,
+            },
+        ))
+    })?;
+
+    let mut out: BTreeMap<(String, String), Vec<EdgeAssertion>> = BTreeMap::new();
+    for row in rows {
+        let (subject, object, assertion) = row?;
+        let key = if subject <= object {
+            (subject, object)
+        } else {
+            (object, subject)
+        };
+        out.entry(key).or_default().push(assertion);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,6 +1558,22 @@ mod tests {
 
     const ALICE: &str = "user-alice";
     const BOB: &str = "user-bob";
+
+    /// The extraction revision every test document is built from.
+    ///
+    /// One constant, so a test that wants to simulate a re-read says so by
+    /// passing something else rather than by accident.
+    const REVISION: &str = "2026-01-01T00:00:00Z";
+    /// The extractor identity the statistical and typing passes record here.
+    const PASS_ID: &str = "statistical";
+
+    /// The revisions map `completed_units` compares against: the one document
+    /// these tests use, at the revision it was built from.
+    fn revisions() -> BTreeMap<String, String> {
+        [("sha-doc".to_string(), REVISION.to_string())]
+            .into_iter()
+            .collect()
+    }
 
     fn chunk(id: &str, text: &str) -> Chunk {
         Chunk {
@@ -968,6 +1611,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -991,6 +1635,7 @@ mod tests {
                     &page_one,
                     &sample(),
                     EXTRACTOR_VERSION,
+                    REVISION,
                 )
                 .unwrap();
         }
@@ -1023,6 +1668,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1037,7 +1683,8 @@ mod tests {
                 "sha-doc",
                 &page_one,
                 &sample(),
-                EXTRACTOR_VERSION
+                EXTRACTOR_VERSION,
+                REVISION
             )
             .is_err());
     }
@@ -1047,7 +1694,7 @@ mod tests {
         let store = NotebookStore::in_memory().unwrap();
         let notebook = store.create(ALICE, "Site A").unwrap();
         assert!(store
-            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION)
+            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION, PASS_ID, &revisions())
             .unwrap()
             .is_empty());
 
@@ -1059,16 +1706,17 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
         assert!(store
-            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION)
+            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION, PASS_ID, &revisions())
             .unwrap()
             .contains("sha-doc"));
         // A different algorithm version has done nothing yet.
         assert!(store
-            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION + 1)
+            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION + 1, PASS_ID, &revisions())
             .unwrap()
             .is_empty());
     }
@@ -1085,6 +1733,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1118,6 +1767,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1140,6 +1790,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1168,6 +1819,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
         let other = extract(&[
@@ -1182,6 +1834,7 @@ mod tests {
                 &page_one,
                 &other,
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1226,6 +1879,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1257,6 +1911,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1273,8 +1928,8 @@ mod tests {
                 quote: "Northern Valve Company supplied PV-2201".into(),
             }],
             edges: vec![TypedEdge {
-                source: "northern valve company".into(),
-                target: "pv-2201".into(),
+                subject: "northern valve company".into(),
+                object: "pv-2201".into(),
                 relation: "supplies".into(),
                 chunk_id: "c1".into(),
                 quote: "Northern Valve Company supplied PV-2201".into(),
@@ -1282,7 +1937,7 @@ mod tests {
             stats: TypingStats::default(),
         };
         store
-            .store_document_typing(&notebook.id, ALICE, "sha-doc", &verdict, 1)
+            .store_document_typing(&notebook.id, ALICE, "sha-doc", &verdict, 1, REVISION, PASS_ID)
             .unwrap();
 
         let after = store.graph(&notebook.id, ALICE, None, None, 1, 1, false).unwrap();
@@ -1323,23 +1978,24 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
         assert!(store
-            .completed_units(&notebook.id, "typing", 1)
+            .completed_units(&notebook.id, "typing", 1, PASS_ID, &revisions())
             .unwrap()
             .is_empty());
         store
-            .store_document_typing(&notebook.id, ALICE, "sha-doc", &Verdict::default(), 1)
+            .store_document_typing(&notebook.id, ALICE, "sha-doc", &Verdict::default(), 1, REVISION, PASS_ID)
             .unwrap();
         assert!(store
-            .completed_units(&notebook.id, "typing", 1)
+            .completed_units(&notebook.id, "typing", 1, PASS_ID, &revisions())
             .unwrap()
             .contains("sha-doc"));
         // The statistical unit is a separate pass and is unaffected.
         assert!(store
-            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION)
+            .completed_units(&notebook.id, "statistical", EXTRACTOR_VERSION, PASS_ID, &revisions())
             .unwrap()
             .contains("sha-doc"));
     }
@@ -1351,7 +2007,7 @@ mod tests {
         let store = NotebookStore::in_memory().unwrap();
         let notebook = store.create(ALICE, "Site A").unwrap();
         assert!(store
-            .store_document_typing(&notebook.id, BOB, "sha-doc", &Verdict::default(), 1)
+            .store_document_typing(&notebook.id, BOB, "sha-doc", &Verdict::default(), 1, REVISION, PASS_ID)
             .is_err());
         assert!(store
             .document_terms(&notebook.id, BOB, "sha-doc")
@@ -1380,6 +2036,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1440,6 +2097,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1474,6 +2132,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 
@@ -1519,6 +2178,7 @@ mod tests {
                 &page_one,
                 &sample(),
                 EXTRACTOR_VERSION,
+                REVISION,
             )
             .unwrap();
 

@@ -27,16 +27,31 @@
 //! filtering rows it already fetched. A store method that takes no owner is a
 //! store method that cannot be safely called from a command.
 
+pub mod assertions;
 #[cfg(test)]
 mod journey_tests;
+pub mod notes;
 pub mod persist;
 pub mod relations;
 pub mod render;
+pub mod research;
+#[cfg(test)]
+mod research_tests;
 pub mod statistical;
 pub mod store;
 pub mod typing;
 
-pub use persist::{node_id, EvidenceRow, GraphEdge, GraphNode, GraphView};
+pub use assertions::{
+    assertion_id, Assertion, AssertionEvidence, AssertionProvenance, AssertionStatus, EdgeAssertion,
+    NewAssertion,
+};
+pub use notes::{Note, NoteKind};
+pub use research::{
+    EvidenceEntry, EvidenceManifest, ResearchScope, RetrievalMode,
+};
+pub use persist::{
+    document_node_id, node_id, EvidenceRow, GraphEdge, GraphNode, GraphView, TypeCandidate,
+};
 pub use relations::{RelationStats, Triplet, VerifiedRelation, RELATION_VERSION};
 pub use statistical::{extract, DraftEdge, DraftNode, ExtractionStats, GraphDraft, EXTRACTOR_VERSION};
 pub use store::{Notebook, NotebookDocument, NotebookStore};

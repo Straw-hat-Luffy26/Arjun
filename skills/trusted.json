@@ -101,6 +101,11 @@
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
     },
     {
+      "name": "docx-authoring",
+      "sha256": "ddd0ad8fb15ce2514e401d78e498f87bc7a5dfa3fc9427a53c633e68395c7d2b",
+      "note": "Written for ARJUN 2026-09-11. A format skill: selected automatically from the file the run is producing, see skills::selection."
+    },
+    {
       "name": "energy-procurement",
       "sha256": "960d1976ea8d28955ca8765e2dc19ae824ef258879cd4003b9b732a87fe207ce",
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author evos, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
@@ -196,6 +201,11 @@
       "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
     },
     {
+      "name": "pdf-authoring",
+      "sha256": "d8568106d9a270214476c1eba977b47cea0c116c043039ee9c65ea135f9eca3f",
+      "note": "Written for ARJUN 2026-09-11. A format skill: selected automatically from the file the run is producing, see skills::selection."
+    },
+    {
       "name": "pid-reader",
       "sha256": "313dd3b6baee6666cb1a58d1733b614784ce1aa2fd51b405fc875e37c1364aac",
       "note": "SIH 2026 industrial pack; P&ID reader and line tracer."
@@ -209,6 +219,11 @@
       "name": "postgres-patterns",
       "sha256": "dde02a686c11936d28e27258c00fecce93a8d0357ab0b71ffb52fec8c064163e",
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "pptx-authoring",
+      "sha256": "62bcaa74da3a6f637462b86a4870071951652b8b90c32ae6e2a3ba760487e421",
+      "note": "Written for ARJUN 2026-09-11. A format skill: selected automatically from the file the run is producing, see skills::selection."
     },
     {
       "name": "product-capability",
@@ -324,6 +339,11 @@
       "name": "verification-loop",
       "sha256": "b22ed03f6e0d58d826d433ce825c811c6468075ed4095492c3b1abc45db240fa",
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, MIT). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "xlsx-authoring",
+      "sha256": "e09b5f5db2cef3d62e478cd5d355f3db3ea9cf9c08e9e53836dd95a2b84c100d",
+      "note": "Written for ARJUN 2026-09-11. A format skill: selected automatically from the file the run is producing, see skills::selection."
     }
   ]
 }

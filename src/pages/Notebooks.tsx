@@ -1,20 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { NotebookPen, Plus, FileText, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button, Spinner } from '../components/ui';
 import {
   notebookService,
-  renderSubgraph,
   type AddedDocument,
-  type GraphNode,
   type Notebook,
   type NotebookDocument,
 } from '../services/notebook.service';
-import { useConversation } from '../contexts/ConversationContext';
 import { toComposerAttachment } from '../services/agent.service';
 import { sovereigntyService } from '../services/sovereignty.service';
 import { problemRows, summariseAdds } from '../components/notebook/addOutcomes';
-import { NotebookGraphPanel } from '../components/graph/NotebookGraphPanel';
+import { NotebookWorkspace } from '../components/notebook/NotebookWorkspace';
 import styles from './Notebooks.module.css';
 
 /**
@@ -34,22 +30,6 @@ import styles from './Notebooks.module.css';
 /** What the file picker will offer, matching the reader's own list. */
 const ACCEPT =
   '.png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.markdown,.csv,.json,.log,.tsv,.docx,.xlsx,.pptx';
-
-/**
- * Base64 for arbitrary bytes.
- *
- * `btoa` takes a Latin-1 string and throws on anything outside it, and the
- * rendered graph is full of em-dashes and curly quotes. Chunked so a large
- * selection cannot blow the argument limit of `String.fromCharCode`.
- */
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
 
 /** A short, local date. Notebooks are per-machine, so the machine's zone is right. */
 function shortDate(iso: string): string {
@@ -241,61 +221,6 @@ export const Notebooks: React.FC = () => {
     [selectedId],
   );
 
-  const navigate = useNavigate();
-  const { send } = useConversation();
-  const [importing, setImporting] = useState(false);
-
-  /**
-   * Takes the chosen terms into a chat turn.
-   *
-   * The subgraph is rendered to Markdown by the backend and handed to `send` as
-   * an ordinary attachment. Nothing about the context pipeline needed changing:
-   * the attachment path already content-addresses it, chunks it, budgets it,
-   * shows it in the context meter and lets it be pinned — so the imported graph
-   * behaves exactly like any other document the model was given.
-   */
-  const importSelection = useCallback(
-    async (nodes: GraphNode[]) => {
-      if (!selectedId || nodes.length === 0) return;
-      setImporting(true);
-      setError(null);
-      try {
-        const rendered = await renderSubgraph(
-          selectedId,
-          nodes.map((node) => node.id),
-        );
-        const labels = nodes.map((node) => node.label);
-        const named =
-          labels.length <= 4
-            ? labels.join(', ')
-            : `${labels.slice(0, 4).join(', ')} and ${labels.length - 4} more`;
-
-        await send(
-          `Using the attached selection from my notebook, what connects ${named}? Cite the documents.`,
-          undefined,
-          {
-            attachments: [
-              {
-                name: rendered.name,
-                mime: 'text/markdown',
-                // The markdown is UTF-8 and may contain non-Latin-1 characters,
-                // which `btoa` cannot encode. Going through the byte encoder
-                // first is what stops an em-dash from throwing here.
-                dataBase64: bytesToBase64(new TextEncoder().encode(rendered.markdown)),
-              },
-            ],
-          },
-        );
-        navigate('/');
-      } catch (err) {
-        setError(String(err));
-      } finally {
-        setImporting(false);
-      }
-    },
-    [selectedId, send, navigate],
-  );
-
   const selected = notebooks.find((n) => n.id === selectedId) ?? null;
 
   if (loading) {
@@ -449,30 +374,6 @@ export const Notebooks: React.FC = () => {
           </div>
         ) : (
           <>
-            <header className={styles.detailHead}>
-              <div>
-                <h2 className={styles.detailTitle}>{selected.name}</h2>
-                <p className={styles.detailMeta}>
-                  {selected.documentCount}{' '}
-                  {selected.documentCount === 1 ? 'document' : 'documents'} · created{' '}
-                  {shortDate(selected.createdAt)}
-                </p>
-              </div>
-              <div className={styles.detailActions}>
-                <Button size="sm" variant="ghost" icon onClick={() => void refresh()}>
-                  <RefreshCw size={14} />
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => fileInput.current?.click()}
-                  loading={adding}
-                  disabled={adding}
-                >
-                  Add documents
-                </Button>
-              </div>
-            </header>
-
             <input
               ref={fileInput}
               type="file"
@@ -501,18 +402,21 @@ export const Notebooks: React.FC = () => {
               </div>
             )}
 
-            {documents.length === 0 && (
-              <p className={styles.empty}>
-                Nothing in this notebook yet. Add documents to build it up.
-              </p>
-            )}
-
-            <NotebookGraphPanel
-              notebookId={selected.id}
-              documentCount={selected.documentCount}
-              documentSha256={scopedDocument}
-              onImport={(nodes) => void importSelection(nodes)}
-              importing={importing}
+            <NotebookWorkspace
+              notebook={selected}
+              sources={documents}
+              scopedDocument={scopedDocument}
+              onScopeDocument={setScopedDocument}
+              onRemoveSource={(source) => void removeSource(selected.id, source)}
+              onAddDocuments={() => fileInput.current?.click()}
+              adding={adding}
+              onRefresh={() => {
+                void refresh();
+                void notebookService
+                  .documents(selected.id)
+                  .then(setDocuments)
+                  .catch((err) => setError(String(err)));
+              }}
             />
           </>
         )}

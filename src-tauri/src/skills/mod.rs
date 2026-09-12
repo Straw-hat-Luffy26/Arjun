@@ -70,6 +70,7 @@ pub mod frontmatter;
 pub mod manifest;
 pub mod narrowing;
 pub mod registry;
+pub mod selection;
 
 pub use manifest::{
     is_valid_name, ApprovalClass, NetworkNeed, Quarantine, SkillCard, SkillManifest,

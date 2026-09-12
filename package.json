@@ -29,7 +29,7 @@
     "runtime:install": "npm --prefix agent-runtime ci --offline",
     "runtime:audit": "npm --prefix agent-runtime run audit",
     "runtime:typecheck": "npm --prefix agent-runtime run typecheck",
-    "test:integration": "cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast --test agent_runtime --test two_runtimes --test rbac_isolation --test imported_skills_load --test test_memory_pipeline --test seed_local_accounts --test verify_certification_system --test scan_real_library",
+    "test:integration": "cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast --test agent_runtime --test two_runtimes --test rbac_isolation --test imported_skills_load --test test_memory_pipeline --test seed_local_accounts --test verify_certification_system --test scan_real_library --test artifact_formats_end_to_end",
     "test:rust:models": "cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast --test verify_llama_runtime --test verify_gui_execution_trace --test verify_real_world_model_switching -- --nocapture",
     "test:rust:all": "cargo test --manifest-path src-tauri/Cargo.toml --tests --no-fail-fast",
     "check:targets": "cargo check --manifest-path src-tauri/Cargo.toml --all-targets",

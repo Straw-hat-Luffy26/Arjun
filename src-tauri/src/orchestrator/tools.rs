@@ -553,6 +553,15 @@ pub struct ToolSpec {
     /// What the user must hold for this to be permitted at all.
     pub permission: Permission,
     pub arguments: &'static [ArgumentSpec],
+    /// Arguments a caller may omit.
+    ///
+    /// A separate list rather than a flag on [`ArgumentSpec`] because every
+    /// spec in this file is a struct literal, and Rust has no defaults for
+    /// those: adding a field would mean touching sixty construction sites to
+    /// write `optional: false` on each. The kind of an optional argument is
+    /// still checked when it *is* supplied — omitting it is allowed, getting
+    /// it wrong is not.
+    pub optional_arguments: &'static [ArgumentSpec],
     /// Whether a person has to say yes before this runs.
     ///
     /// True for anything that leaves a trace outside the task — a file, a
@@ -586,6 +595,24 @@ pub struct ToolSpec {
 /// About four thousand tokens on English prose: large enough for six passages
 /// with their citations, small enough that one call cannot take half of an 8k
 /// window. Tools that answer with more than this say so and offer a page.
+/// Wall-clock ceiling for a tool that renders a file.
+///
+/// Every artifact tool shares it, because the thing that varies is the size of
+/// the deliverable and not which writer produced it. `create_pdf` used to get
+/// fifteen seconds and `create_diagram`, `create_table` and `create_chart` ten,
+/// against a hundred and twenty for the three OOXML writers — numbers that
+/// came from how long each writer took on a small fixture, not from how long a
+/// real deliverable takes. A forty-page report and a two-row table were given
+/// the same budget as each other only by accident, and the report lost.
+///
+/// This is an interim measure and is deliberately generous. The honest answer
+/// is a budget that scales with the content and a stall detector that watches
+/// progress rather than elapsed time; that is
+/// [`crate::orchestrator::progress`], and it supersedes this ceiling for the
+/// tools that report progress. This number is what bounds a writer that
+/// reports nothing at all.
+pub const ARTIFACT_RENDER_TIMEOUT: Duration = Duration::from_secs(120);
+
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 16 * 1024;
 
 /// What every tool gets unless its own arm says otherwise.
@@ -602,6 +629,7 @@ fn defaults(name: ToolName) -> ToolSpec {
         name,
         permission: Permission::UseModel,
         arguments: &[],
+        optional_arguments: &[],
         needs_approval: !read_only,
         max_bytes: None,
         timeout: Duration::from_secs(30),
@@ -892,7 +920,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "connections", kind: Text },
             ],
             network: NetworkUse::None,
-            timeout: Duration::from_secs(10),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             max_response_bytes: 64 * 1024,
             ..defaults(name)
         },
@@ -912,7 +940,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "body", kind: Text },
             ],
             network: NetworkUse::None,
-            timeout: Duration::from_secs(15),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             max_response_bytes: 4 * 1024,
             ..defaults(name)
         },
@@ -933,7 +961,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "classification", kind: Text },
             ],
             network: NetworkUse::None,
-            timeout: Duration::from_secs(10),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             // The markdown table comes back for the chat to draw.
             max_response_bytes: 32 * 1024,
             ..defaults(name)
@@ -956,7 +984,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "valueLabel", kind: Text },
             ],
             network: NetworkUse::None,
-            timeout: Duration::from_secs(10),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             // The SVG comes back in the tool result so the chat can draw it
             // without a second round trip. A chart of a dozen categories is a
             // few kilobytes; this bounds the pathological case.
@@ -1057,10 +1085,20 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
         // missing", and the model retried until its budget ran out.
         ToolName::CreateDocx => ToolSpec {
             permission: GenerateArtifact,
-            arguments: &[
-                ArgumentSpec { name: "path", kind: Path },
+            arguments: &[ArgumentSpec { name: "path", kind: Path }],
+            // The general path. A document composed section by section rather
+            // than poured into the one template this product shipped with.
+            // `template` and `sections` are alternatives: supply one or the
+            // other, never both.
+            optional_arguments: &[
+                // One of `template`+`content` or `sections` is required, and
+                // the handler says which is missing — a rule the gateway's
+                // per-argument check cannot express.
                 ArgumentSpec { name: "template", kind: Text },
                 ArgumentSpec { name: "content", kind: Object },
+                ArgumentSpec { name: "sections", kind: Object },
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "classification", kind: Text },
             ],
             // Automatic, for the reason `NotebookCreate` records above: the
             // gateway held every one of these calls waiting for an approval
@@ -1071,13 +1109,24 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             needs_approval: false,
             approval_class: ApprovalClass::Automatic,
             max_bytes: Some(64 * 1024 * 1024),
-            timeout: Duration::from_secs(120),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             scoped_to_workspace: true,
             ..defaults(name)
         },
         ToolName::CreateXlsx => ToolSpec {
             permission: GenerateArtifact,
-            arguments: &[ArgumentSpec { name: "path", kind: Path }],
+            arguments: &[
+                ArgumentSpec { name: "path", kind: Path },
+            ],
+            // The general path. A workbook composed sheet by sheet with typed
+            // columns, rather than the run's calculation records. Absent means
+            // the calculation workbook, which is what this tool has always
+            // produced.
+            optional_arguments: &[
+                ArgumentSpec { name: "sheets", kind: Object },
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "classification", kind: Text },
+            ],
             // Automatic, for the reason `NotebookCreate` records above: the
             // gateway held every one of these calls waiting for an approval
             // nothing surfaced, and the run sat there until the request timed
@@ -1087,7 +1136,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             needs_approval: false,
             approval_class: ApprovalClass::Automatic,
             max_bytes: Some(64 * 1024 * 1024),
-            timeout: Duration::from_secs(120),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             scoped_to_workspace: true,
             ..defaults(name)
         },
@@ -1106,7 +1155,7 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             needs_approval: false,
             approval_class: ApprovalClass::Automatic,
             max_bytes: Some(64 * 1024 * 1024),
-            timeout: Duration::from_secs(120),
+            timeout: ARTIFACT_RENDER_TIMEOUT,
             scoped_to_workspace: true,
             ..defaults(name)
         },
@@ -1341,6 +1390,46 @@ impl ToolCall {
 
 #[cfg(test)]
 mod tests {
+
+    /// Phase A. No artifact writer gets a ceiling shorter than the work.
+    ///
+    /// `create_pdf` had fifteen seconds and `create_diagram`, `create_table`
+    /// and `create_chart` ten. A forty-page report and a two-row table were
+    /// given the same budget only by accident, and the report lost: the tool
+    /// was killed mid-render and the run reported a failure that was really a
+    /// stopwatch.
+    #[test]
+    fn every_artifact_writer_has_a_budget_fit_for_a_real_deliverable() {
+        for name in [
+            ToolName::CreateDocx,
+            ToolName::CreateXlsx,
+            ToolName::CreatePptx,
+            ToolName::CreatePdf,
+            ToolName::CreateDiagram,
+            ToolName::CreateTable,
+            ToolName::CreateChart,
+        ] {
+            let spec = spec_for(name);
+            assert_eq!(
+                spec.timeout,
+                ARTIFACT_RENDER_TIMEOUT,
+                "{name:?} does not share the artifact render ceiling; a writer with \
+                 its own number drifts from the others the moment either changes"
+            );
+        }
+    }
+
+    /// The ceiling is still a ceiling. A tool that can hang has a budget of
+    /// infinity, and a plan containing it can never be bounded.
+    #[test]
+    fn the_artifact_ceiling_is_finite_and_inside_the_run_deadline() {
+        assert!(ARTIFACT_RENDER_TIMEOUT.as_secs() > 0);
+        assert!(
+            ARTIFACT_RENDER_TIMEOUT < std::time::Duration::from_secs(30 * 60),
+            "a single tool may not be allowed to consume the whole run deadline"
+        );
+    }
+
     use super::*;
 
     #[test]

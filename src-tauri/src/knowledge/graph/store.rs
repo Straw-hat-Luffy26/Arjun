@@ -116,6 +116,11 @@ impl NotebookStore {
         // The graph tables live beside these, created in the same open so a
         // store handed to a caller is always complete.
         Self::prepare_graph(conn)?;
+        Self::prepare_assertions(conn)?;
+        Self::prepare_notes(conn)?;
+        Self::prepare_research(conn)?;
+        // Runs after every table exists, because it moves rows between them.
+        Self::migrate_graph(conn)?;
         Ok(())
     }
 
@@ -207,11 +212,22 @@ impl NotebookStore {
             anyhow::bail!("no such notebook");
         }
 
+        // The evidence of a claim is keyed by the claim's id, not by the
+        // notebook, so it is deleted through its parent before the parent goes.
+        transaction.execute(
+            "DELETE FROM graph_assertion_evidence
+              WHERE assertion_id IN (SELECT id FROM graph_assertions WHERE notebook_id = ?1)",
+            params![id],
+        )?;
+
         for table in [
             "graph_evidence",
             "graph_edges",
             "graph_nodes",
             "graph_build_units",
+            "graph_assertions",
+            "notebook_notes",
+            "notebook_research_turns",
             "notebook_documents",
         ] {
             transaction.execute(
@@ -224,12 +240,32 @@ impl NotebookStore {
         Ok(())
     }
 
-    /// Takes one document out of a notebook.
+    /// Takes one document out of a notebook, and everything derived from it.
     ///
-    /// The graph built over the notebook still holds nodes and edges that came
-    /// from this document, and they are removed too - an graph that still draws
-    /// a term whose only source has been taken out is citing a passage the
-    /// notebook can no longer show.
+    /// ## What the old version left behind
+    ///
+    /// It deleted the membership row, the evidence and the build unit — and
+    /// left `graph_nodes` and `graph_edges` untouched. So the term a removed
+    /// document was the only source of stayed on the canvas, kept its
+    /// occurrence count, and was still offered for selection and for export:
+    /// a graph asserting something whose only citation had just been taken
+    /// away, with the "why do you think that?" panel now empty. Worse, a term
+    /// removed from the *documents* went on steering retrieval.
+    ///
+    /// ## Why deleting this document's rows is enough
+    ///
+    /// Every graph row is keyed by `(notebook, document, term)` — see
+    /// [`super::persist`] — and the notebook's view is the `GROUP BY` over
+    /// them. So removing this document's rows removes exactly this document's
+    /// contribution: a term two files supported keeps the other file's row and
+    /// stays in the graph with its count reduced by what this one gave it, and
+    /// a term only this file supported has no rows left and is gone. There is
+    /// no orphan sweep to get wrong, because there is no shared row to orphan.
+    ///
+    /// Other notebooks are untouched: `notebook_id` is in every `WHERE`. The
+    /// document itself is untouched too — the extraction stays in the
+    /// [`crate::agent_runtime::documents::DocumentStore`], because the same
+    /// bytes may be in another notebook or in somebody's chat.
     pub fn remove_document(
         &self,
         notebook_id: &str,
@@ -257,18 +293,16 @@ impl NotebookStore {
             anyhow::bail!("that document is not in this notebook");
         }
 
-        // What the document contributed to the graph goes with it. The build
-        // unit goes too, so a later build treats the notebook as needing the
-        // work rather than skipping it as already done.
-        transaction.execute(
-            "DELETE FROM graph_evidence
-              WHERE notebook_id = ?1 AND document_sha256 = ?2",
-            params![notebook_id, document_sha256],
+        super::persist::purge_document_contributions(
+            &transaction,
+            notebook_id,
+            document_sha256,
         )?;
+
+        let now = chrono::Utc::now().to_rfc3339();
         transaction.execute(
-            "DELETE FROM graph_build_units
-              WHERE notebook_id = ?1 AND document_sha256 = ?2",
-            params![notebook_id, document_sha256],
+            "UPDATE notebooks SET updated_at = ?2 WHERE id = ?1",
+            params![notebook_id, &now],
         )?;
         transaction.commit()?;
         Ok(())

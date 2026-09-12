@@ -1,4 +1,4 @@
 {
-  "unusedWarnings": 46,
+  "unusedWarnings": 43,
   "note": "The ceiling on unused Rust imports, fields, constants and functions. It may fall and it may not rise; see scripts/check-lint-budget.mjs for why this is a ratchet rather than deny(warnings)."
 }

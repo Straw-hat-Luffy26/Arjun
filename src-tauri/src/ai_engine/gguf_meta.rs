@@ -221,13 +221,49 @@ pub fn parse_gguf_metadata<R: Read + Seek>(r: &mut R) -> Result<GgufMetadata> {
     for _ in 0..kv_count {
         let key = read_string(r)?;
         let value_type = read_u32(r)?;
-        if let Some(value) = read_value(r, value_type)? {
-            kv.insert(key, value);
+        // Only the token list is worth looking inside. Every other array in a
+        // GGUF header is numeric or is not about what the model can emit.
+        let scan = key == "tokenizer.ggml.tokens";
+        match read_value(r, value_type, scan)? {
+            ArrayOrScalar::Scalar(value) => {
+                kv.insert(key, value);
+            }
+            ArrayOrScalar::ScannedVocabulary { has_reasoning_token } => {
+                if has_reasoning_token {
+                    kv.insert(
+                        VOCABULARY_HAS_REASONING_TOKEN.to_string(),
+                        Scalar::Bool(true),
+                    );
+                }
+            }
+            ArrayOrScalar::Skipped => {}
         }
     }
 
     from_kv(&kv)
 }
+
+/// Tag openers that mean "what follows is reasoning".
+///
+/// These are the ones the runtime's own partitioner recognises
+/// (`REASONING_TAG_NAMES` in `markdown-core`), and keeping the two in step is
+/// the whole point: the partitioner strips these out of the visible answer, and
+/// if this side has not declared the model as reasoning, the transport drops
+/// what the partitioner stripped and holds the answer back with it.
+///
+/// Prefixes, not whole tags: `<think` covers `<think>` and `<thinking>`, and a
+/// tag carrying attributes still matches.
+const REASONING_OPENERS: &[&str] =
+    &["<think", "<thought", "<reasoning", "<internal", "<antthinking"];
+
+/// The key under which the vocabulary scan records what it saw.
+///
+/// Not a real GGUF key. The token list is stepped over rather than read — a
+/// production vocabulary is 130k entries and this parse runs for every model on
+/// the shelf — so the scanner cannot hand back the tokens themselves. It
+/// records this one bit instead, in the same map, so `from_kv` stays a pure
+/// function of the parsed header.
+const VOCABULARY_HAS_REASONING_TOKEN: &str = "arjun.vocabulary_has_reasoning_token";
 
 fn from_kv(kv: &HashMap<String, Scalar>) -> Result<GgufMetadata> {
     let architecture = kv
@@ -283,8 +319,6 @@ fn from_kv(kv: &HashMap<String, Scalar>) -> Result<GgufMetadata> {
     //
     // Prefixes, not whole tags: `<think` covers `<think>` and `<thinking>`, and
     // a tag carrying attributes still matches.
-    const REASONING_OPENERS: &[&str] =
-        &["<think", "<thought", "<reasoning", "<internal", "<antthinking"];
     let emits_reasoning = supports_toggled_reasoning
         || chat_template
             .map(|template| {
@@ -292,7 +326,21 @@ fn from_kv(kv: &HashMap<String, Scalar>) -> Result<GgufMetadata> {
                     .iter()
                     .any(|opener| template.contains(opener))
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+        // The vocabulary, for a model whose header carries no template at all.
+        //
+        // NVIDIA-Nemotron3-Nano-4B is exactly that: no
+        // `tokenizer.chat_template` key, llama.cpp guesses a profile, and
+        // `<think>` / `</think>` sit in `tokenizer.ggml.tokens` as special
+        // tokens. It reasons on every turn. Reading only the template called
+        // it a non-reasoning model, which set `thinkingLevel: "off"` in the
+        // runtime, which dropped its reasoning *and held the visible answer
+        // back with it* — twelve seconds of blank screen and then the whole
+        // reply at once.
+        //
+        // A model cannot emit a token that is not in its vocabulary, so this
+        // is evidence of the same kind as the template, not a guess.
+        || kv.contains_key(VOCABULARY_HAS_REASONING_TOKEN);
 
     // Every `get` is done, so the closure's borrow of `architecture` has ended
     // and it can be moved into the result.
@@ -354,8 +402,27 @@ impl Scalar {
     }
 }
 
-/// Reads one value, or `Ok(None)` for an array that was skipped.
-fn read_value<R: Read + Seek>(r: &mut R, value_type: u32) -> Result<Option<Scalar>> {
+/// What one metadata value turned out to be.
+///
+/// Arrays are not materialised — see [`skip_array`] — so they cannot come back
+/// as a `Scalar`. The vocabulary is the one array whose *contents* change a
+/// decision, and it reports the single bit it was scanned for.
+enum ArrayOrScalar {
+    Scalar(Scalar),
+    Skipped,
+    ScannedVocabulary { has_reasoning_token: bool },
+}
+
+/// Reads one value, stepping over arrays.
+///
+/// `scan_vocabulary` asks for the one exception: the token list is walked and
+/// each entry checked against [`REASONING_OPENERS`], because a model whose
+/// header carries no chat template still declares what it can emit here.
+fn read_value<R: Read + Seek>(
+    r: &mut R,
+    value_type: u32,
+    scan_vocabulary: bool,
+) -> Result<ArrayOrScalar> {
     let scalar = match value_type {
         0 => Scalar::U(u64::from(read_n::<_, 1>(r)?[0])),
         1 => Scalar::I(i64::from(read_n::<_, 1>(r)?[0] as i8)),
@@ -367,15 +434,19 @@ fn read_value<R: Read + Seek>(r: &mut R, value_type: u32) -> Result<Option<Scala
         7 => Scalar::Bool(read_n::<_, 1>(r)?[0] != 0),
         8 => Scalar::Str(read_string(r)?),
         9 => {
-            skip_array(r)?;
-            return Ok(None);
+            let has_reasoning_token = skip_array(r, scan_vocabulary)?;
+            return Ok(if scan_vocabulary {
+                ArrayOrScalar::ScannedVocabulary { has_reasoning_token }
+            } else {
+                ArrayOrScalar::Skipped
+            });
         }
         10 => Scalar::U(read_u64(r)?),
         11 => Scalar::I(i64::from_le_bytes(read_n::<_, 8>(r)?)),
         12 => Scalar::F(f64::from_le_bytes(read_n::<_, 8>(r)?)),
         other => bail!("unknown GGUF value type {other}"),
     };
-    Ok(Some(scalar))
+    Ok(ArrayOrScalar::Scalar(scalar))
 }
 
 /// Byte width of a fixed-size value type, or `None` for strings and arrays.
@@ -389,7 +460,15 @@ fn scalar_width(value_type: u32) -> Option<u64> {
     }
 }
 
-fn skip_array<R: Read + Seek>(r: &mut R) -> Result<()> {
+/// Steps over an array, returning whether a reasoning token was seen in it.
+///
+/// The return is always `false` unless `scan` was asked for. Scanning still
+/// does not build the vocabulary: only entries short enough to *be* a tag are
+/// read, and everything else is seeked over exactly as before. A real
+/// vocabulary is around 130k entries and this parse runs for every model on the
+/// shelf at startup, so the cost of the scan is a bounded read of a few dozen
+/// bytes per short token, not a 2 MB allocation.
+fn skip_array<R: Read + Seek>(r: &mut R, scan: bool) -> Result<bool> {
     let element_type = read_u32(r)?;
     let len = read_u64(r)?;
 
@@ -398,23 +477,47 @@ fn skip_array<R: Read + Seek>(r: &mut R) -> Result<()> {
             let bytes = width
                 .checked_mul(len)
                 .ok_or_else(|| anyhow!("GGUF array length {len} overflows"))?;
-            seek_forward(r, bytes)
+            seek_forward(r, bytes)?;
+            Ok(false)
         }
         // Strings are variable-length, so each has to be stepped over.
         None if element_type == 8 => {
+            let mut found = false;
+            let mut token = Vec::new();
             for _ in 0..len {
                 let bytes = read_u64(r)?;
                 if bytes > MAX_STRING_BYTES {
                     bail!("GGUF string of {bytes} bytes is not credible");
                 }
-                seek_forward(r, bytes)?;
+                // `<antthinking` is the longest opener at twelve bytes. A
+                // token longer than this ceiling cannot be one of them, and is
+                // stepped over unread like every other entry.
+                if scan && !found && bytes <= MAX_REASONING_TOKEN_BYTES {
+                    token.clear();
+                    token.resize(bytes as usize, 0);
+                    r.read_exact(&mut token)
+                        .context("GGUF header ended inside the vocabulary")?;
+                    // Lossy: a token that is not valid UTF-8 is not a tag.
+                    let text = String::from_utf8_lossy(&token);
+                    found = REASONING_OPENERS
+                        .iter()
+                        .any(|opener| text.starts_with(opener));
+                } else {
+                    seek_forward(r, bytes)?;
+                }
             }
-            Ok(())
+            Ok(found)
         }
         None if element_type == 9 => bail!("nested GGUF arrays are not supported"),
         None => bail!("unknown GGUF array element type {element_type}"),
     }
 }
+
+/// Longest reasoning opener plus room for `>` and an attribute or two.
+///
+/// A bound rather than a guess: it is what keeps the vocabulary scan from
+/// reading a 130k-entry token list into memory.
+const MAX_REASONING_TOKEN_BYTES: u64 = 32;
 
 fn seek_forward<R: Seek>(r: &mut R, bytes: u64) -> Result<()> {
     let offset = i64::try_from(bytes)
@@ -593,6 +696,72 @@ mod tests {
             !meta.emits_reasoning,
             "a template mentioning neither is a model that does not reason"
         );
+    }
+
+    /// The case that shipped broken: a reasoning model with no chat template.
+    ///
+    /// NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf, on this machine, has **no**
+    /// `tokenizer.chat_template` key at all \u2014 llama.cpp guesses a profile for
+    /// it \u2014 while carrying `<think>` and `</think>` in
+    /// `tokenizer.ggml.tokens` as special tokens. It reasons on every turn:
+    /// answering "hi" cost 67 output tokens for a nine-token reply.
+    ///
+    /// Reading only the template made `emits_reasoning` false, which set
+    /// `thinkingLevel: "off"` in the runtime, which dropped every reasoning
+    /// delta *and* held the visible answer back with them. The operator saw no
+    /// thinking and no streaming \u2014 the whole reply appeared at once after
+    /// twelve seconds of blank space.
+    ///
+    /// A model cannot emit a token that is not in its vocabulary, and a
+    /// vocabulary does not carry `<think>` by accident.
+    #[test]
+    fn reasoning_tokens_in_the_vocabulary_are_a_reasoning_model() {
+        let mut reader = header(vec![
+            kv_str("general.architecture", "nemotron_h"),
+            kv_u32("nemotron_h.block_count", 42),
+            kv_string_array(
+                "tokenizer.ggml.tokens",
+                &["[INST]", "<|im_start|>", "<think>", "</think>", "<tool_call>"],
+            ),
+        ]);
+        let meta = parse_gguf_metadata(&mut reader).expect("parses");
+        assert!(
+            !meta.supports_toggled_reasoning,
+            "there is no switch, and saying there is would send a kwarg its template cannot read"
+        );
+        assert!(
+            meta.emits_reasoning,
+            "a vocabulary carrying <think> is a model that reasons, template or no template"
+        );
+    }
+
+    /// The vocabulary is scanned, not loaded. A real one is 130k entries and
+    /// this runs on every model on the shelf at startup.
+    #[test]
+    fn scanning_the_vocabulary_does_not_read_past_it() {
+        let mut reader = header(vec![
+            kv_str("general.architecture", "llama"),
+            kv_string_array("tokenizer.ggml.tokens", &["<think>", "a", "b"]),
+            kv_u32("llama.block_count", 32),
+        ]);
+        let meta = parse_gguf_metadata(&mut reader).expect("parses");
+        assert!(meta.emits_reasoning);
+        assert_eq!(
+            meta.block_count, 32,
+            "the key after the vocabulary must still be found"
+        );
+    }
+
+    /// An ordinary vocabulary says nothing either way.
+    #[test]
+    fn a_vocabulary_without_reasoning_tokens_reports_none() {
+        let mut reader = header(vec![
+            kv_str("general.architecture", "llama"),
+            kv_u32("llama.block_count", 32),
+            kv_string_array("tokenizer.ggml.tokens", &["hello", "world", "<|end|>"]),
+        ]);
+        let meta = parse_gguf_metadata(&mut reader).expect("parses");
+        assert!(!meta.emits_reasoning);
     }
 
     /// A header with no template at all is not a reasoning model. Absent has
