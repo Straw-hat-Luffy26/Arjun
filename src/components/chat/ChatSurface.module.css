@@ -2639,3 +2639,275 @@
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
+
+/* ── The /notebook chooser, chip and evidence ──────────────────────────
+ *
+ * All of it sits in the composer column so the chooser lines up with the
+ * input it belongs to, and none of it is taller than a third of the viewport:
+ * a chooser that pushes the composer off the bottom of the screen is a
+ * chooser you cannot use.
+ */
+
+.notebookChooser {
+  max-width: var(--chat-column);
+  width: 100%;
+  margin: 0 auto 6px;
+  max-height: min(38vh, 340px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated, var(--bg-primary));
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  overflow: hidden;
+}
+
+.notebookChooserHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle, var(--border-default));
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.notebookChooserHead > span { flex: 1; }
+
+.notebookChooserList {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.notebookChooserRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.notebookChooserRow[data-highlighted] { background: var(--bg-hover, rgb(127 127 127 / 12%)); }
+
+.notebookChooserName { font-size: var(--text-sm); font-weight: 500; }
+.notebookChooserMeta { font-size: var(--text-xs); color: var(--text-tertiary); }
+
+.notebookChooserNote,
+.notebookChooserProblem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.notebookChooserProblem { color: var(--color-warning, #b45309); }
+
+.spin { animation: notebookSpin 1s linear infinite; }
+@keyframes notebookSpin { to { transform: rotate(360deg); } }
+
+.notebookChipWrap {
+  position: relative;
+  max-width: var(--chat-column);
+  width: 100%;
+  margin: 0 auto 6px;
+}
+
+.notebookChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.notebookChipName {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.notebookChipCount { color: var(--text-tertiary); }
+.notebookChipWarn { display: inline-flex; color: var(--color-warning, #b45309); }
+
+.notebookChipPanel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: min(440px, 100%);
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-elevated, var(--bg-primary));
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.notebookChipPanelHead { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+
+.notebookChipAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.notebookChipAction:disabled { opacity: 0.6; cursor: default; }
+
+.notebookChipSources { list-style: none; margin: 0; padding: 0; }
+
+.notebookChipSource {
+  padding: 6px 4px;
+  border-top: 1px solid var(--border-subtle, var(--border-default));
+}
+
+.notebookChipSourceLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.notebookChipSourceName { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.notebookChipSourceState {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.notebookChipSourceState[data-state='failed'],
+.notebookChipSourceState[data-state='unavailable'] { color: var(--color-warning, #b45309); }
+
+.notebookChipReasons {
+  list-style: none;
+  margin: 4px 0 0 22px;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* ── Citations and the evidence behind an answer ────────────────────── */
+
+.citation {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  margin: 0 1px;
+  background: var(--bg-hover, rgb(127 127 127 / 12%));
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-size: 0.82em;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.citation[data-unresolved] {
+  cursor: default;
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.evidenceFooter {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle, var(--border-default));
+  border-radius: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.evidenceFooterHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.evidenceMode { color: var(--text-tertiary); font-style: italic; }
+
+.evidenceLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.evidenceUsed { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0; padding: 0; }
+.evidenceCount { color: var(--text-tertiary); }
+.evidenceUnused { margin: 6px 0 0; }
+
+.evidenceLimitations { list-style: none; margin: 6px 0 0; padding: 0; color: var(--color-warning, #b45309); }
+.evidenceLimitations li { display: flex; align-items: flex-start; gap: 5px; }
+
+.evidenceProblem {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-warning, #b45309);
+}
+
+.citationOverlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; }
+.citationBackdrop { position: absolute; inset: 0; background: rgb(0 0 0 / 45%); }
+
+.citationPanel {
+  position: relative;
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  background: var(--bg-elevated, var(--bg-primary));
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+.citationHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.citationTitle { margin: 0; font-size: var(--text-sm); display: flex; flex-direction: column; gap: 2px; }
+.citationWhere { font-weight: 400; font-size: var(--text-xs); color: var(--text-tertiary); }
+.citationSection { margin-top: 14px; }
+.citationSectionTitle { margin: 0 0 6px; font-size: var(--text-xs); color: var(--text-tertiary); font-weight: 500; }
+
+.citationQuote {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border-default);
+  background: var(--bg-hover, rgb(127 127 127 / 8%));
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+.citationPage { margin: 0; font-size: var(--text-sm); white-space: pre-wrap; }
+.citationMark { background: var(--color-accent-soft, rgb(250 204 21 / 45%)); border-radius: 2px; }

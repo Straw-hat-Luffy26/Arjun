@@ -417,6 +417,16 @@
       "consumer": "frontend",
       "note": "Called from src/. Runs the statistical extraction pass over a notebook's documents; resumable, skips documents already built at this extractor version."
     },
+    "notebook_clear_conversation_scope": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Takes the notebook off a conversation and leaves its evidence alone. Deliberately not notebook_unbind, which also deletes every research manifest in the thread and would stop the citations in answers already given from resolving."
+    },
+    "notebook_conversation_scope": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. The notebook and selection a conversation was left on, for restoring the chip above the composer."
+    },
     "notebook_correct_assertion": {
       "owner": "notebook",
       "consumer": "frontend",
@@ -502,6 +512,11 @@
       "consumer": "frontend-pending",
       "note": "Renders a chosen subgraph as Markdown. No longer used by the Notebooks screen: 'Ask about selection' now sends the graph node ids as a research scope and the backend retrieves the original passages, so the answer cites documents rather than a summary of a graph. Kept registered for export, and unreferenced from src/ until an export surface exists."
     },
+    "notebook_repair_source": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Records the notebook access a membership row was written without, so a source whose text is already on disk becomes readable. Re-reads nothing and runs no model; refuses anything that is not repairable this way."
+    },
     "notebook_review_assertion": {
       "owner": "notebook",
       "consumer": "frontend",
@@ -517,10 +532,20 @@
       "consumer": "frontend",
       "note": "Called from src/. What the next question would read — how many sources, which are unreadable, what the graph selection narrows it to, and how passages will be found — so the scope is visible before the question is asked rather than after it is answered."
     },
+    "notebook_set_conversation_scope": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Remembers which notebook a chat is asking and which of its sources, so reopening the conversation restores the chip. The preference only -- each turn freezes its own scope onto its evidence manifest."
+    },
     "notebook_source_page": {
       "owner": "notebook",
       "consumer": "frontend",
       "note": "Called from src/. One page of a notebook source's extracted text, for the reader. Scoped to the notebook as well as the owner, so a document held in another notebook is not readable through this one."
+    },
+    "notebook_source_status": {
+      "owner": "notebook",
+      "consumer": "frontend",
+      "note": "Called from src/. Whether each source in a notebook can actually be read, with the reason and the repair when it cannot. Distinct from notebook_documents, which answers membership and says nothing about whether any of it has readable text."
     },
     "notebook_threads": {
       "owner": "notebook",

@@ -44,6 +44,16 @@ const ASSUMED_LAYERS_FALLBACK: u32 = 32;
 /// Value meaning "offload everything" to llama.cpp.
 pub const FULL_OFFLOAD: u32 = 999;
 
+/// Factor by which `q8_0` KV cache quantisation reduces memory compared to FP16.
+///
+/// `llama-server` is now launched with `-ctk q8_0 -ctv q8_0`, so the actual
+/// cache costs half what the FP16 formula gives. The planner must agree: a
+/// planner that still charges FP16 while the server allocates `q8_0` walks down
+/// to 8 192 tokens and leaves the server holding a 32 768-token buffer that was
+/// already paid for — the reverse of the over-commit this module exists to
+/// prevent.
+const KV_QUANT_FACTOR: f64 = 0.5;
+
 /// The offload decision, with the reasoning that produced it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GpuOffloadPlan {
@@ -81,7 +91,11 @@ impl GpuOffloadPlan {
 /// not free: the assistant reads scanned reports and drafts from them, and
 /// below about this much it cannot hold a document and an answer at once. So
 /// the search stops here even when a smaller window would fit more layers.
-const MIN_SERVING_CONTEXT: u32 = 8192;
+/// Raised from 8 192 to 16 384: with `q8_0` KV cache quantisation, 16k tokens
+/// cost the same VRAM as 8k did with FP16 — and 8k left under 120 tokens of
+/// headroom after system prompt, tools and reply reserve were charged, which is
+/// how a five-word question produced `400 request exceeds context size`.
+const MIN_SERVING_CONTEXT: u32 = 16_384;
 
 /// Context windows to consider, largest first, none above what was asked for.
 ///
@@ -91,7 +105,7 @@ const MIN_SERVING_CONTEXT: u32 = 8192;
 /// weights — a third of the layers on the GPU and the rest crossing PCIe for
 /// every token. The same model at 8K fits entirely in VRAM.
 fn context_ladder(requested: u32) -> Vec<u32> {
-    let mut rungs: Vec<u32> = [requested, 32_768, 16_384, MIN_SERVING_CONTEXT]
+    let mut rungs: Vec<u32> = [requested, 65_536, 32_768, 16_384, MIN_SERVING_CONTEXT]
         .into_iter()
         .filter(|rung| *rung <= requested && *rung > 0)
         .collect();
@@ -253,10 +267,16 @@ fn plan_at_context(
     // The model's own geometry where the caller read it, the size band where
     // nobody did. The band errs high on purpose; measured beats conservative
     // whenever the measurement exists.
-    let kv_bytes = kv_bytes_per_token
+    //
+    // Apply the KV cache quantisation factor so the planner agrees with the
+    // server's actual allocation.  Without this, the per-token cost is the
+    // FP16 figure while the server runs `q8_0`, and the planner walks the
+    // context ladder down to a window the server's cache already fits in.
+    let kv_per_token_fp16 = kv_bytes_per_token
         .filter(|per_token| *per_token > 0)
-        .unwrap_or_else(|| estimate_kv_bytes_per_token(model_bytes))
-        .saturating_mul(context_length.max(1) as u64);
+        .unwrap_or_else(|| estimate_kv_bytes_per_token(model_bytes));
+    let kv_per_token = (kv_per_token_fp16 as f64 * KV_QUANT_FACTOR) as u64;
+    let kv_bytes = kv_per_token.saturating_mul(context_length.max(1) as u64);
 
     // KV cache and compute buffers are charged before any weights.
     let after_kv = usable.saturating_sub(kv_bytes);
@@ -680,16 +700,21 @@ mod tests {
     /// that 25% margin is 0.25 GB — enough, on a card with nothing spare, to
     /// put the budget under the model and leave the last layer on the CPU.
     /// The machine that reported this loaded at `gpu_layers=31`.
+    ///
+    /// With `KV_QUANT_FACTOR = 0.5` (q8_0), the banded KV cost is halved
+    /// too, so now even the conservative estimate fits the model fully.
     #[test]
     fn the_real_kv_geometry_buys_the_last_layer_the_size_band_costs() {
         const VRAM: u64 = 7899 * 1024 * 1024;
         const WEIGHTS: u64 = 5_394_097_376;
         const REAL_KV: u64 = 32 * 4 * (256 + 256) * 2;
 
+        // With q8_0 KV quantisation, the banded estimate is halved too, so
+        // the model now fits fully even with the conservative size band.
         let banded = plan_gpu_offload(VRAM, WEIGHTS, 8192, Some(32));
         assert!(
-            !banded.full_offload,
-            "the size band is what left a layer on the CPU: {}",
+            banded.full_offload,
+            "with q8_0, the halved banded KV cost lets the model fit fully: {}",
             banded.reason
         );
 
@@ -722,7 +747,7 @@ mod tests {
 
         let planned = plan_gpu_offload(VRAM, WEIGHTS, 32_768, Some(32));
         assert_eq!(
-            planned.context_length, 8192,
+            planned.context_length, 16_384,
             "unchosen, the ladder walks down to buy layers"
         );
 
@@ -767,9 +792,8 @@ mod tests {
     #[test]
     fn regression_4gb_card_does_not_full_offload_a_25gb_model() {
         // The exact case the old heuristic got wrong: 4 GB RTX 3050 laptop.
-        // `vram_gb >= model_size_gb + 1.0` → 4.0 >= 3.5 → requested all layers,
-        // ignoring ~1.3 GB of KV cache at 8K context.
-        let plan = plan_gpu_offload(4 * GB, 2560 * 1024 * 1024, 8192, Some(36));
+        // Even with q8_0 KV cache at 16k context, a 2.5 GB model cannot fully offload.
+        let plan = plan_gpu_offload(4 * GB, 2560 * 1024 * 1024, 16_384, Some(36));
 
         assert!(
             !plan.full_offload,

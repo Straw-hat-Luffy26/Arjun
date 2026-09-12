@@ -47,7 +47,7 @@ pub use assertions::{
 };
 pub use notes::{Note, NoteKind};
 pub use research::{
-    EvidenceEntry, EvidenceManifest, ResearchScope, RetrievalMode,
+    EvidenceEntry, EvidenceManifest, ResearchScope, RetrievalMode, SourceSelection,
 };
 pub use persist::{
     document_node_id, node_id, EvidenceRow, GraphEdge, GraphNode, GraphView, TypeCandidate,

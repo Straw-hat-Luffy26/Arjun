@@ -42,6 +42,14 @@ import { RunProgressPanel } from './RunProgressPanel';
 import type { ProgressStep } from './runProgress';
 import { useTokenMetrics, type TokenMetrics } from './useTokenMetrics';
 import { Markdown } from './Markdown';
+import {
+  CitationReader,
+  EvidenceFooter,
+  hasCitations,
+  useCitationReader,
+  useTurnEvidence,
+  withCitations,
+} from './EvidenceCitations';
 import { ReasoningStream } from './ReasoningStream';
 import type { LiveReasoning } from '../../contexts/ConversationContext';
 import styles from './ChatSurface.module.css';
@@ -151,6 +159,17 @@ interface AssistantMessageCellProps {
   message: ChatMessage;
   liveContent?: string;
   isLive?: boolean;
+  /**
+   * The conversation this answer belongs to, for resolving its citations.
+   *
+   * Passed in rather than read from context so a cell rendered outside a
+   * conversation provider -- a preview, a test -- degrades to plain text
+   * instead of resolving markers against whatever conversation happens to be
+   * open.
+   */
+  conversationId?: string | null;
+  /** Opens the notebook behind this answer's evidence. */
+  onOpenNotebook?: (notebookId: string) => void;
   activity?: {
     id: string;
     tool: string;
@@ -205,6 +224,8 @@ interface AssistantMessageCellProps {
 export function AssistantMessageCell({
   message,
   liveContent,
+  conversationId = null,
+  onOpenNotebook,
   isLive,
   activity,
   runSummary,
@@ -220,6 +241,37 @@ export function AssistantMessageCell({
   onRetry,
   onPrompt,
 }: AssistantMessageCellProps) {
+  // -- Evidence for this answer ----------------------------------------
+  //
+  // Asked for only once the answer has finished and actually carries a marker.
+  // A manifest is fetched per message, so asking on every cell of a long
+  // conversation would be a round trip per message to learn that most of them
+  // cite nothing.
+  const answered = message.role === 'assistant' && message.status !== 'streaming';
+  const cites = answered && hasCitations(message.content);
+  const { manifest, problem: evidenceProblem } = useTurnEvidence(
+    conversationId,
+    message.id,
+    cites,
+  );
+  const {
+    citation,
+    problem: citationProblem,
+    open: openCitation,
+    close: closeCitation,
+  } = useCitationReader(conversationId);
+
+  // The markers the manifest actually carries. One outside this set is drawn
+  // inert: the answer said `[E4]` and no fourth passage was recorded, which is
+  // a fact worth showing rather than a button that does nothing.
+  const markers = useMemo(
+    () => new Set((manifest?.entries ?? []).map(entry => entry.marker)),
+    [manifest],
+  );
+  // Rendered as cited only once the evidence is in hand, so a marker never
+  // appears as a control that cannot resolve.
+  const cited = cites && manifest !== null;
+
   // What was stored: the model's exact words, in the order it produced them.
   //
   // Repetition is collapsed for *display* only, and only when the answer has no
@@ -400,7 +452,21 @@ export function AssistantMessageCell({
                 aria-busy={isStreaming || undefined}
               >
                 {displayContent ? (
-                  <Markdown content={displayContent} onPrompt={onPrompt} />
+                  cited ? (
+                    // An answer that cites evidence is rendered with its
+                    // markers as controls. They resolve against the manifest
+                    // recorded for this message -- not against anything this
+                    // component holds -- so a citation still opens after a
+                    // restart, and one the manifest does not carry is drawn
+                    // inert rather than dead.
+                    withCitations(
+                      displayContent,
+                      marker => void openCitation(message.id, marker),
+                      markers,
+                    )
+                  ) : (
+                    <Markdown content={displayContent} onPrompt={onPrompt} />
+                  )
                 ) : isStreaming ? (
                   <span className={styles.assistantPlaceholder} aria-hidden="true" />
                 ) : null}
@@ -408,6 +474,29 @@ export function AssistantMessageCell({
                   <span className={styles.caret} aria-hidden="true" />
                 )}
               </div>
+
+              {/* What the answer was built on. Drawn under the text rather than
+                * behind a disclosure, because which sources were read and which
+                * were not is part of the answer. */}
+              {manifest && (
+                <EvidenceFooter manifest={manifest} onOpenNotebook={onOpenNotebook} />
+              )}
+
+              {/* An answer that cites evidence whose manifest cannot be read is
+                * an answer that looks citable and is not. Said plainly. */}
+              {cites && evidenceProblem && (
+                <p className={styles.evidenceProblem} role="alert">
+                  {evidenceProblem} Its citations cannot be opened.
+                </p>
+              )}
+
+              {citationProblem && (
+                <p className={styles.evidenceProblem} role="alert">
+                  {citationProblem}
+                </p>
+              )}
+
+              {citation && <CitationReader citation={citation} onClose={closeCitation} />}
 
               {/* Per-message actions sit after the text in the DOM so a
                 * screen reader reaches the answer before the controls. */}

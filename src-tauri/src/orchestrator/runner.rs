@@ -970,6 +970,16 @@ impl ToolRunner for LocalToolRunner<'_> {
         resolved_path: Option<&Path>,
     ) -> Result<String, String> {
         match tool {
+            // Agent-path, for the same reason the attached-document tools are:
+            // the artifact store is keyed by the signed-in owner and the
+            // conversation, and this runner is rebuilt per call and holds
+            // neither. Answering here would mean answering a question about who
+            // may read an artifact with no idea who is asking.
+            ToolName::ArtifactList | ToolName::ArtifactRead => Err(
+                "artifact.list and artifact.read are answered on the agent path, which \
+                 knows the signed-in owner and the conversation."
+                    .to_string(),
+            ),
             ToolName::SearchDocuments => self.search(call),
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),

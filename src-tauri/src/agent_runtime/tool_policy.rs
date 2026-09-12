@@ -171,6 +171,10 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::ReadScopedFile
         | ToolName::ValidateArtifact
         | ToolName::CapabilitySearch
+        // Both read the conversation's own artifacts, owner-scoped in the
+        // store. Nothing is written and nothing leaves the machine.
+        | ToolName::ArtifactList
+        | ToolName::ArtifactRead
         | ToolName::SovereigntyGetEvidence
         | ToolName::KnowledgeMultimodalRetrieve
         // Reads back a file the asker attached to this conversation, from a

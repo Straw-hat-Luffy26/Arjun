@@ -326,6 +326,103 @@ struct DocumentFile {
     document: ExtractedDocument,
 }
 
+/// What is on disk for one content address, before authorisation is applied.
+enum StoredExtraction {
+    Absent,
+    Unreadable { problem: String },
+    Parsed(ExtractedDocument),
+}
+
+/// What the store holds for one document, for one caller, in one conversation.
+///
+/// The states a readiness answer is built from. See [`DocumentStore::inspect`].
+#[derive(Debug, Clone)]
+pub enum SourcePresence {
+    /// Nothing is stored, or nothing this person may see. The two are
+    /// deliberately the same answer.
+    Absent,
+    /// The store itself could not be read — a permission, a bad sector, a
+    /// volume that went away.
+    ///
+    /// Emphatically not [`Self::Absent`]. Collapsing an I/O failure into
+    /// "nothing was ever extracted" tells somebody to upload a file again whose
+    /// text is on disk and perfectly fine, and reports the actual fault nowhere.
+    Unavailable { problem: String },
+    /// Something is stored and this build cannot read it.
+    Unreadable { problem: String },
+    /// Stored, and this person's, but never recorded as arriving here.
+    ///
+    /// Where a notebook membership row lands when it was written without a
+    /// sighting. Repairable with [`DocumentStore::associate`] — no re-reading
+    /// and no model, because the text is already on disk.
+    NotAssociated(ExtractedDocument),
+    Present(ExtractedDocument),
+}
+
+impl SourcePresence {
+    /// The document, when one may be read here.
+    pub fn document(&self) -> Option<&ExtractedDocument> {
+        match self {
+            SourcePresence::Present(document) => Some(document),
+            _ => None,
+        }
+    }
+}
+
+/// The synthetic conversation id prefix a notebook reads its sources under.
+///
+/// Shared with `commands::notebook` and `knowledge::notebook_retrieval`, which
+/// build the same string. Named here because [`trim_sightings`] has to
+/// recognise one.
+pub const NOTEBOOK_CONVERSATION_PREFIX: &str = "notebook:";
+
+/// Bounds the sighting list without evicting a notebook's access.
+///
+/// Sightings are capped because an append-only list nothing bounds is how a
+/// store that was fine for a month becomes a megabyte of JSON re-read on every
+/// tool call. Dropping the oldest was the right rule while every sighting came
+/// from a chat turn.
+///
+/// It stopped being right when notebooks began writing one each. A chat
+/// sighting records that a turn saw the document; a `notebook:` sighting is the
+/// *authorisation* that lets a notebook read it at all. Sixty-four chat turns
+/// would silently evict it, and a notebook that answered questions from a
+/// document yesterday would report it unreadable today with nothing to say why
+/// -- precisely the failure `knowledge::source_readiness` exists to abolish,
+/// reached by a different route.
+///
+/// So notebook access is kept, and the cap applies to the chat sightings it was
+/// written for.
+fn trim_sightings(seen: &mut Vec<Sighting>) {
+    if seen.len() <= MAX_SIGHTINGS {
+        return;
+    }
+    let notebooks = seen
+        .iter()
+        .filter(|sighting| {
+            sighting
+                .conversation_id
+                .starts_with(NOTEBOOK_CONVERSATION_PREFIX)
+        })
+        .count();
+    // Never negative: the floor is the number of notebook sightings, which are
+    // not droppable.
+    let mut droppable = seen.len().saturating_sub(MAX_SIGHTINGS.max(notebooks));
+    seen.retain(|sighting| {
+        if droppable == 0 {
+            return true;
+        }
+        if sighting
+            .conversation_id
+            .starts_with(NOTEBOOK_CONVERSATION_PREFIX)
+        {
+            return true;
+        }
+        droppable -= 1;
+        false
+    });
+}
+
 impl DocumentStore {
     /// Open the store at `<app_data_dir>/documents/extractions/`.
     ///
@@ -355,20 +452,43 @@ impl DocumentStore {
     }
 
     fn read_file(&self, sha256: &str) -> std::io::Result<Option<ExtractedDocument>> {
+        match self.read_file_detailed(sha256)? {
+            StoredExtraction::Absent => Ok(None),
+            // A record this build cannot parse reads as absent *here*, because
+            // every caller on this path wants passages and there are none. The
+            // alternative is a chat turn failing outright because a file
+            // written by a different version is on disk, and the document is
+            // re-readable — the bytes are still in `documents/attachments/`.
+            //
+            // What changed is that the distinction is no longer destroyed:
+            // `read_file_detailed` keeps it and `inspect` reports it, so a
+            // corrupt extraction is named as corrupt on the screen that offers
+            // to repair it, instead of being called "missing".
+            StoredExtraction::Unreadable { .. } => Ok(None),
+            StoredExtraction::Parsed(document) => Ok(Some(document)),
+        }
+    }
+
+    /// The same read, with the failure modes kept apart.
+    ///
+    /// `read_file` answers "are there passages", which is what retrieval needs.
+    /// This answers "what is on disk", which is what a repair offer needs, and
+    /// they are different questions: a file that does not exist calls for
+    /// adding the document again, and a file this build cannot parse calls for
+    /// extracting it again. Collapsing both into `None` — which is what this
+    /// code did — left the screen able to say only "missing".
+    fn read_file_detailed(&self, sha256: &str) -> std::io::Result<StoredExtraction> {
         let Some(path) = self.file_path(sha256) else {
-            return Ok(None);
+            return Ok(StoredExtraction::Absent);
         };
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(StoredExtraction::Absent)
+            }
             Err(error) => return Err(error),
         };
-        // A record this build cannot parse is treated as absent rather than as
-        // an error. The alternative is a chat turn failing outright because a
-        // file written by a different version is on disk, and the document is
-        // re-readable — the bytes are still in `documents/attachments/`.
-        Ok(serde_json::from_slice::<DocumentFile>(&bytes)
-            .ok()
+        let parsed = serde_json::from_slice::<DocumentFile>(&bytes)
             .map(|file| file.document)
             .map(|mut document| {
                 // Migration, done on read rather than by a pass over the store.
@@ -383,7 +503,114 @@ impl DocumentStore {
                     document.rebuild();
                 }
                 document
-            }))
+            });
+        Ok(match parsed {
+            Ok(document) => StoredExtraction::Parsed(document),
+            Err(error) => StoredExtraction::Unreadable {
+                problem: format!(
+                    "the stored extraction could not be read by this build of ARJUN: {error}"
+                ),
+            },
+        })
+    }
+
+    /// What the store holds for one document, for a caller that may see it.
+    ///
+    /// The read behind every readiness answer. Four outcomes rather than an
+    /// `Option`, because "never stored", "stored and corrupt", "stored but this
+    /// notebook was never told about it" and "here it is" call for four
+    /// different offers, and only the last is an answerable question.
+    ///
+    /// [`SourcePresence::NotAssociated`] is only ever produced for a document
+    /// this owner has seen *somewhere*. One belonging to somebody else reads as
+    /// [`SourcePresence::Absent`], exactly as it does through [`Self::get`].
+    ///
+    /// ## The precondition, stated because it is not enforced here
+    ///
+    /// [`SourcePresence::Unreadable`] is answered before any ownership check,
+    /// because an unparseable file has no sighting list to check against. So it
+    /// does reveal that *something* is stored at that content address.
+    ///
+    /// Callers must therefore only pass a `sha256` they have already
+    /// established belongs to a collection this owner holds — in practice, one
+    /// that came out of an owner-scoped membership list. Every call site does;
+    /// none accepts a caller-chosen hash. [`Self::associate`] takes the other
+    /// branch and refuses an unparseable file exactly as it refuses a missing
+    /// one, because it can, and this cannot without losing the ability to offer
+    /// "extract it again" for a corrupt file the owner does hold.
+    pub fn inspect(
+        &self,
+        sha256: &str,
+        owner_user_id: &str,
+        conversation_id: Option<&str>,
+    ) -> std::io::Result<SourcePresence> {
+        match self.read_file_detailed(sha256)? {
+            StoredExtraction::Absent => Ok(SourcePresence::Absent),
+            StoredExtraction::Unreadable { problem } => Ok(SourcePresence::Unreadable { problem }),
+            StoredExtraction::Parsed(document) => {
+                if document.visible_to(owner_user_id, conversation_id) {
+                    Ok(SourcePresence::Present(document))
+                } else if document.visible_to(owner_user_id, None) {
+                    Ok(SourcePresence::NotAssociated(document))
+                } else {
+                    Ok(SourcePresence::Absent)
+                }
+            }
+        }
+    }
+
+    /// Records that a document this owner already holds arrived somewhere new,
+    /// without reading it again.
+    ///
+    /// The repair for a membership row whose sighting was never written — see
+    /// [`SourcePresence::NotAssociated`]. Refuses rather than inventing a
+    /// sighting when the owner has never seen the document: a sighting *is* the
+    /// authorisation record, and writing one for a file somebody never attached
+    /// would hand them another person's document.
+    pub fn associate(
+        &self,
+        sha256: &str,
+        owner_user_id: &str,
+        sighting: Sighting,
+    ) -> std::io::Result<ExtractedDocument> {
+        if sighting.owner_user_id != owner_user_id {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "a sighting may only be recorded for its own owner",
+            ));
+        }
+        let mut document = match self.read_file_detailed(sha256)? {
+            StoredExtraction::Parsed(document) => document,
+            // Deliberately the same answer as `Absent`, and deliberately not the
+            // parse error. An unparseable file has no readable sighting list, so
+            // there is no owner to check it against — and answering "this exists
+            // but cannot be parsed" to a caller who may not own it reveals that
+            // the document is here. Associating cannot help either case, so
+            // nothing is lost by refusing both the same way.
+            StoredExtraction::Unreadable { .. } | StoredExtraction::Absent => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "there is no readable stored extraction for that document",
+                ))
+            }
+        };
+        if !document.visible_to(owner_user_id, None) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "that document was never attached by this person",
+            ));
+        }
+        if document.seen.iter().any(|seen| {
+            seen.owner_user_id == sighting.owner_user_id
+                && seen.conversation_id == sighting.conversation_id
+                && seen.message_id == sighting.message_id
+        }) {
+            return Ok(document);
+        }
+        document.seen.push(sighting);
+        trim_sightings(&mut document.seen);
+        self.write_file(&document)?;
+        Ok(document)
     }
 
     fn write_file(&self, document: &ExtractedDocument) -> std::io::Result<()> {
@@ -493,10 +720,7 @@ impl DocumentStore {
         });
         if !already {
             document.seen.push(extraction.sighting);
-            if document.seen.len() > MAX_SIGHTINGS {
-                let excess = document.seen.len() - MAX_SIGHTINGS;
-                document.seen.drain(0..excess);
-            }
+            trim_sightings(&mut document.seen);
         }
 
         // Cut and counted before it is written, so the chunks in the file and
@@ -1060,6 +1284,48 @@ mod tests {
             document.seen.last().unwrap().message_id,
             format!("a-{}", MAX_SIGHTINGS + 19),
             "the newest arrivals are the ones kept"
+        );
+    }
+
+
+    /// A notebook's access is not evicted by chat traffic.
+    ///
+    /// Sightings are a bounded FIFO, and a `notebook:` sighting is not a record
+    /// that something happened -- it is the authorisation that lets a notebook
+    /// read the document at all. Dropping it as "oldest" meant a notebook that
+    /// answered questions from a file yesterday reported it unreadable today,
+    /// with nothing anywhere to say why.
+    #[test]
+    fn chat_turns_cannot_evict_a_notebooks_access() {
+        let (_dir, store) = store();
+        let id = sha(0xab);
+
+        let mut added = extraction(&id, &[(1, "text")], "owner-1", "notebook:nb-1");
+        added.sighting.message_id = "notebook-add".to_string();
+        store.record(added).unwrap();
+
+        // Far more chat turns than the cap allows.
+        for turn in 0..(MAX_SIGHTINGS + 20) {
+            let mut arrival = extraction(&id, &[(1, "text")], "owner-1", "c1");
+            arrival.sighting.message_id = format!("a-{turn}");
+            store.record(arrival).unwrap();
+        }
+
+        let document = store
+            .get(&id, "owner-1", Some("notebook:nb-1"))
+            .expect("the read answers")
+            .expect("the notebook can still read it");
+        assert!(
+            document
+                .seen
+                .iter()
+                .any(|s| s.conversation_id == "notebook:nb-1"),
+            "the notebook's access survived"
+        );
+        assert!(
+            document.seen.len() <= MAX_SIGHTINGS + 1,
+            "and the list is still bounded: {}",
+            document.seen.len()
         );
     }
 

@@ -21,15 +21,25 @@ import json
 import os
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fitz  # noqa: E402
 
-from attachment_extract import MIN_TEXT_CHARS_PER_PAGE, extract_pdf  # noqa: E402
+from attachment_extract import (  # noqa: E402
+    MIN_TEXT_CHARS_PER_PAGE,
+    cfb_contents,
+    cfb_directory_names,
+    extract_pdf,
+    ooxml_family,
+    refuse_cfb,
+    sniff,
+)
 
 
 # Comfortably over the per-page threshold, so a page carrying it is one the
@@ -207,3 +217,232 @@ class Contract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def ole_file(entries, sector_shift=9, directory_sector=0, body=b""):
+    """A structurally real OLE2 file.
+
+    Built to the actual layout rather than by pasting a signature in front of
+    some bytes, because the thing under test is directory *parsing*: a fixture
+    carrying only the header would pass a byte scanner and fail a parser, which
+    is exactly the difference these tests exist to pin.
+    """
+    sector_size = 1 << sector_shift
+    header = bytearray(b"\x00" * 512)
+    header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    struct.pack_into("<H", header, 0x1E, sector_shift)
+    struct.pack_into("<I", header, 0x30, directory_sector)
+
+    directory = bytearray()
+    for name in entries:
+        entry = bytearray(b"\x00" * 128)
+        encoded = name.encode("utf-16-le")
+        entry[0:len(encoded)] = encoded
+        # Length in bytes, including the terminating null pair.
+        struct.pack_into("<H", entry, 64, len(encoded) + 2)
+        directory += entry
+
+    target = (directory_sector + 1) * sector_size
+    out = bytearray(header)
+    out += body
+    if len(out) < target:
+        out += b"\x00" * (target - len(out))
+    return bytes(out[:target] + directory)
+
+
+class ContentDecidesTheReader(unittest.TestCase):
+    """Routing follows what a file is, not what it is called."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def write(self, name, payload):
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+        return path
+
+    def test_a_pdf_is_recognised_whatever_it_is_called(self):
+        path = self.write("report.doc", b"%PDF-1.7\n1 0 obj\n")
+        self.assertEqual(sniff(path), "pdf")
+
+    def test_a_pdf_with_junk_before_its_header_is_still_a_pdf(self):
+        """Acrobat and PyMuPDF both tolerate this; anchoring at offset 0 did
+        not, and sent the file to the text reader to be latin-1 decoded."""
+        path = self.write("report.pdf", b"\n\n%PDF-1.4\n1 0 obj\n")
+        self.assertEqual(sniff(path), "pdf")
+
+    def test_a_legacy_office_file_is_recognised_from_its_directory(self):
+        path = self.write("minutes.doc", ole_file(["Root Entry", "WordDocument"]))
+        self.assertEqual(sniff(path), "cfb")
+        self.assertEqual(cfb_contents(path), ("doc", "Word"))
+
+    def test_the_directory_is_found_where_the_header_says_it_is(self):
+        """Not in the first 8 KiB.
+
+        MS-CFB places no constraint on where the directory sits, and Office
+        writers routinely put it after the stream data. A fixed-window scan
+        missed the names on any document big enough to matter.
+        """
+        path = self.write(
+            "big.xls",
+            ole_file(["Root Entry", "Workbook"], directory_sector=40, body=b"\x11" * 40000),
+        )
+        self.assertGreater(os.path.getsize(path), 8192)
+        self.assertIn("Workbook", cfb_directory_names(path))
+        self.assertEqual(cfb_contents(path), ("xls", "Excel"))
+
+    def test_a_word_document_mentioning_bookmark_is_not_called_excel(self):
+        """The false positive the raw-bytes search produced.
+
+        `Book` as UTF-16LE is a prefix of "Bookmark", so a Word document whose
+        body contained that word was confidently reported as a legacy Excel
+        file -- a wrong format, stated with certainty.
+        """
+        body = "Bookmark and Booking and Bookkeeping ".encode("utf-16-le") * 200
+        path = self.write(
+            "minutes.doc",
+            ole_file(["Root Entry", "WordDocument"], directory_sector=30, body=body),
+        )
+        self.assertEqual(cfb_contents(path), ("doc", "Word"))
+        self.assertEqual(refuse_cfb(path)["detectedFormat"], "doc")
+
+    def test_renaming_a_legacy_file_to_docx_does_not_make_it_readable(self):
+        """The rule: renaming an extension is not conversion."""
+        path = self.write("capex.xlsx", ole_file(["Root Entry", "Workbook"]))
+
+        self.assertEqual(sniff(path), "cfb")
+        refusal = refuse_cfb(path)
+        self.assertEqual(refusal["reason"], "missing-parser")
+        self.assertEqual(refusal["detectedFormat"], "xls")
+        self.assertIn("Excel", refusal["error"])
+        self.assertIn("renaming the extension does not", refusal["error"])
+
+    def test_an_unidentified_ole2_container_is_not_called_a_pre_2007_office_file(self):
+        """OLE2 is also `.msg`, `.msi` and `Thumbs.db`.
+
+        Claiming "pre-2007 Office file" from the header alone was a confident
+        answer to a question the code had never asked.
+        """
+        path = self.write("mail.msg", ole_file(["Root Entry", "__nameid_version1.0"]))
+        refusal = refuse_cfb(path)
+
+        self.assertEqual(refusal["reason"], "unidentified-container")
+        self.assertEqual(refusal["detectedFormat"], "ole2")
+        self.assertNotIn("pre-2007", refusal["error"])
+
+    def test_a_password_protected_modern_file_is_named_as_such(self):
+        """An encrypted .docx is OLE2 wrapping an encrypted zip. Telling
+        somebody it is pre-2007 sends them to fix the wrong thing."""
+        path = self.write(
+            "secret.docx",
+            ole_file(["Root Entry", "EncryptionInfo", "EncryptedPackage"]),
+        )
+        refusal = refuse_cfb(path)
+
+        self.assertEqual(refusal["reason"], "password-protected")
+        self.assertIn("password-protected", refusal["error"])
+        self.assertNotIn("pre-2007", refusal["error"])
+
+    def test_a_legacy_refusal_never_returns_scraped_text(self):
+        """No plausible-looking fallback.
+
+        Scraping printable strings out of a binary yields fragments in file
+        order with no structure and no locators. A summary built from them reads
+        as grounded and is not.
+        """
+        secret = "The rated duty is 12 bar ".encode("utf-16-le") * 50
+        path = self.write(
+            "old.xls",
+            ole_file(["Root Entry", "Workbook"], directory_sector=10, body=secret),
+        )
+        refusal = refuse_cfb(path)
+
+        self.assertNotIn("text", refusal)
+        self.assertNotIn("12 bar", refusal["error"])
+
+    def test_an_ooxml_package_is_identified_by_its_own_parts(self):
+        path = os.path.join(self.dir, "deck.bin")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("ppt/presentation.xml", "<p:presentation/>")
+        self.assertEqual(sniff(path), "zip")
+        self.assertEqual(ooxml_family(path), "pptx")
+
+    def test_a_plain_zip_is_not_mistaken_for_a_document(self):
+        path = os.path.join(self.dir, "archive.docx")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("notes.txt", "hello")
+        self.assertIsNone(ooxml_family(path))
+
+    def test_an_unrecognised_binary_is_not_reported_as_text(self):
+        """The regression that made every unknown file a successful read.
+
+        `sniff` returning "text" as its fallback meant an executable came back
+        as `{"kind": "text", ...}` full of mojibake. "Unknown" is the honest
+        answer, and the caller refuses on it.
+        """
+        path = self.write("tool.exe", b"MZ\x90\x00\x03" + b"\x00" * 64)
+        self.assertEqual(sniff(path), "unknown")
+
+    def test_an_image_is_not_sent_to_the_document_extractor(self):
+        for name, payload in [
+            ("scan.pdf", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16),
+            ("photo.bin", b"BM" + b"\x00" * 20),
+            ("shot.dat", b"RIFF\x24\x00\x00\x00WEBPVP8 "),
+        ]:
+            self.assertEqual(sniff(self.write(name, payload)), "image", name)
+
+    def test_a_text_file_with_a_byte_order_mark_is_not_taken_for_an_image(self):
+        for name, payload in [
+            ("utf8.txt", b"\xef\xbb\xbfhello"),
+            ("utf16le.txt", b"\xff\xfeh\x00i\x00"),
+            ("utf16be.txt", b"\xfe\xffh\x00i\x00"),
+            ("rows.csv", b"tag,duty\nP-101,12 bar\n"),
+        ]:
+            self.assertEqual(sniff(self.write(name, payload)), "unknown", name)
+
+
+class TheExtractorRefusesRatherThanInvents(unittest.TestCase):
+    """End to end, through the real subprocess, for the cases that used to come
+    back as successful reads of nothing."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def run_extractor(self, name, payload):
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+        script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "attachment_extract.py",
+        )
+        done = subprocess.run(
+            [sys.executable, script, path, os.path.join(self.dir, "out")],
+            capture_output=True, text=True, check=False,
+        )
+        lines = [l for l in done.stdout.splitlines() if l.strip().startswith("{")]
+        self.assertTrue(lines, "the extractor printed no JSON: %s" % done.stderr)
+        return json.loads(lines[-1])
+
+    def test_an_executable_is_refused_rather_than_decoded(self):
+        result = self.run_extractor("tool.exe", b"MZ\x90\x00\x03" + b"\x00" * 64)
+        self.assertIn("error", result)
+        self.assertNotIn("text", result)
+
+    def test_an_empty_unknown_file_does_not_claim_a_page_was_read(self):
+        result = self.run_extractor("nothing.bin", b"")
+        self.assertIn("error", result)
+
+    def test_a_text_file_still_reads(self):
+        result = self.run_extractor("rows.csv", b"tag,duty\nP-101,12 bar\n")
+        self.assertEqual(result.get("kind"), "text")
+        self.assertIn("12 bar", result["text"])
+
+    def test_an_ole2_file_carries_a_machine_readable_reason(self):
+        result = self.run_extractor("old.doc", ole_file(["Root Entry", "WordDocument"]))
+        self.assertEqual(result.get("reason"), "missing-parser")
+        self.assertEqual(result.get("detectedFormat"), "doc")

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowDown } from 'lucide-react';
 import { useConversation } from '../run/useConversation';
 import { useActiveRun } from '../../contexts/ActiveRunContext';
@@ -42,6 +43,18 @@ import {
 } from '../run/runAdopt';
 import { ChatHeader } from './ChatHeader';
 import { TaskPanel } from './TaskPanel';
+import { freezeScope, type NotebookScope } from './notebookScope';
+import {
+  HANDOFF_EVENT,
+  isHandoff,
+  takePendingHandoff,
+  type NotebookHandoff,
+} from './notebookHandoff';
+import {
+  notebookResearchService,
+  usableAsEvidence,
+} from '../../services/notebookResearch.service';
+import type { ResearchScope } from '../../services/agent.service';
 import {
   type ArtifactReport,
   type ChatMessage,
@@ -70,6 +83,18 @@ const NEAR_BOTTOM_PX = 100;
 interface QueuedTurn {
   text: string;
   attachments: ComposerAttachment[];
+  /**
+   * The notebook scope this question was asked against, frozen when it was
+   * typed.
+   *
+   * Carried with the turn for the same reason its attachments are: a message
+   * queued behind a run must be answered from what was selected when somebody
+   * wrote it, not from whatever the chip happens to say a minute later when
+   * the queue drains. Resolving it at send time means switching notebooks
+   * while a question waits silently re-aims that question, with nothing on
+   * screen to show it happened.
+   */
+  research?: ResearchScope;
 }
 
 export interface ChatSurfaceProps {
@@ -125,6 +150,8 @@ export function ChatSurface({
   // Every surface follows the run the chat started, not one of its own.
   useShareActiveRun(activeRunId);
 
+  const navigate = useNavigate();
+
   const [inspectorRunId, setInspectorRunId] = useState<string | null>(null);
 
   // Messages typed while a run is in flight. They are held here and
@@ -144,6 +171,180 @@ export function ChatSurface({
   // answer on screen stays on screen next to it.
   const [ocrPages, setOcrPages] = useState<OcrPageRead[]>([]);
   const ocrPreference = useOcrPreference();
+
+  // -- The notebook this chat is asking --------------------------------
+  //
+  // Held here rather than in the composer because two things outside the
+  // composer need it: freezing a turn's scope at submit, and restoring the
+  // preference when a conversation is reopened.
+  const [notebookScope, setNotebookScope] = useState<NotebookScope | null>(null);
+  // The sources of the attached notebook that can actually be read, used to
+  // resolve "all" into a concrete list at freeze time. Empty until it has been
+  // asked for; `freezeScope` treats that as "not established" and sends `all`
+  // rather than an empty subset, which the backend refuses.
+  const [readableSha256s, setReadableSha256s] = useState<string[]>([]);
+  // A question composed on the Notebooks page and handed to this composer.
+  // Placed in the draft, never sent: the person reads and edits it first.
+  const [handedPrompt, setHandedPrompt] = useState<string | null>(null);
+
+  const conversationId = conversation?.id ?? null;
+
+  // Restore the chip when a conversation is opened, and clear it when the
+  // conversation changes. Clearing first matters: without it, moving from a
+  // thread that asks Unit Four to one that asks nothing leaves Unit Four's chip
+  // above the composer of a chat it has nothing to do with.
+  useEffect(() => {
+    let live = true;
+    setNotebookScope(null);
+    setReadableSha256s([]);
+    if (!conversationId) return;
+    void notebookResearchService
+      .conversationScope(conversationId)
+      .then(saved => {
+        if (!live || !saved) return;
+        setNotebookScope({
+          notebookId: saved.notebookId,
+          notebookName: saved.notebookName,
+          documentCount: 0,
+          // A thread bound before selections were recorded comes back with
+          // none. Shown as "no sources" rather than silently restored as all of
+          // them, which is the reading that would quietly widen every follow-up
+          // question in an old notebook conversation.
+          selection: saved.selection ?? { mode: 'none' },
+        });
+      })
+      .catch(() => {
+        // A preference that cannot be read leaves the chat unscoped, which is
+        // visible. Guessing one would not be.
+      });
+    return () => {
+      live = false;
+    };
+  }, [conversationId]);
+
+  // Which of the attached notebook's sources are readable, refreshed whenever
+  // the notebook changes. A stale list here would freeze a turn against the
+  // previous notebook's documents, so it is cleared before it is refilled.
+  useEffect(() => {
+    let live = true;
+    setReadableSha256s([]);
+    const id = notebookScope?.notebookId;
+    if (!id) return;
+    void notebookResearchService
+      .sourceStatus(id)
+      .then(found => {
+        if (!live) return;
+        setReadableSha256s(
+          found
+            .filter(source => usableAsEvidence(source.state))
+            .map(source => source.documentSha256),
+        );
+        // The chip's own count comes from the same answer, so "all 6 sources"
+        // cannot disagree with the list underneath it.
+        setNotebookScope(current =>
+          current && current.notebookId === id
+            ? { ...current, documentCount: found.length }
+            : current,
+        );
+      })
+      .catch(() => {
+        // Left empty. `freezeScope` then sends `all`, which the backend
+        // resolves against the same notebook under the same owner -- rather
+        // than an empty subset, which it refuses.
+      });
+    return () => {
+      live = false;
+    };
+  }, [notebookScope?.notebookId]);
+
+  /**
+   * Records the notebook against the conversation, so reopening restores it.
+   *
+   * Deliberately not the unbind call when clearing: that deletes every evidence
+   * manifest in the thread, so taking the chip off would stop the citations in
+   * answers already given from resolving.
+   */
+  const persistScope = useCallback(
+    (scope: NotebookScope | null) => {
+      if (!conversationId) return;
+      if (scope) {
+        void notebookResearchService
+          .setConversationScope(conversationId, scope.notebookId, scope.selection)
+          .catch(() => {
+            // The chip still works for this session; only the memory of it
+            // across a restart is lost, and nothing is reported as saved.
+          });
+      } else {
+        void notebookResearchService.clearConversationScope(conversationId).catch(() => {});
+      }
+    },
+    [conversationId],
+  );
+
+  /**
+   * Picks up a notebook handed over from the Notebooks page.
+   *
+   * The replacement for that page's own chat: "ask about this selection" now
+   * attaches the notebook here and drops the drafted question into the
+   * composer. It never sends -- the question is placed for the person to read
+   * and edit, exactly as `/notebook` leaves their own draft alone.
+   */
+  const applyHandoff = useCallback(
+    (handoff: NotebookHandoff) => {
+      const scope: NotebookScope = {
+        notebookId: handoff.notebookId,
+        notebookName: handoff.notebookName,
+        documentCount: handoff.sourceSha256s?.length ?? 0,
+        // `null` means the page had narrowed nothing, which hands over as all
+        // of it -- said as `all`, not as an empty list that something
+        // downstream would have to interpret.
+        selection:
+          handoff.sourceSha256s && handoff.sourceSha256s.length > 0
+            ? { mode: 'subset', sha256s: [...handoff.sourceSha256s] }
+            : { mode: 'all' },
+      };
+      setNotebookScope(scope);
+      persistScope(scope);
+      if (handoff.prompt) setHandedPrompt(handoff.prompt);
+    },
+    [persistScope],
+  );
+
+  useEffect(() => {
+    // On mount, because the Notebooks page is a different route: this surface
+    // was not mounted when the hand-off was made, so there was nothing to
+    // listen. Taking it clears it, so coming back later does not re-attach a
+    // notebook somebody has since removed.
+    const waiting = takePendingHandoff();
+    if (waiting) applyHandoff(waiting);
+
+    // And the event, for when this surface is already on screen.
+    const onAsk = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (isHandoff(detail)) {
+        takePendingHandoff();
+        applyHandoff(detail);
+      }
+    };
+    window.addEventListener(HANDOFF_EVENT, onAsk);
+    return () => window.removeEventListener(HANDOFF_EVENT, onAsk);
+  }, [applyHandoff]);
+
+  /** Opens the Notebooks screen on the notebook behind an answer or a chip. */
+  const openNotebooksScreen = useCallback(
+    (notebookId: string) => {
+      navigate(`/notebooks?notebook=${encodeURIComponent(notebookId)}`);
+    },
+    [navigate],
+  );
+
+  const changeNotebookScope = useCallback(
+    (scope: NotebookScope | null) => {
+      setNotebookScope(scope);
+      persistScope(scope);
+    },
+    [persistScope],
+  );
 
   useEffect(() => {
     const sub = listenAttachmentProgress(p => {
@@ -369,8 +570,13 @@ export function ChatSurface({
 
   const handleSubmit = useCallback(
     async (text: string, attachments: ComposerAttachment[]) => {
+      // Frozen here, at submit, for both paths. A turn that queues and a turn
+      // that sends immediately must be scoped identically -- the only
+      // difference between them is how long they wait.
+      const research = freezeScope(notebookScope, readableSha256s);
+
       if (isStreaming || flushing) {
-        setQueued(q => [...q, { text, attachments }]);
+        setQueued(q => [...q, { text, attachments, research }]);
         return;
       }
       // The previous turn's read belongs to the previous turn. Clearing it
@@ -380,9 +586,18 @@ export function ChatSurface({
       await send(text, classification, {
         attachments,
         ocrDetent: ocrPreference.detent,
+        research,
       });
     },
-    [send, classification, isStreaming, flushing, ocrPreference.detent],
+    [
+      send,
+      classification,
+      isStreaming,
+      flushing,
+      ocrPreference.detent,
+      notebookScope,
+      readableSha256s,
+    ],
   );
 
   // Drain the queue a message at a time. `setFlushing(false)` in the
@@ -396,6 +611,10 @@ export function ChatSurface({
     void send(next.text, classification, {
       attachments: next.attachments,
       ocrDetent: ocrPreference.detent,
+      // `next.research`, never the live `notebookScope`. This is the line the
+      // queued-turn guarantee rests on: a question typed against notebook A and
+      // drained after somebody switched the chip to B is still answered from A.
+      research: next.research,
     }).finally(() => setFlushing(false));
   }, [isStreaming, flushing, queued, send, classification, ocrPreference.detent]);
 
@@ -442,6 +661,8 @@ export function ChatSurface({
             <MessageRow
               key={m.id}
               message={m}
+              conversationId={conversationId}
+              onOpenNotebook={openNotebooksScreen}
               isLive={m.status === 'streaming'}
               liveContent={
                 m.status === 'streaming'
@@ -530,6 +751,11 @@ export function ChatSurface({
             onCancelQueued={i => setQueued(q => q.filter((_, j) => j !== i))}
             onSubmit={handleSubmit}
             ocrPreference={ocrPreference}
+            notebookScope={notebookScope}
+            onNotebookScopeChange={changeNotebookScope}
+            handedPrompt={handedPrompt}
+            onHandedPromptConsumed={() => setHandedPrompt(null)}
+            onOpenNotebook={openNotebooksScreen}
           />
         </div>
       </div>
@@ -584,6 +810,9 @@ export function ChatSurface({
 
 interface MessageRowProps {
   message: ChatMessage;
+  /** For resolving this answer's citations against its own manifest. */
+  conversationId: string | null;
+  onOpenNotebook: (notebookId: string) => void;
   isLive?: boolean;
   liveContent?: string;
   /** This turn's own step list, found by message id and never by position. */
@@ -606,6 +835,8 @@ interface MessageRowProps {
 
 function MessageRow({
   message,
+  conversationId,
+  onOpenNotebook,
   isLive,
   liveContent,
   progress,
@@ -640,6 +871,8 @@ function MessageRow({
     <AssistantMessageCell
       message={message}
       isLive={isLive}
+      conversationId={conversationId}
+      onOpenNotebook={onOpenNotebook}
       liveContent={liveContent}
       progress={progress}
       reasoning={reasoning}

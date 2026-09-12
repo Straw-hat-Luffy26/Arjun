@@ -36,7 +36,14 @@ pub(super) fn deps_with(
         "r".to_string(),
         workspace::Workspace::create(dir.path(), "r").expect("workspace"),
     );
+    // A real artifact store, in the harness's own temporary directory. The
+    // cross-model channel is part of the runtime under test, not a stub.
+    let conversation_artifacts = Arc::new(
+        crate::artifacts::conversation_store::ConversationArtifacts::open(dir.path())
+            .expect("the artifact store opens"),
+    );
     let deps = Arc::new(RuntimeDeps {
+        conversation_artifacts,
         index: Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens")),
         session,
         workspaces,
@@ -764,6 +771,8 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "artifact.create_diagram",
             "artifact.create_pdf",
             "artifact.create_table",
+            "artifact.list",
+            "artifact.read",
             "artifact.verify_docx",
             "calculation.evaluate_with_units",
             "capability.search",
@@ -2112,7 +2121,13 @@ mod capability_paging {
 
         // The same ordering `capability_search` applies.
         cards.retain(|card| card.is_available());
-        cards.sort_by_key(|card| (card.imported, !card.formats.is_empty(), card.name.clone()));
+        cards.sort_by_key(|card| {
+            (
+                card.imported,
+                !(card.formats.is_empty() && card.inputs.is_empty()),
+                card.name.clone(),
+            )
+        });
 
         let first_page: Vec<&str> = cards
             .iter()
@@ -2129,15 +2144,17 @@ mod capability_paging {
         // Every *domain* skill written for this product, not merely the three
         // named above.
         //
-        // Three groups, not two. A format skill (`metadata.for-format`) is
-        // chosen by `skills::selection` from the file the run is producing, so
-        // a model never has to find it by browsing; it is listed behind the
-        // domain skills rather than competing with them for the first page. A
-        // refinery asking what this machine can do should see `pid-reader`
-        // before `docx-authoring`.
+        // Three groups, not two. A skill `skills::selection` chooses on the
+        // run's behalf -- a format skill (`metadata.for-format`) from the file
+        // being produced, or a source skill (`metadata.for-input`) from the
+        // kinds of document being read -- never has to be found by browsing,
+        // because it arrives already loaded. Both are listed behind the domain
+        // skills rather than competing with them for the first page. A refinery
+        // asking what this machine can do should see `pid-reader` before
+        // `docx-authoring` or `source-pdf`.
         let domain: Vec<&str> = cards
             .iter()
-            .filter(|c| !c.imported && c.formats.is_empty())
+            .filter(|c| !c.imported && c.formats.is_empty() && c.inputs.is_empty())
             .map(|c| c.name.as_str())
             .collect();
         assert!(
@@ -2157,7 +2174,7 @@ mod capability_paging {
         // listing stays predictable rather than merely reordered.
         let formats: Vec<&str> = cards
             .iter()
-            .filter(|c| !c.imported && !c.formats.is_empty())
+            .filter(|c| !c.imported && !(c.formats.is_empty() && c.inputs.is_empty()))
             .map(|c| c.name.as_str())
             .collect();
         let imported: Vec<&str> = cards

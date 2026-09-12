@@ -366,6 +366,61 @@ pub fn fit(
     }
 }
 
+/// Fits history using the [`chat_memory_bus`] for richer, non-destructive projection.
+///
+/// The original [`fit`] walks newest-first and drops everything that does not
+/// fit, which is correct but loses relevant older context permanently from the
+/// turn. This function uses the memory bus to:
+///
+/// 1. **Always include pinned turns** (user-protected).
+/// 2. **Prioritise recent turns** (recency anchor, 60% of budget).
+/// 3. **Pull in keyword-relevant older turns** that mention the same entities
+///    as the current question.
+/// 4. **Fill remaining budget** with background turns.
+///
+/// Nothing is ever deleted from the conversation store. The `dropped` count
+/// reflects turns that were *not projected into this model call*, not turns
+/// that were lost — they remain available for the next turn or the next model.
+///
+/// `question` is the current turn's prompt, used for relevance scoring.
+pub fn fit_with_memory_bus(
+    conversation: &Conversation,
+    cell_message_id: &str,
+    budget_tokens: u32,
+    pinned: &[String],
+    question: &str,
+) -> FittedContext {
+    use super::chat_memory_bus;
+
+    let projection = chat_memory_bus::project(
+        conversation,
+        cell_message_id,
+        budget_tokens,
+        pinned,
+        question,
+    );
+
+    let turns: Vec<ContextTurn> = projection
+        .turns
+        .into_iter()
+        .map(|t| ContextTurn {
+            role: t.role,
+            content: neutralise_evidence_markers(&t.content),
+        })
+        .collect();
+
+    let tokens: u32 = turns
+        .iter()
+        .map(|t| estimate_tokens(&t.content))
+        .sum();
+
+    FittedContext {
+        turns,
+        dropped: projection.retained_not_projected,
+        tokens,
+    }
+}
+
 /// Whether a person asked for this message to be kept.
 ///
 /// Matched two ways, because the context meter draws two kinds of row and a pin

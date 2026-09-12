@@ -41,7 +41,14 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         "r".to_string(),
         workspace::Workspace::create(dir.path(), "r").expect("workspace"),
     );
+    // A real artifact store, in the harness's own temporary directory. The
+    // cross-model channel is part of the runtime under test, not a stub.
+    let conversation_artifacts = Arc::new(
+        crate::artifacts::conversation_store::ConversationArtifacts::open(dir.path())
+            .expect("the artifact store opens"),
+    );
     let deps = Arc::new(RuntimeDeps {
+        conversation_artifacts,
         index: Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens")),
         session: signed_in(department),
         workspaces,

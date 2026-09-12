@@ -953,3 +953,38 @@
     padding-right: 0;
   }
 }
+
+/* ── The hand-off to the main chat ─────────────────────────────────────
+ *
+ * What is left where the notebook's own chat used to be. Deliberately quiet:
+ * it is a signpost, not a feature, and the feature it points at is one screen
+ * away.
+ */
+.askHandoff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 46ch;
+  margin: 48px auto;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.askHandoffTitle { margin: 0; font-size: var(--text-md); color: var(--text-primary); }
+.askHandoffBody { margin: 0; font-size: var(--text-sm); line-height: 1.55; }
+.askHandoffBody code { padding: 1px 5px; border-radius: 4px; background: var(--bg-hover, rgb(127 127 127 / 12%)); }
+
+.askHandoffPending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+}
+
+.askHandoffPrompt { margin: 0; font-size: var(--text-sm); text-align: left; color: var(--text-primary); }
+.askHandoffFootnote { margin: 0; font-size: var(--text-xs); color: var(--text-tertiary); }

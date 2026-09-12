@@ -415,6 +415,18 @@ struct Extracted {
     truncated: bool,
     #[serde(default)]
     error: Option<String>,
+    /// A machine-readable name for *why* the read failed, when it did.
+    ///
+    /// `missing-parser`, `password-protected`, `unidentified-container`. The
+    /// human sentence in `error` is what the person sees; this is what an
+    /// administrator needs, because "no converter is installed for legacy
+    /// `.xls`" and "that file is encrypted" are the same sentence to a reader
+    /// and two different jobs to whoever runs the machine.
+    #[serde(default)]
+    reason: Option<String>,
+    /// What the file turned out to be, when the extractor could tell.
+    #[serde(default, rename = "detectedFormat")]
+    detected_format: Option<String>,
 }
 
 /// The pages the extractor already read, and the ones it could not.
@@ -864,6 +876,21 @@ fn run_extractor(path: &std::path::Path, out_dir: &std::path::Path) -> Result<Ex
     let parsed: Extracted = serde_json::from_str(line)
         .map_err(|e| format!("the document extractor returned unreadable output: {e}"))?;
     if let Some(error) = parsed.error {
+        // Logged before it is thrown away. The sentence goes to the person; the
+        // classification goes to whoever has to act on it, and without this
+        // line the two new fields the extractor emits would be parsed and
+        // silently discarded — machinery that exists only in a comment.
+        if let Some(reason) = &parsed.reason {
+            log::warn!(
+                "[extract] {}: {reason}{}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                parsed
+                    .detected_format
+                    .as_deref()
+                    .map(|format| format!(" (detected as {format})"))
+                    .unwrap_or_default()
+            );
+        }
         return Err(error);
     }
     Ok(parsed)

@@ -28,6 +28,7 @@ pub mod index;
 pub mod ingest;
 pub mod multimodal;
 pub mod notebook_retrieval;
+pub mod source_readiness;
 
 pub use chunking::{chunk_document, Chunk, ChunkKind};
 pub use connector::{discover, plan_sync, Collection, SourceKind, SyncPlan};
@@ -38,9 +39,13 @@ pub use evidence::{present, EvidenceBlock, PresentedPassage};
 pub use collections::CollectionStore;
 pub use graph::{
     Assertion, AssertionProvenance, AssertionStatus, EvidenceManifest, Note, NoteKind, Notebook,
-    NotebookDocument, NotebookStore, ResearchScope, RetrievalMode,
+    NotebookDocument, NotebookStore, ResearchScope, RetrievalMode, SourceSelection,
 };
 pub use notebook_retrieval::{NotebookRetrieval, ResolvedScope};
+pub use source_readiness::{
+    assess as assess_source, LocalCapabilities, ReadinessCounts, ReadinessReason, Repair,
+    SourceReadiness, SourceState,
+};
 pub use ingest::{ingest_collection, DocumentReader, IngestOutcome};
 pub use multimodal::{
     BBox, DocumentMeta, ImageRegion, Method as MultimodalMethod, MultimodalIndex,

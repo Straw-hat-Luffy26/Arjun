@@ -277,6 +277,25 @@ pub fn plan_launch(
     // gains nothing and keeps the plainer request; an older llama-server that
     // does not know the flag would refuse to start, which is the one outcome
     // worse than inline reasoning.
+    // FlashAttention and quantised KV cache.
+    //
+    // FlashAttention replaces the O(n²) memory-bound softmax with a tiled,
+    // fused kernel that never materialises the full attention matrix. On an
+    // 8 GB card this is the difference between 8k and 32k context fitting
+    // beside the model weights.
+    //
+    // `-ctk q8_0 -ctv q8_0` quantises the Key and Value caches to 8-bit
+    // integers. The quality impact is negligible (< 0.1 perplexity on
+    // standard benchmarks), and the memory savings are exactly 50%: the same
+    // VRAM that held 8k tokens of FP16 KV cache now holds 16k — and
+    // `vram_planner` accounts for this via `KV_QUANT_FACTOR`.
+    //
+    // Both are probed rather than assumed, exactly as `--reasoning-format`
+    // is: a build that does not know these flags would refuse to start.
+    if let Some(flash_flags) = llama_server_flash_attn_flags() {
+        args.extend(flash_flags);
+    }
+
     if crate::ai_engine::gguf_meta::capabilities(weights).emits_reasoning
         && llama_server_splits_reasoning()
     {
@@ -381,6 +400,41 @@ fn llama_server_splits_reasoning() -> bool {
         // Both are needed together, so both are required before either is sent.
         help.contains("--reasoning-format") && help.contains("--jinja")
     })
+}
+
+/// Probe whether this llama-server accepts `--flash-attn` and KV cache flags.
+///
+/// Newer llama-server versions require `--flash-attn [on|off|auto]`, so passing
+/// bare `--flash-attn` consumes the next argument (such as `-ctk`) and aborts.
+/// This probe determines the exact flags supported so the server launches cleanly.
+fn llama_server_flash_attn_flags() -> Option<Vec<String>> {
+    static FLAGS: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    FLAGS
+        .get_or_init(|| {
+            let Ok(output) = std::process::Command::new(llama_server_program())
+                .arg("--help")
+                .output()
+            else {
+                return None;
+            };
+            let help = String::from_utf8_lossy(&output.stdout);
+            if !help.contains("-ctk") {
+                return None;
+            }
+            let mut flags = Vec::new();
+            if help.contains("--flash-attn") {
+                flags.push("--flash-attn".to_string());
+                if help.contains("--flash-attn [on|off|auto]") || help.contains("-fa") {
+                    flags.push("on".to_string());
+                }
+            }
+            flags.push("-ctk".to_string());
+            flags.push("q8_0".to_string());
+            flags.push("-ctv".to_string());
+            flags.push("q8_0".to_string());
+            Some(flags)
+        })
+        .clone()
 }
 
 /// What [`ModelServers::spawn_managed`] resolved to, whether it had to start

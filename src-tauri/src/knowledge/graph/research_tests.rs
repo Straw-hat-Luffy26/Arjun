@@ -1428,3 +1428,474 @@ fn a_persons_own_claim_is_described_to_the_model_as_unverified() {
     );
 }
 
+
+// ── The notebook a conversation is asking ────────────────────────────────
+//
+// The preference is a pointer to the *next* question's default. Every test
+// here defends the boundary between it and the evidence behind answers already
+// given, because the operation that used to clear a notebook off a thread —
+// `unbind_conversation` — also deletes every manifest in it.
+
+use crate::knowledge::graph::research::{EvidenceEntry, EvidenceManifest, SourceSelection};
+
+fn manifest(notebook_id: &str, conversation: &str, message: &str) -> EvidenceManifest {
+    EvidenceManifest {
+        run_id: format!("run-{message}"),
+        notebook_id: notebook_id.to_string(),
+        conversation_id: conversation.to_string(),
+        message_id: message.to_string(),
+        created_at: "2026-09-12T05:42:11Z".to_string(),
+        scope: ResearchScope {
+            notebook_id: notebook_id.to_string(),
+            source_sha256s: Vec::new(),
+            sources: Some(SourceSelection::subset(vec![LOG_SHA.to_string()])),
+            node_ids: Vec::new(),
+            assertion_ids: Vec::new(),
+        },
+        retrieval_mode: RetrievalMode::Keyword,
+        entries: vec![EvidenceEntry {
+            marker: 1,
+            chunk_id: "chunk-1".to_string(),
+            document_sha256: LOG_SHA.to_string(),
+            document_name: "Maintenance log.pdf".to_string(),
+            page: 1,
+            section_path: Vec::new(),
+            source_revision: "2026-09-12T05:42:11Z#1".to_string(),
+            quote: "PV-2201 was overhauled in March".to_string(),
+        }],
+        limitations: Vec::new(),
+        graph_revision: None,
+        sources_unused: Vec::new(),
+    }
+}
+
+/// Clearing the chip must not destroy the citations already in the thread.
+///
+/// The regression for using `unbind_conversation` to do it: that deletes the
+/// `notebook_research_turns` rows too, so every `[E1]` in the conversation
+/// stops resolving the moment somebody takes the notebook off the composer.
+#[test]
+fn clearing_a_conversations_notebook_keeps_its_evidence() {
+    let j = journey("clear-keeps-evidence");
+
+    j.notebooks
+        .set_conversation_notebook(&j.notebook_id, ALICE, "conv-1", Some(&SourceSelection::All))
+        .expect("the preference is set");
+    j.notebooks
+        .record_research_turn(ALICE, &manifest(&j.notebook_id, "conv-1", "msg-1"))
+        .expect("the manifest is recorded");
+
+    j.notebooks
+        .clear_conversation_notebook(ALICE, "conv-1")
+        .expect("the notebook is taken off the chat");
+
+    assert!(
+        j.notebooks
+            .conversation_notebook_preference(ALICE, "conv-1")
+            .expect("the preference reads")
+            .is_none(),
+        "the chip is gone"
+    );
+    let kept = j
+        .notebooks
+        .research_turn(ALICE, "conv-1", "msg-1")
+        .expect("the manifest reads")
+        .expect("and it is still there");
+    assert_eq!(kept.entries.len(), 1, "the citation still resolves");
+}
+
+/// Switching notebooks changes the next question and no earlier answer.
+#[test]
+fn switching_notebooks_leaves_earlier_turns_pointing_at_the_notebook_they_used() {
+    let j = journey("switch-keeps-history");
+
+    j.notebooks
+        .set_conversation_notebook(&j.notebook_id, ALICE, "conv-1", Some(&SourceSelection::All))
+        .expect("notebook A is attached");
+    j.notebooks
+        .record_research_turn(ALICE, &manifest(&j.notebook_id, "conv-1", "msg-1"))
+        .expect("a turn is answered from A");
+
+    j.notebooks
+        .set_conversation_notebook(
+            &j.other_notebook_id,
+            ALICE,
+            "conv-1",
+            Some(&SourceSelection::None),
+        )
+        .expect("notebook B is attached instead");
+
+    let (notebook_id, selection) = j
+        .notebooks
+        .conversation_notebook_preference(ALICE, "conv-1")
+        .expect("the preference reads")
+        .expect("there is one");
+    assert_eq!(notebook_id, j.other_notebook_id, "the next question uses B");
+    assert_eq!(
+        selection,
+        Some(SourceSelection::None),
+        "and 'none' survives the round trip rather than reading back as 'all'"
+    );
+
+    let earlier = j
+        .notebooks
+        .research_turn(ALICE, "conv-1", "msg-1")
+        .expect("the manifest reads")
+        .expect("and it is still there");
+    assert_eq!(
+        earlier.notebook_id, j.notebook_id,
+        "the answer already given still names the notebook it actually used"
+    );
+}
+
+/// A preference is owner-scoped like every other read here.
+#[test]
+fn another_person_cannot_read_or_clear_this_conversations_notebook() {
+    let j = journey("preference-isolation");
+
+    j.notebooks
+        .set_conversation_notebook(&j.notebook_id, ALICE, "conv-1", Some(&SourceSelection::All))
+        .expect("Alice attaches her notebook");
+
+    assert!(
+        j.notebooks
+            .conversation_notebook_preference(BOB, "conv-1")
+            .expect("the read answers")
+            .is_none(),
+        "Bob must not see which notebook Alice's chat is asking"
+    );
+
+    j.notebooks
+        .clear_conversation_notebook(BOB, "conv-1")
+        .expect("the call is accepted and does nothing");
+    assert!(
+        j.notebooks
+            .conversation_notebook_preference(ALICE, "conv-1")
+            .expect("the read answers")
+            .is_some(),
+        "Bob's clear must not have removed Alice's preference"
+    );
+}
+
+/// A conversation bound before selections were recorded reads back with no
+/// selection — which the chip shows as "choose sources", not as "all of them".
+#[test]
+fn a_binding_made_before_selections_existed_reads_back_without_one() {
+    let j = journey("legacy-binding");
+
+    // `bind_conversation` is the pre-selection call, still used when a notebook
+    // opens its own thread.
+    j.notebooks
+        .bind_conversation(&j.notebook_id, ALICE, "conv-1")
+        .expect("the legacy binding is written");
+
+    let (notebook_id, selection) = j
+        .notebooks
+        .conversation_notebook_preference(ALICE, "conv-1")
+        .expect("the preference reads")
+        .expect("there is one");
+    assert_eq!(notebook_id, j.notebook_id);
+    assert_eq!(
+        selection, None,
+        "no selection was ever recorded, so none is reported"
+    );
+}
+
+
+// -- Both ways of adding a source produce a readable one ------------------
+//
+// The bug these exist for: two paths added a notebook source and only one of
+// them wrote the record that makes the text readable.
+// `commands::notebook::notebook_add_documents` (the upload) recorded a sighting
+// under the notebook's own synthetic conversation id; the `notebook.add_source`
+// tool (filing an attachment already in the chat) wrote the membership row and
+// nothing else. So the notebook listed a document, the screen counted it as a
+// source, retrieval asked for it under `notebook:{id}`, got nothing, and
+// reported "its extracted text is missing" -- with a repair nobody could guess.
+
+const CHAT_SHA: &str = "f4c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90b3";
+
+/// Records a document against a *chat* conversation, the way an attachment
+/// arrives before anybody thinks about notebooks.
+fn attach_to_chat(documents: &DocumentStore, conversation: &str) {
+    let mut pages = BTreeMap::new();
+    pages.insert(
+        1u32,
+        "The relief valve PV-2201 was last certified on 4 March and is rated at 12 bar."
+            .to_string(),
+    );
+    documents
+        .record(NewExtraction {
+            sha256: CHAT_SHA.to_string(),
+            name: "Certificate.pdf".to_string(),
+            kind: "pdf-text".to_string(),
+            pages: 1,
+            truncated: false,
+            page_text: pages,
+            sighting: Sighting {
+                owner_user_id: ALICE.to_string(),
+                conversation_id: conversation.to_string(),
+                message_id: "a-1".to_string(),
+                run_id: "run-1".to_string(),
+                at: chrono::Utc::now().to_rfc3339(),
+                ocr_model_id: None,
+                ocr_detent: None,
+            },
+        })
+        .expect("the chat attachment stores");
+}
+
+fn notebook_sighting(notebook_id: &str) -> Sighting {
+    Sighting {
+        owner_user_id: ALICE.to_string(),
+        conversation_id: format!("notebook:{notebook_id}"),
+        message_id: format!("notebook-add:{CHAT_SHA}"),
+        run_id: format!("notebook:{notebook_id}"),
+        at: chrono::Utc::now().to_rfc3339(),
+        ocr_model_id: None,
+        ocr_detent: None,
+    }
+}
+
+fn scope_for(notebook_id: &str, sha: &str) -> ResearchScope {
+    ResearchScope {
+        notebook_id: notebook_id.to_string(),
+        source_sha256s: Vec::new(),
+        sources: Some(SourceSelection::subset(vec![sha.to_string()])),
+        node_ids: Vec::new(),
+        assertion_ids: Vec::new(),
+    }
+}
+
+/// The old behaviour, kept as a test so it cannot come back: a membership row
+/// with no sighting is a source the notebook lists and cannot read.
+#[test]
+fn a_membership_row_without_a_sighting_cannot_be_read() {
+    let j = journey("membership-without-sighting");
+    attach_to_chat(&j.documents, "conv-chat");
+
+    // Exactly what the tool used to do, and all it used to do.
+    j.notebooks
+        .add_document(&j.notebook_id, ALICE, CHAT_SHA, "Certificate.pdf")
+        .expect("membership");
+
+    let scope = scope_for(&j.notebook_id, CHAT_SHA);
+    let resolved = notebook_retrieval::resolve(&j.notebooks, ALICE, &scope)
+        .expect("the source is in the notebook, so the scope resolves");
+    let retrieval =
+        notebook_retrieval::retrieve(&j.documents, ALICE, &resolved, "what is PV-2201 rated at?");
+
+    assert!(
+        retrieval.passages.is_empty(),
+        "without the sighting there is nothing to read, which is the bug"
+    );
+    assert!(
+        retrieval
+            .limitations
+            .iter()
+            .any(|line| line.contains("Certificate.pdf")),
+        "and the failure is at least named: {:?}",
+        retrieval.limitations
+    );
+}
+
+/// The fix. `notebook.add_source` now records the sighting before the
+/// membership row, so filing a chat attachment into a notebook produces a
+/// source that can actually be read -- the same outcome as uploading it.
+#[test]
+fn filing_a_chat_attachment_into_a_notebook_produces_a_readable_source() {
+    let j = journey("add-source-is-readable");
+    attach_to_chat(&j.documents, "conv-chat");
+
+    // What the tool does now: associate, then add.
+    j.documents
+        .associate(CHAT_SHA, ALICE, notebook_sighting(&j.notebook_id))
+        .expect("the notebook is given access to text it already holds");
+    j.notebooks
+        .add_document(&j.notebook_id, ALICE, CHAT_SHA, "Certificate.pdf")
+        .expect("membership");
+
+    let scope = scope_for(&j.notebook_id, CHAT_SHA);
+    let resolved = notebook_retrieval::resolve(&j.notebooks, ALICE, &scope).expect("resolves");
+    let retrieval =
+        notebook_retrieval::retrieve(&j.documents, ALICE, &resolved, "what is PV-2201 rated at?");
+
+    assert!(
+        !retrieval.passages.is_empty(),
+        "the filed attachment must be readable in the notebook: {:?}",
+        retrieval.limitations
+    );
+    assert!(
+        retrieval.passages[0].text.contains("12 bar"),
+        "and it must be the actual text: {:?}",
+        retrieval.passages[0].text
+    );
+    assert!(
+        retrieval.sources_unused.is_empty(),
+        "nothing in scope went unread: {:?}",
+        retrieval.sources_unused
+    );
+}
+
+/// Associating does not widen anything. The document becomes readable in the
+/// notebook it was filed into and nowhere else.
+#[test]
+fn filing_into_one_notebook_does_not_make_it_readable_in_another() {
+    let j = journey("add-source-scope");
+    attach_to_chat(&j.documents, "conv-chat");
+
+    j.documents
+        .associate(CHAT_SHA, ALICE, notebook_sighting(&j.notebook_id))
+        .expect("access to the first notebook");
+
+    assert!(
+        j.documents
+            .get(
+                CHAT_SHA,
+                ALICE,
+                Some(&format!("notebook:{}", j.other_notebook_id))
+            )
+            .expect("the read answers")
+            .is_none(),
+        "a second notebook must not gain access to it"
+    );
+
+    assert!(
+        j.documents
+            .get(CHAT_SHA, BOB, Some(&format!("notebook:{}", j.notebook_id)))
+            .expect("the read answers")
+            .is_none(),
+        "and neither does anybody else"
+    );
+}
+
+/// A question scoped to sources that cannot be read produces limitations, not
+/// an answer from somewhere else.
+#[test]
+fn a_scope_whose_sources_cannot_be_read_produces_limitations_rather_than_passages() {
+    let j = journey("unreadable-scope");
+    j.notebooks
+        .add_document(&j.notebook_id, ALICE, CHAT_SHA, "Certificate.pdf")
+        .expect("membership for a document with no extraction at all");
+
+    let scope = scope_for(&j.notebook_id, CHAT_SHA);
+    let resolved = notebook_retrieval::resolve(&j.notebooks, ALICE, &scope).expect("resolves");
+    let retrieval =
+        notebook_retrieval::retrieve(&j.documents, ALICE, &resolved, "what is PV-2201 rated at?");
+
+    assert!(retrieval.passages.is_empty());
+    assert!(
+        !retrieval.limitations.is_empty(),
+        "the turn must say why it has nothing, rather than answering anyway"
+    );
+}
+
+
+/// The sibling writer must not be a way round the owner guard.
+///
+/// `bind_conversation` used `INSERT OR REPLACE`, which is DELETE-then-INSERT on
+/// a primary-key conflict, and carried no owner check at all. So the careful
+/// `WHERE owner_user_id = ?` on `set_conversation_notebook` bought nothing:
+/// naming somebody else's conversation id destroyed their binding outright and
+/// replaced the owner with the caller.
+#[test]
+fn another_person_cannot_destroy_this_conversations_binding() {
+    let j = journey("bind-owner-guard");
+
+    j.notebooks
+        .set_conversation_notebook(&j.notebook_id, ALICE, "conv-1", Some(&SourceSelection::All))
+        .expect("Alice attaches her notebook");
+
+    // Bob owns a notebook of his own, so the notebook-ownership check passes and
+    // only the conversation guard stands between him and Alice's row.
+    let bobs = j.notebooks.create(BOB, "Bob notebook").expect("a notebook");
+    let refused = j
+        .notebooks
+        .bind_conversation(&bobs.id, BOB, "conv-1")
+        .expect_err("Bob must not be able to rebind Alice's conversation");
+    assert!(
+        refused.to_string().contains("different account"),
+        "and the refusal must say why: {refused}"
+    );
+
+    let (notebook_id, selection) = j
+        .notebooks
+        .conversation_notebook_preference(ALICE, "conv-1")
+        .expect("the preference reads")
+        .expect("Alice's binding is still there");
+    assert_eq!(
+        notebook_id, j.notebook_id,
+        "still pointing at Alice's notebook"
+    );
+    assert_eq!(
+        selection,
+        Some(SourceSelection::All),
+        "and her selection was not wiped by the rebind"
+    );
+}
+
+/// A write the guard refused is not a success.
+///
+/// SQLite raises nothing when the `WHERE` on an upsert is false -- it changes no
+/// rows. Returning `Ok(())` on that told the screen the notebook had been
+/// attached while the row belonged to somebody else and nothing was written.
+#[test]
+fn a_refused_preference_write_is_reported_rather_than_returning_success() {
+    let j = journey("preference-refusal-is-loud");
+
+    j.notebooks
+        .set_conversation_notebook(&j.notebook_id, ALICE, "conv-1", Some(&SourceSelection::All))
+        .expect("Alice attaches her notebook");
+
+    let bobs = j.notebooks.create(BOB, "Bob notebook").expect("a notebook");
+    let refused = j
+        .notebooks
+        .set_conversation_notebook(&bobs.id, BOB, "conv-1", Some(&SourceSelection::None))
+        .expect_err("the guard refuses, and says so");
+    assert!(refused.to_string().contains("different account"), "{refused}");
+
+    assert_eq!(
+        j.notebooks
+            .conversation_notebook_preference(ALICE, "conv-1")
+            .expect("the preference reads")
+            .expect("still there")
+            .0,
+        j.notebook_id,
+        "Alice's row is untouched"
+    );
+}
+
+/// Re-binding a conversation must not discard the selection it was carrying.
+///
+/// `INSERT OR REPLACE` rewrote the row without naming `selection_json`, so the
+/// column came back NULL and the chip silently forgot which sources the
+/// conversation had been narrowed to.
+#[test]
+fn rebinding_a_conversation_keeps_the_selection_it_was_carrying() {
+    let j = journey("rebind-keeps-selection");
+
+    j.notebooks
+        .set_conversation_notebook(
+            &j.notebook_id,
+            ALICE,
+            "conv-1",
+            Some(&SourceSelection::subset(vec![LOG_SHA.to_string()])),
+        )
+        .expect("a narrowed selection is recorded");
+
+    j.notebooks
+        .bind_conversation(&j.other_notebook_id, ALICE, "conv-1")
+        .expect("Alice moves her own conversation to another notebook");
+
+    let (notebook_id, selection) = j
+        .notebooks
+        .conversation_notebook_preference(ALICE, "conv-1")
+        .expect("the preference reads")
+        .expect("there is one");
+    assert_eq!(notebook_id, j.other_notebook_id);
+    assert_eq!(
+        selection,
+        Some(SourceSelection::subset(vec![LOG_SHA.to_string()])),
+        "the selection survived the rebind"
+    );
+}

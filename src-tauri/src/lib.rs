@@ -310,6 +310,22 @@ pub fn run() {
                 Err(e) => log::error!("[NOTEBOOK] the notebook store could not be opened: {e}"),
             }
 
+            // What each conversation has produced, across every run in it.
+            //
+            // The cross-model channel. Run workspaces are isolated from each
+            // other by design, so a turn asked to reuse the diagram an earlier
+            // turn drew reaches it here, by id, rather than by guessing at
+            // another run's filesystem path. Same SQLite file, its own table,
+            // with the content beside it addressed by hash.
+            match artifacts::conversation_store::ConversationArtifacts::open(&data_dir) {
+                Ok(store) => {
+                    app.manage(commands::agent::ConversationArtifactsState(Arc::new(store)));
+                }
+                Err(e) => log::error!(
+                    "[ARTIFACTS] the conversation artifact store could not be opened: {e}.                      Artifacts produced in this session will not be reusable by later turns."
+                ),
+            }
+
             let approval_queue = Arc::new(orchestrator::approvals::ApprovalQueue::new());
             app.manage(Arc::clone(&approval_queue));
             app.manage(commands::governance::CurrentSession::default());
@@ -1084,6 +1100,11 @@ pub fn run() {
             commands::notebook_research::notebook_create_assertion,
             commands::notebook_research::notebook_delete_assertion,
             commands::notebook_research::notebook_scope_preview,
+            commands::notebook_research::notebook_source_status,
+            commands::notebook_research::notebook_repair_source,
+            commands::notebook_research::notebook_set_conversation_scope,
+            commands::notebook_research::notebook_conversation_scope,
+            commands::notebook_research::notebook_clear_conversation_scope,
 
             // The ten `memory_engine::api::*` commands were removed. See
             // `memory_engine::api` for the reasoning; in short, every one of

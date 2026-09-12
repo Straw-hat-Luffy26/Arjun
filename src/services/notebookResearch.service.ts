@@ -11,9 +11,111 @@
  * `src-tauri/src/commands/notebook_research.rs`.
  */
 import { getBackendService } from './api';
-import type { ResearchScope } from './agent.service';
+import type { ResearchScope, SourceSelection } from './agent.service';
 
-export type { ResearchScope };
+export type { ResearchScope, SourceSelection };
+
+// ── Source readiness ─────────────────────────────────────────────────────
+
+/**
+ * How far along one source is, from added to answerable.
+ *
+ * Mirrors `knowledge::source_readiness::SourceState`. The screen shows one
+ * badge per source; `ready` and `partiallyReady` are the only two a question
+ * may be answered from.
+ */
+export type SourceState =
+  | 'queued'
+  | 'reading'
+  | 'extracting'
+  | 'needsVision'
+  | 'indexing'
+  | 'ready'
+  | 'partiallyReady'
+  | 'failed'
+  | 'unavailable';
+
+/** Whether a question may draw evidence from a source in this state. */
+export function usableAsEvidence(state: SourceState): boolean {
+  return state === 'ready' || state === 'partiallyReady';
+}
+
+/** Whether the source is still being worked on, so the screen should poll. */
+export function inProgress(state: SourceState): boolean {
+  return (
+    state === 'queued' ||
+    state === 'reading' ||
+    state === 'extracting' ||
+    state === 'indexing'
+  );
+}
+
+/**
+ * Precisely what is wrong with a source, in a form the screen can act on.
+ *
+ * Mirrors `ReadinessReason`, tagged by `kind`. One variant per distinct repair:
+ * "missing", "corrupt" and "this notebook was never given access to it" used to
+ * be the same word on screen, and they have three different answers.
+ */
+export type ReadinessReason =
+  | { kind: 'notAssociated' }
+  | { kind: 'missingExtraction' }
+  | { kind: 'storeUnavailable'; problem: string }
+  | { kind: 'incompatibleExtraction'; problem: string }
+  | { kind: 'missingOriginal' }
+  | { kind: 'passwordProtected' }
+  | { kind: 'missingParser'; needed: string }
+  | { kind: 'conversionFailure'; tool: string; problem: string }
+  | { kind: 'noTextExtracted' }
+  | { kind: 'requiresVision' }
+  | { kind: 'visionUnavailable' }
+  | { kind: 'unreadablePages'; pages: number[]; total: number }
+  | { kind: 'partialExtraction'; read: number; total: number }
+  | { kind: 'notIndexed'; stored: number; expected: number };
+
+/** What the screen may offer for a reason. */
+export type Repair = 'associate' | 'reprocess' | 'addAgain' | 'retry';
+
+/** One source, and everything known about whether it can be read. */
+export interface SourceReadiness {
+  documentSha256: string;
+  documentName: string;
+  state: SourceState;
+  reasons: ReadinessReason[];
+  extractionKind: string | null;
+  sourceRevision: string | null;
+  pagesTotal: number;
+  pagesWithText: number;
+  passages: number;
+  repair: Repair | null;
+}
+
+/**
+ * The counts a screen needs to stop contradicting itself.
+ *
+ * Selected and readable are different facts. A preview carrying only the first
+ * is how "1 of 1 will be read" came to sit above a warning that the one source
+ * could not be read.
+ */
+export interface ReadinessCounts {
+  total: number;
+  selected: number;
+  readable: number;
+  partial: number;
+  blocked: number;
+  inProgress: number;
+}
+
+/** The notebook and selection a conversation was last left on. */
+export interface ConversationScope {
+  notebookId: string;
+  notebookName: string;
+  /**
+   * `null` for a thread bound before selections were recorded. Shown as
+   * "choose sources" — never silently treated as all of them.
+   */
+  selection: SourceSelection | null;
+}
 
 // ── Conversations bound to a notebook ────────────────────────────────────
 
@@ -180,6 +282,14 @@ export interface ScopePreview {
   sourcesTotal: number;
   /** Selected sources whose text cannot be read, by name. */
   unreadable: string[];
+  /**
+   * Selected, readable, partial, blocked and in-progress, counted apart.
+   *
+   * Nothing may say "will be read" from anything but `counts.readable`.
+   */
+  counts: ReadinessCounts;
+  /** Every selected source with its state and reasons. */
+  sources: SourceReadiness[];
   focusLabels: string[];
   focusRelationships: string[];
   retrievalMode: RetrievalMode;
@@ -349,5 +459,77 @@ export const notebookResearchService = {
   /** What the next question would use, before it is asked. */
   scopePreview(scope: ResearchScope): Promise<ScopePreview> {
     return getBackendService().invoke<ScopePreview>('notebook_scope_preview', { scope });
+  },
+
+  // ── Readiness and repair ───────────────────────────────────────────────
+
+  /**
+   * Whether each source in a notebook can actually be read.
+   *
+   * Distinct from `notebookService.documents`, which answers "what is in this
+   * notebook" — a membership question that says nothing about whether any of it
+   * has readable text.
+   */
+  sourceStatus(notebookId: string): Promise<SourceReadiness[]> {
+    return getBackendService().invoke<SourceReadiness[]>('notebook_source_status', {
+      notebookId,
+    });
+  },
+
+  /**
+   * Repairs one source that is readable on disk and unreachable from here.
+   *
+   * Records the access the notebook is missing. Re-reads nothing and runs no
+   * model, because the text has been on disk the whole time. Returns the source
+   * as it stands afterwards, repaired or not — a source whose extraction is
+   * genuinely gone comes back still broken rather than pretending.
+   */
+  repairSource(notebookId: string, documentSha256: string): Promise<SourceReadiness> {
+    return getBackendService().invoke<SourceReadiness>('notebook_repair_source', {
+      notebookId,
+      documentSha256,
+    });
+  },
+
+  // ── The notebook a conversation is asking ──────────────────────────────
+
+  /**
+   * Remembers which notebook this conversation is asking, and of what.
+   *
+   * The preference only. Each turn's scope is frozen onto its own manifest when
+   * the message is submitted, so changing this changes the next question and no
+   * answer already given.
+   */
+  setConversationScope(
+    conversationId: string,
+    notebookId: string,
+    selection: SourceSelection,
+  ): Promise<void> {
+    return getBackendService().invoke<void>('notebook_set_conversation_scope', {
+      conversationId,
+      notebookId,
+      selection,
+    });
+  },
+
+  /** The notebook and selection a conversation was left on, if any. */
+  conversationScope(conversationId: string): Promise<ConversationScope | null> {
+    return getBackendService().invoke<ConversationScope | null>(
+      'notebook_conversation_scope',
+      { conversationId },
+    );
+  },
+
+  /**
+   * Takes the notebook off a conversation and leaves its evidence alone.
+   *
+   * Deliberately not the unbind call, which also deletes every manifest in the
+   * thread: clearing the chip must not stop the citations in answers already
+   * given from resolving.
+   */
+  clearConversationScope(conversationId: string): Promise<void> {
+    return getBackendService().invoke<void>('notebook_clear_conversation_scope', {
+      conversationId,
+    });
   },
 };

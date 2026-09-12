@@ -39,7 +39,7 @@ use crate::agent_runtime::doc_pipeline;
 use crate::agent_runtime::documents::{DocumentStore, ExtractedDocument};
 use crate::knowledge::chunking::Chunk;
 use crate::knowledge::graph::research::{
-    EvidenceEntry, EvidenceManifest, ResearchScope, RetrievalMode,
+    EvidenceEntry, EvidenceManifest, ResearchScope, RetrievalMode, SourceSelection,
 };
 use crate::knowledge::graph::{
     Assertion, AssertionStatus, Notebook, NotebookDocument, NotebookStore,
@@ -126,23 +126,47 @@ pub fn resolve(
         .iter()
         .map(|member| (member.document_sha256.as_str(), member))
         .collect();
-    let sources: Vec<NotebookDocument> = if scope.source_sha256s.is_empty() {
-        members.clone()
-    } else {
-        let mut chosen = Vec::with_capacity(scope.source_sha256s.len());
-        for sha in &scope.source_sha256s {
-            match known.get(sha.as_str()) {
-                Some(member) => chosen.push((*member).clone()),
-                None => {
-                    return Err(format!(
-                        "One of the selected sources is not in \"{}\". Reopen the notebook and \
-                         choose the sources again.",
-                        notebook.name
-                    ))
+    //    Three cases, kept apart. The old code had two — empty and non-empty —
+    //    and read the empty one as "every source", so a selection that failed
+    //    to load widened the question to the whole notebook instead of
+    //    refusing. See [`SourceSelection`].
+    let selection = scope.selection();
+    let sources: Vec<NotebookDocument> = match &selection {
+        SourceSelection::All => members.clone(),
+        SourceSelection::None => {
+            return Err(format!(
+                "No sources are selected in \"{}\", so there is nothing for this question to \
+                 read. Choose at least one source on the notebook chip, or clear the notebook to \
+                 ask without it.",
+                notebook.name
+            ))
+        }
+        SourceSelection::Subset { sha256s } => {
+            if sha256s.is_empty() {
+                // An empty subset is a caller bug, not a request to read
+                // everything. Refused by name so it gets fixed, rather than
+                // silently answered from the whole notebook.
+                return Err(format!(
+                    "The source selection for \"{}\" arrived empty. Choose the sources again \
+                     before asking.",
+                    notebook.name
+                ));
+            }
+            let mut chosen = Vec::with_capacity(sha256s.len());
+            for sha in sha256s {
+                match known.get(sha.as_str()) {
+                    Some(member) => chosen.push((*member).clone()),
+                    None => {
+                        return Err(format!(
+                            "One of the selected sources is not in \"{}\". Reopen the notebook \
+                             and choose the sources again.",
+                            notebook.name
+                        ))
+                    }
                 }
             }
+            chosen
         }
-        chosen
     };
 
     if sources.is_empty() {

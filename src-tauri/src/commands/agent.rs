@@ -756,7 +756,15 @@ pub struct RuntimeState<'a> {
     /// Which conversation each live run belongs to, so a document read can be
     /// scoped to the thread the document was attached to.
     pub run_to_conversation: &'a super::conversations::RunToConversationState,
+    /// Everything this conversation has produced, so a later turn can reuse it
+    /// without reading another run's workspace.
+    pub conversation_artifacts: &'a ConversationArtifactsState,
 }
+
+/// The conversation artifact store, as Tauri manages it.
+pub struct ConversationArtifactsState(
+    pub Arc<crate::artifacts::conversation_store::ConversationArtifacts>,
+);
 
 /// The scoped memory store, as Tauri manages it.
 pub type AgentMemory = crate::agent_runtime::memory::SharedMemory;
@@ -821,6 +829,7 @@ fn runtime(
         multimodal: Arc::clone(state.multimodal),
         documents: Arc::clone(&state.documents.0),
         run_to_conversation: Arc::clone(&state.run_to_conversation.0),
+        conversation_artifacts: Arc::clone(&state.conversation_artifacts.0),
         notebooks: Arc::clone(state.notebooks),
         emit_durable,
         // The same channel the loop's own events travel, so an operator sees
@@ -1405,6 +1414,7 @@ pub async fn agent_start_run(
     checkpoints: State<'_, RunCheckpoints>,
     conversations: State<'_, super::conversations::ConversationsState>,
     run_to_conversation: State<'_, super::conversations::RunToConversationState>,
+    conversation_artifacts: State<'_, ConversationArtifactsState>,
     documents: State<'_, DocumentsState>,
     notebooks: State<'_, Arc<crate::knowledge::NotebookStore>>,
     cancellations: State<'_, CancellationsState>,
@@ -1435,6 +1445,7 @@ pub async fn agent_start_run(
         checkpoints,
         conversations,
         run_to_conversation,
+        conversation_artifacts,
         documents,
         notebooks,
         cancellations,
@@ -1477,6 +1488,7 @@ async fn drive_run(
     checkpoints: State<'_, RunCheckpoints>,
     conversations: State<'_, super::conversations::ConversationsState>,
     run_to_conversation: State<'_, super::conversations::RunToConversationState>,
+    conversation_artifacts: State<'_, ConversationArtifactsState>,
     documents: State<'_, DocumentsState>,
     notebooks: State<'_, Arc<crate::knowledge::NotebookStore>>,
     cancellations: State<'_, CancellationsState>,
@@ -1995,6 +2007,7 @@ async fn drive_run(
         multimodal: &multimodal,
         documents: &documents,
         run_to_conversation: &run_to_conversation,
+        conversation_artifacts: &conversation_artifacts,
         notebooks: &notebooks,
     };
     let runtime = runtime(&handle, &app, &state)?;
@@ -2338,12 +2351,23 @@ async fn drive_run(
                 mode: crate::sovereignty::global_broker().mode(),
                 run_permits: &task_plan.budget.permitted_tools,
             };
+            // What this turn is going to *read*, from the backend's own
+            // extraction records rather than from filenames. See
+            // `reading_context_for`.
+            let reading = reading_context_for(
+                request.research.as_ref(),
+                notebooks.inner(),
+                &documents.0,
+                registry.inner(),
+                &signed_in.user.id,
+            );
             crate::skills::selection::bind(
                 // The person's words, not the composed prompt: a hundred
                 // kilobytes of scanned attachment matches every keyword there
                 // is, which is the same trap routing fell into.
                 &question,
                 output_format_of(&task_plan),
+                &reading,
                 &skills,
                 &context,
             )
@@ -2560,6 +2584,12 @@ async fn drive_run(
     // ─────────────────────────────────────────────────────────────────────
     let mut research_note = String::new();
     if let Some(scope) = request.research.clone() {
+        // The scope arrived from outside Rust, so it must say which sources it
+        // may read. One that does not is refused here rather than resolved with
+        // the widest reading — the frontend having failed to load a selection
+        // is not the person having chosen every document.
+        scope.require_explicit_selection()?;
+
         let resolved = crate::knowledge::notebook_retrieval::resolve(
             notebooks.inner(),
             &signed_in.user.id,
@@ -2874,7 +2904,16 @@ async fn drive_run(
             .get(&conversation_id, Some(&signed_in.user.id))
         {
             Ok(Some(conversation)) => {
-                turn_context::fit(&conversation, &message_id, budget, &pinned)
+                // Uses the chat memory bus for richer, non-destructive context
+                // projection: pinned turns are always included, recent turns
+                // get 60% of the budget, and keyword-relevant older turns are
+                // pulled in before generic background fills the rest. Nothing
+                // in the conversation store is deleted — `dropped` counts turns
+                // not projected into *this* model call, and they remain
+                // available for the next turn or the next model.
+                turn_context::fit_with_memory_bus(
+                    &conversation, &message_id, budget, &pinned, &question,
+                )
             }
             Ok(None) => turn_context::FittedContext::empty(),
             Err(error) => {
@@ -3584,6 +3623,29 @@ async fn drive_run(
     // produced nothing has an empty `answer`, and `None` leaves whatever the
     // front-end streamed rather than blanking the cell.
     let final_content = (!answer.is_empty()).then_some(answer.as_str());
+
+    // -- What this turn produced, kept where the next one can reach it ----
+    //
+    // Here, and not during the stream. A fence still arriving has no closing
+    // marker and half a body, so capturing as it went would record every prefix
+    // of the same diagram as its own artifact. The content hash in the store
+    // absorbs the rest: a retry that produces byte-identical output reuses the
+    // version it already has.
+    //
+    // This is the registration half of the fix. Without it the store stays
+    // empty, `artifact.list` finds nothing, and a later turn asked to reuse
+    // "that diagram" is back to inventing one.
+    if let Some(text) = final_content {
+        register_message_artifacts(
+            &conversation_artifacts,
+            &signed_in.user.id,
+            &conversation_id,
+            &message_id,
+            &run_id,
+            &routing.model_id,
+            text,
+        );
+    }
     let _ = conversations.0.record_message_completion(
         &conversation_id,
         &message_id,
@@ -3812,6 +3874,152 @@ fn compose_system_prompt(
 /// Ids and page counts only — never page text. This is a note saying what can
 /// be asked for, not a way to smuggle a document past the budget that decided
 /// it did not fit.
+/// What a turn is about to read, for choosing the reading skills.
+///
+/// Built from the notebook scope the turn carries, resolved against the store
+/// for the signed-in owner -- so the kinds here are the ones the extractor
+/// actually recorded when each document was read. The alternative, reading a
+/// filename, chooses `source-spreadsheet` for a `.xls` that is really XML and
+/// `source-pdf` for a scan that nothing on this machine can open.
+///
+/// Best-effort by design. A scope that cannot be resolved returns an empty
+/// context and no reading skill is chosen: the turn refuses at the research
+/// step a moment later with the store's own message, and choosing a skill for
+/// a scope that is about to be refused would only spend window on guidance
+/// nothing could use.
+fn reading_context_for(
+    scope: Option<&crate::knowledge::ResearchScope>,
+    notebooks: &crate::knowledge::NotebookStore,
+    documents: &crate::agent_runtime::documents::DocumentStore,
+    registry: &ModelRegistry,
+    owner_user_id: &str,
+) -> crate::skills::selection::ReadingContext {
+    use crate::registry::ModelRole;
+
+    let mut reading = crate::skills::selection::ReadingContext {
+        vision_available: registry.all().iter().any(|entry| {
+            entry.enabled
+                && (entry.serves(ModelRole::Vision) || entry.serves(ModelRole::DocumentOcr))
+        }),
+        ..Default::default()
+    };
+
+    let Some(scope) = scope else {
+        return reading;
+    };
+    reading.notebook = true;
+
+    let Ok(resolved) =
+        crate::knowledge::notebook_retrieval::resolve(notebooks, owner_user_id, scope)
+    else {
+        return reading;
+    };
+
+    let conversation = format!("notebook:{}", resolved.notebook.id);
+    let capabilities = crate::knowledge::LocalCapabilities {
+        vision: reading.vision_available,
+    };
+
+    for member in &resolved.sources {
+        let presence = documents
+            .inspect(&member.document_sha256, owner_user_id, Some(&conversation))
+            .unwrap_or_else(|error| {
+                crate::agent_runtime::documents::SourcePresence::Unavailable {
+                    problem: error.to_string(),
+                }
+            });
+        let readiness = crate::knowledge::assess_source(member, &presence, capabilities);
+
+        if let Some(kind) = &readiness.extraction_kind {
+            if !reading.source_kinds.iter().any(|held| held == kind) {
+                reading.source_kinds.push(kind.clone());
+            }
+        }
+        if readiness.state == crate::knowledge::SourceState::NeedsVision
+            || readiness
+                .reasons
+                .iter()
+                .any(|reason| matches!(reason, crate::knowledge::ReadinessReason::RequiresVision))
+        {
+            reading.needs_vision = true;
+        }
+        // A legacy binary Office file is recognised by the parser refusing it,
+        // not by its name. `MissingParser` is what the reader records when it
+        // knows the container and has nothing that can open it.
+        if readiness.reasons.iter().any(|reason| {
+            matches!(reason, crate::knowledge::ReadinessReason::MissingParser { .. })
+        }) {
+            reading.legacy_office = true;
+        }
+    }
+
+    reading
+}
+
+/// Records the reusable blocks of one finished assistant message.
+///
+/// Best-effort, and deliberately quiet about its own failures: a turn that
+/// answered correctly must not be reported as failed because an artifact could
+/// not be filed. What is *not* quiet is the log line — an artifact that should
+/// have been reusable and is not is the exact condition this change set exists
+/// to remove, and it has to be findable afterwards.
+///
+/// The artifact id is derived from the message and the block's position, so the
+/// same block re-registered by a resumed or replayed run lands on the same id
+/// and becomes a no-op rather than a second copy.
+fn register_message_artifacts(
+    store: &ConversationArtifactsState,
+    owner_user_id: &str,
+    conversation_id: &str,
+    message_id: &str,
+    run_id: &str,
+    model_id: &str,
+    message: &str,
+) {
+    use crate::artifacts::captured_blocks;
+    use crate::artifacts::conversation_store::{NewArtifact, Producer};
+
+    for block in captured_blocks::capture(message) {
+        let artifact_id = format!("art-{message_id}-{}", block.index);
+        let index = block.index;
+        let recorded = store.0.record(NewArtifact {
+            artifact_id: Some(artifact_id),
+            conversation_id: conversation_id.to_string(),
+            owner_user_id: owner_user_id.to_string(),
+            message_id: Some(message_id.to_string()),
+            run_id: Some(run_id.to_string()),
+            producer: Producer {
+                model_id: (!model_id.is_empty()).then(|| model_id.to_string()),
+                tool: None,
+                agent: None,
+            },
+            kind: block.kind,
+            mime: block.mime.clone(),
+            title: block.title.clone(),
+            filename: None,
+            complete: true,
+            derived_from: None,
+            renders: None,
+            language: (!block.language.is_empty()).then(|| block.language.clone()),
+            render_requires: Vec::new(),
+            content: block.content.into_bytes(),
+        });
+
+        match recorded {
+            Ok(record) => log::info!(
+                "[artifacts] run={run_id} captured {} ({}, {} bytes) from message {message_id}",
+                record.reference(),
+                record.kind.as_str(),
+                record.bytes
+            ),
+            Err(error) => log::warn!(
+                "[artifacts] run={run_id} could not keep block {index} of message \
+                 {message_id}: {error}. A later turn will not be able to reuse it."
+            ),
+        }
+    }
+}
+
 /// Names the person's notebooks, so a turn can recognise one when it hears it.
 ///
 /// Without this the graph tool works but the conversation does not: somebody
@@ -4466,6 +4674,7 @@ pub async fn agent_runtime_health(
     multimodal: State<'_, Multimodal>,
     documents: State<'_, DocumentsState>,
     run_to_conversation: State<'_, super::conversations::RunToConversationState>,
+    conversation_artifacts: State<'_, ConversationArtifactsState>,
     notebooks: State<'_, Arc<crate::knowledge::NotebookStore>>,
 ) -> Result<Value, String> {
     // The health probe is a read; the matrix does not gate it beyond
@@ -4491,6 +4700,7 @@ pub async fn agent_runtime_health(
         multimodal: &multimodal,
         documents: &documents,
         run_to_conversation: &run_to_conversation,
+        conversation_artifacts: &conversation_artifacts,
         notebooks: &notebooks,
     };
     let runtime = runtime(&handle, &app, &state)?;
@@ -5268,6 +5478,7 @@ pub async fn agent_resume_run(
     checkpoints: State<'_, RunCheckpoints>,
     conversations: State<'_, super::conversations::ConversationsState>,
     run_to_conversation: State<'_, super::conversations::RunToConversationState>,
+    conversation_artifacts: State<'_, ConversationArtifactsState>,
     documents: State<'_, DocumentsState>,
     notebooks: State<'_, Arc<crate::knowledge::NotebookStore>>,
     cancellations: State<'_, CancellationsState>,
@@ -5391,6 +5602,7 @@ pub async fn agent_resume_run(
         checkpoints,
         conversations,
         run_to_conversation,
+        conversation_artifacts,
         documents,
         notebooks,
         cancellations,

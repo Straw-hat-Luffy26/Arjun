@@ -229,6 +229,14 @@ pub struct SkillCard {
     pub sha256: String,
     /// Absent when the skill is available.
     pub quarantined: Option<Quarantine>,
+    /// Source kinds this skill can read, from `metadata.for-input`.
+    ///
+    /// The input counterpart of [`Self::formats`]. Selection matches these
+    /// against the *extraction kinds the backend resolved* -- `pdf-scan`,
+    /// `xlsx`, `image` -- and never against a filename. An extension is a hint
+    /// that is routinely wrong: a `.xls` holding XML, or a `.csv` that is
+    /// tab-delimited, would each reach the wrong reader if the name decided.
+    pub inputs: Vec<String>,
     /// Formats this skill is written for, from `metadata.for-format`.
     ///
     /// Empty for a skill that is about a domain rather than about a file type.
@@ -264,6 +272,17 @@ impl SkillCard {
             sha256: manifest.sha256.clone(),
             quarantined,
             imported: manifest.metadata.contains_key("imported-from"),
+            inputs: manifest
+                .metadata
+                .get("for-input")
+                .map(|declared| {
+                    declared
+                        .split(|c: char| c == ',' || c.is_whitespace())
+                        .filter(|token| !token.is_empty())
+                        .map(|token| token.trim_start_matches('.').to_lowercase())
+                        .collect()
+                })
+                .unwrap_or_default(),
             formats: manifest
                 .metadata
                 .get("for-format")
@@ -326,6 +345,7 @@ impl SkillCard {
             // Nothing is known about a directory that did not validate,
             // including where it came from or what it is for.
             imported: false,
+            inputs: Vec::new(),
             formats: Vec::new(),
         }
     }

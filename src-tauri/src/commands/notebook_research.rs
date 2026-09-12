@@ -685,6 +685,95 @@ pub async fn notebook_delete_assertion(
         .map_err(|error| format!("the relationship could not be deleted: {error}"))
 }
 
+// ── The notebook a conversation is asking ────────────────────────────────
+
+/// What the chip should show when a conversation is reopened.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationScope {
+    pub notebook_id: String,
+    pub notebook_name: String,
+    /// What was chosen last. `null` when the conversation was bound before
+    /// selections were recorded — which the chip shows as "choose sources",
+    /// never as "all of them".
+    pub selection: Option<crate::knowledge::SourceSelection>,
+}
+
+/// Remembers which notebook this conversation is asking, and of what.
+///
+/// The preference only. A turn's scope is frozen onto its manifest when the
+/// message is submitted, so changing this changes the *next* question and no
+/// answer already given.
+#[tauri::command]
+pub async fn notebook_set_conversation_scope(
+    conversation_id: String,
+    notebook_id: String,
+    selection: Option<crate::knowledge::SourceSelection>,
+    store: State<'_, Arc<NotebookStore>>,
+    session: State<'_, CurrentSession>,
+) -> Result<(), String> {
+    let signed_in = require_session(&session)?;
+    store
+        .set_conversation_notebook(
+            &notebook_id,
+            &signed_in.user.id,
+            &conversation_id,
+            selection.as_ref(),
+        )
+        .map_err(|error| format!("the notebook could not be attached to this chat: {error}"))
+}
+
+/// The notebook and selection a conversation was left on, if any.
+#[tauri::command]
+pub async fn notebook_conversation_scope(
+    conversation_id: String,
+    store: State<'_, Arc<NotebookStore>>,
+    session: State<'_, CurrentSession>,
+) -> Result<Option<ConversationScope>, String> {
+    let signed_in = require_session(&session)?;
+    let owner = &signed_in.user.id;
+
+    let Some((notebook_id, selection)) = store
+        .conversation_notebook_preference(owner, &conversation_id)
+        .map_err(|error| format!("the chat's notebook could not be read: {error}"))?
+    else {
+        return Ok(None);
+    };
+
+    // The notebook may have been deleted since. Reported as "no notebook"
+    // rather than as a chip naming something that is not there.
+    let Some(notebook) = store
+        .get(&notebook_id, owner)
+        .map_err(|error| format!("the notebook could not be read: {error}"))?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(ConversationScope {
+        notebook_id: notebook.id,
+        notebook_name: notebook.name,
+        selection,
+    }))
+}
+
+/// Takes the notebook off a conversation, and leaves its evidence alone.
+///
+/// Not `unbind_conversation`, which also deletes every manifest recorded
+/// against the thread. Clearing the chip must not destroy the citations behind
+/// answers already in the conversation — those were true when they were written
+/// and stay resolvable.
+#[tauri::command]
+pub async fn notebook_clear_conversation_scope(
+    conversation_id: String,
+    store: State<'_, Arc<NotebookStore>>,
+    session: State<'_, CurrentSession>,
+) -> Result<(), String> {
+    let signed_in = require_session(&session)?;
+    store
+        .clear_conversation_notebook(&signed_in.user.id, &conversation_id)
+        .map_err(|error| format!("the notebook could not be detached: {error}"))
+}
+
 // ── What a question is about to use ──────────────────────────────────────
 
 /// What the next question in this notebook would retrieve from, as a summary.
@@ -698,6 +787,16 @@ pub struct ScopePreview {
     /// will contribute nothing and the interface should say so before the
     /// question is asked rather than after it is answered.
     pub unreadable: Vec<String>,
+    /// Selected, readable, partial, blocked and in-progress, counted apart.
+    ///
+    /// The fix for a preview that could say "1 of 1 will be read" directly
+    /// above a warning that the one source was unreadable. `sources_selected`
+    /// and `sources_total` are kept for callers that want the selection alone,
+    /// but nothing may say "will be read" from anything but `counts.readable`.
+    pub counts: crate::knowledge::ReadinessCounts,
+    /// Every selected source with its state and reasons, so the chooser can
+    /// draw a badge and a repair without a second round trip.
+    pub sources: Vec<crate::knowledge::SourceReadiness>,
     pub focus_labels: Vec<String>,
     pub focus_relationships: Vec<String>,
     /// How passages will be found, in the words the answer will use.
@@ -705,6 +804,152 @@ pub struct ScopePreview {
     pub retrieval_explanation: String,
     /// True when no graph has been built, so a graph selection is impossible.
     pub graph_built: bool,
+}
+
+/// What this machine can currently do about images, for readiness.
+///
+/// Asked of the registry rather than assumed from the file type: "this is a
+/// scan" and "this machine can read a scan" are different facts, and deriving
+/// the second from the first is how a source that could have been read shows up
+/// as unreadable — or, worse, the reverse.
+fn local_capabilities(
+    registry: &crate::registry::ModelRegistry,
+) -> crate::knowledge::LocalCapabilities {
+    use crate::registry::ModelRole;
+    crate::knowledge::LocalCapabilities {
+        vision: registry.all().iter().any(|entry| {
+            entry.enabled
+                && (entry.serves(ModelRole::Vision) || entry.serves(ModelRole::DocumentOcr))
+        }),
+    }
+}
+
+/// Readiness for every source in a notebook.
+///
+/// The list the source chooser draws. Distinct from `notebook_documents`, which
+/// answers "what is in this notebook" — a membership question that says nothing
+/// about whether any of it can be read.
+#[tauri::command]
+pub async fn notebook_source_status(
+    notebook_id: String,
+    store: State<'_, Arc<NotebookStore>>,
+    documents: State<'_, DocumentsState>,
+    registry: State<'_, Arc<crate::registry::ModelRegistry>>,
+    session: State<'_, CurrentSession>,
+) -> Result<Vec<crate::knowledge::SourceReadiness>, String> {
+    let signed_in = require_session(&session)?;
+    let owner = &signed_in.user.id;
+
+    // Ownership first, through the store's own scoped read. A notebook id is
+    // guessable and readiness carries document names.
+    if store
+        .get(&notebook_id, owner)
+        .map_err(|error| format!("the notebook could not be read: {error}"))?
+        .is_none()
+    {
+        return Err("That notebook does not exist.".to_string());
+    }
+
+    let members = store
+        .documents(&notebook_id, owner)
+        .map_err(|error| format!("the notebook's sources could not be read: {error}"))?;
+    let conversation = format!("notebook:{notebook_id}");
+    let capabilities = local_capabilities(registry.inner());
+
+    Ok(members
+        .iter()
+        .map(|member| {
+            // The error is carried, not collapsed. `unwrap_or(Absent)` here
+            // reported a permission failure as "nothing was ever extracted".
+            let presence = documents
+                .0
+                .inspect(&member.document_sha256, owner, Some(&conversation))
+                .unwrap_or_else(|error| {
+                    crate::agent_runtime::documents::SourcePresence::Unavailable {
+                        problem: error.to_string(),
+                    }
+                });
+            crate::knowledge::assess_source(member, &presence, capabilities)
+        })
+        .collect())
+}
+
+/// Repairs one source that is readable on disk and not reachable from here.
+///
+/// The one-click half of the ingestion fix. A membership row written with no
+/// sighting — every source `notebook.add_source` filed before that tool was
+/// corrected — is repaired by recording the sighting that should have been
+/// written at the time. Nothing is re-read and no model runs, because the text
+/// has been on disk the whole time.
+///
+/// Anything else is left alone and returned as it is: a source whose extraction
+/// is genuinely missing is not repairable here, and must not be made to look as
+/// though it were.
+#[tauri::command]
+pub async fn notebook_repair_source(
+    notebook_id: String,
+    document_sha256: String,
+    store: State<'_, Arc<NotebookStore>>,
+    documents: State<'_, DocumentsState>,
+    registry: State<'_, Arc<crate::registry::ModelRegistry>>,
+    session: State<'_, CurrentSession>,
+) -> Result<crate::knowledge::SourceReadiness, String> {
+    let signed_in = require_session(&session)?;
+    let owner = &signed_in.user.id;
+
+    if store
+        .get(&notebook_id, owner)
+        .map_err(|error| format!("the notebook could not be read: {error}"))?
+        .is_none()
+    {
+        return Err("That notebook does not exist.".to_string());
+    }
+
+    // The source must already be in this notebook. Repairing one that is not
+    // would let a caller mint an access record for any document by naming it.
+    let members = store
+        .documents(&notebook_id, owner)
+        .map_err(|error| format!("the notebook's sources could not be read: {error}"))?;
+    let member = members
+        .iter()
+        .find(|member| member.document_sha256 == document_sha256)
+        .ok_or_else(|| "That source is not in this notebook.".to_string())?;
+
+    let conversation = format!("notebook:{notebook_id}");
+    let capabilities = local_capabilities(registry.inner());
+
+    let presence = documents
+        .0
+        .inspect(&document_sha256, owner, Some(&conversation))
+        .map_err(|error| format!("the document store could not be read: {error}"))?;
+
+    if matches!(
+        presence,
+        crate::agent_runtime::documents::SourcePresence::NotAssociated(_)
+    ) {
+        documents
+            .0
+            .associate(
+                &document_sha256,
+                owner,
+                crate::agent_runtime::documents::Sighting {
+                    owner_user_id: owner.clone(),
+                    conversation_id: conversation.clone(),
+                    message_id: format!("notebook-repair:{document_sha256}"),
+                    run_id: conversation.clone(),
+                    at: chrono::Utc::now().to_rfc3339(),
+                    ocr_model_id: None,
+                    ocr_detent: None,
+                },
+            )
+            .map_err(|error| format!("the source could not be repaired: {error}"))?;
+    }
+
+    let after = documents
+        .0
+        .inspect(&document_sha256, owner, Some(&conversation))
+        .map_err(|error| format!("the document store could not be read: {error}"))?;
+    Ok(crate::knowledge::assess_source(member, &after, capabilities))
 }
 
 /// Describes the scope of the next question without asking it.
@@ -717,6 +962,7 @@ pub async fn notebook_scope_preview(
     scope: crate::knowledge::ResearchScope,
     store: State<'_, Arc<NotebookStore>>,
     documents: State<'_, DocumentsState>,
+    registry: State<'_, Arc<crate::registry::ModelRegistry>>,
     session: State<'_, CurrentSession>,
 ) -> Result<ScopePreview, String> {
     let signed_in = require_session(&session)?;
@@ -724,18 +970,39 @@ pub async fn notebook_scope_preview(
 
     let resolved = crate::knowledge::notebook_retrieval::resolve(store.inner(), owner, &scope)?;
     let conversation = format!("notebook:{}", resolved.notebook.id);
+    let capabilities = local_capabilities(registry.inner());
 
-    let unreadable: Vec<String> = resolved
+    // Readiness per selected source, from what is on disk. The old version of
+    // this asked `get` and treated every falsy answer as "unreadable", which
+    // merged four situations with four different repairs into one word — and
+    // then reported a *selected* count beside it as though it were a readable
+    // one.
+    let sources: Vec<crate::knowledge::SourceReadiness> = resolved
         .sources
         .iter()
-        .filter(|source| {
-            !matches!(
-                documents
-                    .0
-                    .get(&source.document_sha256, owner, Some(&conversation)),
-                Ok(Some(_))
-            )
+        .map(|member| {
+            // The error is carried, not collapsed. `unwrap_or(Absent)` here
+            // reported a permission failure as "nothing was ever extracted".
+            let presence = documents
+                .0
+                .inspect(&member.document_sha256, owner, Some(&conversation))
+                .unwrap_or_else(|error| {
+                    crate::agent_runtime::documents::SourcePresence::Unavailable {
+                        problem: error.to_string(),
+                    }
+                });
+            crate::knowledge::assess_source(member, &presence, capabilities)
         })
+        .collect();
+
+    let counts = crate::knowledge::ReadinessCounts::tally(
+        resolved.notebook.document_count,
+        &sources,
+    );
+
+    let unreadable: Vec<String> = sources
+        .iter()
+        .filter(|source| !source.state.usable_as_evidence())
         .map(|source| source.document_name.clone())
         .collect();
 
@@ -753,6 +1020,8 @@ pub async fn notebook_scope_preview(
         sources_selected: resolved.sources.len() as u32,
         sources_total: resolved.notebook.document_count,
         unreadable,
+        counts,
+        sources,
         focus_labels: resolved.focus_labels.clone(),
         focus_relationships: resolved
             .focus_assertions

@@ -66,6 +66,7 @@ the person as "6 pages", and a guess there would be a lie.
 
 import json
 import os
+import struct
 import sys
 import zipfile
 
@@ -84,6 +85,14 @@ MIN_TEXT_CHARS_PER_PAGE = 24
 
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".json", ".log", ".tsv"}
 
+#: Most bytes the text reader will decode from one file.
+#:
+#: The read used to be unbounded, and reachable only from the six suffixes
+#: above. Everything decoded here is also serialised into one JSON line on a
+#: pipe, so an uncapped read is two copies of the file in memory and a third on
+#: the wire. 32 MiB is far above any real manual and far below what hurts.
+MAX_TEXT_BYTES = 32 * 1024 * 1024
+
 
 def fail(message):
     print(json.dumps({"error": message}))
@@ -97,7 +106,8 @@ def read_text_native(path):
     UTF-16, which is what Notepad and Excel still emit; then latin-1, which
     cannot fail and at least preserves byte structure.
     """
-    raw = open(path, "rb").read()
+    with open(path, "rb") as handle:
+        raw = handle.read(MAX_TEXT_BYTES)
     for encoding in ("utf-8-sig", "utf-16", "latin-1"):
         try:
             return raw.decode(encoding)
@@ -527,6 +537,239 @@ def extract_pptx(path, max_slides=500):
                 "pages": len(slides), "pageImages": [], "truncated": truncated}
 
 
+
+# -- What a file actually is -----------------------------------------------
+#
+# The extension is a hint and it is routinely wrong. A `.xls` exported from a
+# reporting tool is frequently an XML spreadsheet or even a CSV; a `.doc` from a
+# mail archive is frequently RTF; a file renamed from `.doc` to `.docx` to "make
+# it open" is still a binary OLE document, and the zip parser refuses it with an
+# error that reads like corruption.
+#
+# Routing on content turns all three into the right answer: the first two are
+# read, and the third is named for what it is instead of being reported as a
+# damaged file.
+
+#: Leading bytes that identify a container.
+SIGNATURES = (
+    # OLE2 / Compound File Binary. Note this says *container*, not "old Office
+    # file": password-protected OOXML, Outlook .msg and Windows Installer
+    # packages are all OLE2, so what is inside is a separate question, and
+    # `cfb_contents` answers it by reading the directory.
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "cfb"),
+    (b"PK\x03\x04", "zip"),
+    (b"{\\rtf", "rtf"),
+    (b"\x89PNG\r\n\x1a\n", "image"),
+    (b"\xff\xd8\xff", "image"),
+    (b"GIF8", "image"),
+    (b"II*\x00", "image"),
+    (b"MM\x00*", "image"),
+    (b"BM", "image"),
+    (b"RIFF", "image"),
+)
+
+#: How far into a file a PDF header may sit.
+#:
+#: `%PDF-` is supposed to be at offset 0 and frequently is not -- a byte-order
+#: mark, an HTTP fragment or a stray newline in front of it is common enough
+#: that Acrobat and PyMuPDF both tolerate it. Anchoring at offset 0 sent those
+#: files to the text reader, which decoded a PDF as latin-1.
+PDF_HEADER_WINDOW = 1024
+
+#: Stream names that identify what is inside an OLE2 container.
+#:
+#: Compared against whole directory entry names, never searched over raw bytes.
+#: A raw-bytes search matched `Book` inside the UTF-16LE word "Bookmark", so a
+#: Word document containing that word was confidently reported as Excel.
+CFB_ENTRIES = {
+    "WordDocument": ("doc", "Word"),
+    "Workbook": ("xls", "Excel"),
+    "Book": ("xls", "Excel"),
+    "PowerPoint Document": ("ppt", "PowerPoint"),
+    "VisioDocument": ("vsd", "Visio"),
+}
+
+#: The stream an encrypted OOXML package keeps its payload in.
+#:
+#: A password-protected .docx is an OLE2 file wrapping an encrypted zip. It is
+#: not a legacy document, and telling somebody it is pre-2007 sends them to fix
+#: the wrong thing.
+CFB_ENCRYPTED = "EncryptedPackage"
+
+
+def sniff(path):
+    """The container a file really is, from its leading bytes.
+
+    Returns ``pdf``, ``cfb``, ``zip``, ``rtf``, ``image``, or ``unknown``.
+
+    ``unknown`` means exactly that. It used to be ``text``, which turned this
+    function's fallback into a *claim*: every unrecognised binary was handed to
+    the text reader, latin-1 decoded, and returned as a successful extraction
+    full of mojibake -- an executable came back as a document. The caller now
+    decides whether an unknown container is worth trying as text, and decides it
+    on the file's suffix rather than on this function's shrug.
+    """
+    with open(path, "rb") as handle:
+        head = handle.read(PDF_HEADER_WINDOW)
+    for signature, kind in SIGNATURES:
+        if head.startswith(signature):
+            return kind
+    # Checked after the anchored signatures, so a file that merely mentions
+    # `%PDF-` in its first kilobyte cannot outrank its own header.
+    if b"%PDF-" in head:
+        return "pdf"
+    return "unknown"
+
+
+def ooxml_family(path):
+    """Which Office format a zip container holds, from its own part names.
+
+    An OOXML package declares itself: `word/document.xml`, `xl/workbook.xml`,
+    `ppt/presentation.xml`. Reading those names is exact, where guessing from
+    the extension is not.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+    except (zipfile.BadZipFile, OSError, EOFError, ValueError):
+        # Narrow on purpose. `except Exception` here also swallowed MemoryError
+        # and RecursionError, so a crafted central directory that exhausted
+        # memory was reported as "not a document ARJUN can read" -- a resource
+        # failure dressed up as a judgement about the file.
+        return None
+    if any(name.startswith("word/document") for name in names):
+        return "docx"
+    if any(name.startswith("xl/workbook") for name in names):
+        return "xlsx"
+    if any(name.startswith("ppt/presentation") for name in names):
+        return "pptx"
+    return None
+
+
+def cfb_directory_names(path):
+    """The stream names in an OLE2 file's first directory sector.
+
+    The directory is *located*, not searched for. Its first sector is named by
+    the 32-bit field at header offset 0x30, and the sector size by the power of
+    two at 0x1E; the spec places no constraint on where that lands, and Office
+    writers routinely put the directory after the stream data. Scanning a fixed
+    8 KiB window -- which is what this did -- therefore missed the names on any
+    document big enough to matter, and made the specific answer the rare one.
+
+    Returns a list of names, empty when the header cannot be read or the
+    directory is not where it says it is. Empty means "not identified", and no
+    caller may read it as anything else.
+    """
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(512)
+            if len(header) < 512:
+                return []
+            # 1 << sector_shift, per MS-CFB. 512 and 4096 are the only sizes the
+            # spec allows; anything else is a malformed file.
+            sector_shift = struct.unpack_from("<H", header, 0x1E)[0]
+            if sector_shift not in (9, 12):
+                return []
+            sector_size = 1 << sector_shift
+            first_directory = struct.unpack_from("<I", header, 0x30)[0]
+            # 0xFFFFFFFE is END_OF_CHAIN; the range above 0xFFFFFFF9 is
+            # reserved and none of it is a location.
+            if first_directory >= 0xFFFFFFFA:
+                return []
+            handle.seek((first_directory + 1) * sector_size)
+            sector = handle.read(sector_size)
+    except (OSError, struct.error, OverflowError):
+        return []
+
+    names = []
+    # One directory entry per 128 bytes: a 64-byte UTF-16LE name, then its
+    # length in bytes -- including the terminator -- at offset 64.
+    for start in range(0, len(sector) - 127, 128):
+        entry = sector[start:start + 128]
+        length = struct.unpack_from("<H", entry, 64)[0]
+        if length < 2 or length > 64:
+            continue
+        try:
+            name = entry[: length - 2].decode("utf-16-le")
+        except UnicodeDecodeError:
+            continue
+        if name:
+            names.append(name)
+    return names
+
+
+def cfb_contents(path):
+    """What an OLE2 container actually holds.
+
+    Returns ``(short, product)`` for a legacy Office document,
+    ``("encrypted", None)`` for a password-protected modern file, or
+    ``(None, None)`` when the directory does not identify it.
+
+    That third case used to be reported as "a pre-2007 Office file" on the
+    strength of the header alone. OLE2 is also the container for encrypted
+    OOXML, Outlook `.msg`, Windows Installer packages and `Thumbs.db`, so that
+    was a confident answer to a question this code had never asked.
+    """
+    names = cfb_directory_names(path)
+    if CFB_ENCRYPTED in names:
+        return "encrypted", None
+    for name in names:
+        if name in CFB_ENTRIES:
+            return CFB_ENTRIES[name]
+    return None, None
+
+
+def refuse_cfb(path):
+    """Say what an OLE2 file is, and why nothing here can read it.
+
+    Deliberately not a fallback that scrapes printable strings out of the
+    binary. Those fragments arrive in file order rather than reading order, they
+    carry no structure and no locators, and a summary built from them reads as
+    plausible while being grounded in nothing -- the failure mode this
+    repository has a standing rule against.
+
+    `reason` is machine-readable: `missing-parser` when the format is known and
+    unsupported, `password-protected` when the file is encrypted, and
+    `unidentified-container` when the directory did not say. Those three call
+    for three different things from whoever runs the machine, and the sentence
+    in `error` -- which is what the person sees -- cannot be acted on
+    programmatically. `commands::ocr::run_extractor` parses both fields and logs
+    the classification beside the file name; the sentence is what it returns.
+    """
+    short, product = cfb_contents(path)
+    name = os.path.basename(path)
+
+    if short == "encrypted":
+        return {
+            "error": "%s is password-protected, so nothing inside it could be "
+                     "opened. It is a modern Office file rather than an old one -- "
+                     "removing the password makes it readable." % name,
+            "reason": "password-protected",
+            "detectedFormat": "ooxml-encrypted",
+        }
+
+    if short is None:
+        # Honest, and deliberately not "a pre-2007 Office file". This is an OLE2
+        # container whose directory named nothing recognised, which is as much
+        # as has actually been established about it.
+        return {
+            "error": "%s is an OLE2 container, and nothing in it identifies a "
+                     "document format this machine can read." % name,
+            "reason": "unidentified-container",
+            "detectedFormat": "ole2",
+        }
+
+    return {
+        "error": "%s is a legacy %s file (.%s). This machine has no parser or local "
+                 "converter for it, so nothing can be read from it. Converting it to "
+                 ".%sx locally, or re-saving it from %s, makes it readable; renaming "
+                 "the extension does not."
+                 % (name, product, short, short, product),
+        "reason": "missing-parser",
+        "detectedFormat": short,
+    }
+
+
 def main():
     if len(sys.argv) < 3:
         return fail("usage: attachment_extract.py <path> <out_dir> [--max-pages N]")
@@ -543,18 +786,48 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     suffix = os.path.splitext(path)[1].lower()
 
+    # What the file *is*, before what it is called. The suffix stays as a
+    # tie-breaker for text formats, where there is no signature to read and the
+    # name is the only thing separating a `.csv` from a `.md`.
     try:
-        if suffix in TEXT_SUFFIXES:
+        container = sniff(path)
+    except OSError as error:
+        return fail("%s could not be opened: %s" % (os.path.basename(path), error))
+
+    try:
+        if container == "pdf":
+            result = extract_pdf(path, out_dir, max_pages)
+        elif container == "cfb":
+            # An OLE2 container. What is actually in it is read from its own
+            # directory, and refused by name rather than half-read.
+            result = refuse_cfb(path)
+        elif container == "zip":
+            family = ooxml_family(path)
+            if family == "docx":
+                result = extract_docx(path)
+            elif family == "xlsx":
+                result = extract_xlsx(path)
+            elif family == "pptx":
+                result = extract_pptx(path)
+            else:
+                return fail("%s is a zip archive, not a document ARJUN can read."
+                            % os.path.basename(path))
+        elif container == "image":
+            # Images go to the OCR/vision path, not to this extractor. Reaching
+            # here means routing upstream sent one to the wrong reader.
+            return fail("%s is an image; it is read by the OCR pipeline rather "
+                        "than by the document extractor." % os.path.basename(path))
+        elif container == "rtf":
+            return fail("%s is an RTF file. This machine has no RTF parser, so "
+                        "nothing can be read from it." % os.path.basename(path))
+        elif suffix in TEXT_SUFFIXES:
+            # The suffix, and only the suffix. Treating "no signature matched"
+            # as "this is text" made every unrecognised binary a successful
+            # extraction: an executable came back as a document, an empty file
+            # claimed one page had been read, and a .webp was decoded to
+            # mojibake instead of being sent to OCR.
             result = {"kind": "text", "text": read_text_native(path), "pages": 1,
                       "pageImages": [], "truncated": False}
-        elif suffix == ".pdf":
-            result = extract_pdf(path, out_dir, max_pages)
-        elif suffix == ".docx":
-            result = extract_docx(path)
-        elif suffix == ".xlsx":
-            result = extract_xlsx(path)
-        elif suffix == ".pptx":
-            result = extract_pptx(path)
         else:
             return fail("%s is not a document ARJUN can read."
                         % (suffix or "this file type"))
@@ -562,7 +835,12 @@ def main():
         return fail("%s could not be read: %s" % (os.path.basename(path), error))
 
     if "error" in result:
-        return fail(result["error"])
+        # Carried through rather than flattened to a sentence: the Rust side
+        # records `reason` as a readiness reason, which is what turns "could not
+        # be read" into something an administrator can act on.
+        print(json.dumps({key: value for key, value in result.items()
+                          if key in ("error", "reason", "detectedFormat")}))
+        return 0
     print(json.dumps(result))
     return 0
 

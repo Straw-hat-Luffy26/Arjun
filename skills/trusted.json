@@ -176,6 +176,11 @@
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added and reviewed."
     },
     {
+      "name": "legacy-office-conversion",
+      "sha256": "152aa51a694abce4e2c211f1ff47e9adde06fb8108b638776e4c314cbe98858e",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
       "name": "living-docs-governance",
       "sha256": "e6044e18d99051113f0aae8281d5caee9aa21f356668e61cccab79120aa5d541",
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
@@ -199,6 +204,11 @@
       "name": "multimodal-inspection",
       "sha256": "f5898cca950c6b7388ec8579f8fce27d773f1b50ed448a5fed15122393bd0dd8",
       "note": "Shipped with ARJUN 0.1.0; reviewed at the commit that introduced the skill system."
+    },
+    {
+      "name": "notebook-grounded-research",
+      "sha256": "79ce3f341c4d91c9c4877cc35f9e647e4b9445fae1807216dc5c12fce9ae2109",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
     },
     {
       "name": "pdf-authoring",
@@ -324,6 +334,41 @@
       "name": "security-review",
       "sha256": "17037b47dd1f6ccb4b4aeacb235b4166ef4d8ffb0963fcb272a78f6c8f356c3b",
       "note": "Imported 2026-09-11 from the Arjun Skills collection (origin ECC, author unknown, Apache-2.0). Body unchanged; ARJUN frontmatter added, offline note appended, reviewed."
+    },
+    {
+      "name": "source-copied-text",
+      "sha256": "466ea0f51338c5e961b37f720327caed0f3029af7b9fcd474ba620c1ee14d74b",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-image-drawing",
+      "sha256": "ead00e44bfd1cf18d4f1b39b5c2bc2e41d285f87a58315cf32c5e3f2d2d2f8a6",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-pdf",
+      "sha256": "3e17a5fecd6b83ad7469d1241b3aa9924d101e857ed915c1091d8ae18849d5bc",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-presentation",
+      "sha256": "74e6e875745ba88076144ad35d20d74fe179d4f3aa220abcbda6999729b9fcbb",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-spreadsheet",
+      "sha256": "4d73ed6f81f3426949551005919ba0347d0e916a218123fbd534410515e1f486",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-text-markdown",
+      "sha256": "8afdd544036775b8180a511d83951aba6766b844fff6dcb11c2c7d27f065fad1",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
+    },
+    {
+      "name": "source-word",
+      "sha256": "a9698abaa5726a05c82144006cd5ce265f4e5ab517d3dd09041b3bced83ea243",
+      "note": "First-party ARJUN skill, written for the main-chat notebook research work and reviewed at the commit that introduced it. Reads sources only; no network, no approval class, no tool it was not already granted."
     },
     {
       "name": "tdd-workflow",

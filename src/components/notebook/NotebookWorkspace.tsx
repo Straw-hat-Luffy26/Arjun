@@ -4,11 +4,12 @@ import { Button } from '../ui';
 import type { GraphNode, Notebook, NotebookDocument } from '../../services/notebook.service';
 import {
   notebookResearchService,
+  usableAsEvidence,
   type Assertion,
   type ResolvedCitation,
 } from '../../services/notebookResearch.service';
 import { NotebookGraphPanel } from '../graph/NotebookGraphPanel';
-import { NotebookChat } from './NotebookChat';
+import { AskInMainChat } from './AskInMainChat';
 import { NotesPanel } from './NotesPanel';
 import { RelationshipReview } from './RelationshipReview';
 import { SourceList } from './SourceList';
@@ -117,13 +118,16 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
   useEffect(() => {
     let live = true;
     notebookResearchService
-      .scopePreview({ notebookId: notebook.id, sourceSha256s: [] })
-      .then((preview) => {
+      .sourceStatus(notebook.id)
+      .then((readiness) => {
         if (!live) return;
+        // Asked of the readiness command rather than inferred from a scope
+        // preview's list of names. Names are not identities -- two sources may
+        // share one -- and readiness is what this list is actually reporting.
         setUnreadable(
           new Set(
-            sources
-              .filter((source) => preview.unreadable.includes(source.documentName))
+            readiness
+              .filter((source) => !usableAsEvidence(source.state))
               .map((source) => source.documentSha256),
           ),
         );
@@ -317,23 +321,13 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
         )}
 
         <div className={styles.tabBody}>
-          {/* The chat stays mounted across tabs: unmounting it would drop an
-              answer mid-stream the moment somebody looked at their notes. */}
+          {/* The hand-off panel, not a chat. Questions are asked in the main
+              composer with `/notebook`; see `AskInMainChat`. */}
           <div className={styles.tabPanel} hidden={tab !== 'chat'}>
-            <NotebookChat
+            <AskInMainChat
               notebookId={notebook.id}
               notebookName={notebook.name}
               selectedSources={selectedList}
-              graphSelection={graphSelection}
-              assertionSelection={assertionSelection}
-              onClearGraphSelection={() => {
-                setGraphSelection([]);
-                setAssertionSelection([]);
-              }}
-              onOpenCitation={onOpenCitation}
-              onSaveAnswer={(conversationId, messageId, suggested) =>
-                void saveAnswer(conversationId, messageId, suggested)
-              }
               pendingPrompt={pendingPrompt}
               onPendingPromptConsumed={() => setPendingPrompt(null)}
             />

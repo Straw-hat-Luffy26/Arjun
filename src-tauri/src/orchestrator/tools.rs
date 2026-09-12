@@ -204,6 +204,14 @@ pub enum ToolName {
     CreateDiagram,
     CreatePdf,
     CreateTable,
+    /// List the artifacts this conversation has produced.
+    ///
+    /// The cross-model channel. A run's workspace is isolated from every other
+    /// run's by design, so a later turn cannot read an earlier one's files --
+    /// this is how it reaches them instead, by id rather than by path.
+    ArtifactList,
+    /// Read one exact version of one conversation artifact.
+    ArtifactRead,
 }
 
 impl ToolName {
@@ -239,6 +247,8 @@ impl ToolName {
         ToolName::CreateDiagram,
         ToolName::CreatePdf,
         ToolName::CreateTable,
+        ToolName::ArtifactList,
+        ToolName::ArtifactRead,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -275,6 +285,8 @@ impl ToolName {
             ToolName::CreateDiagram => "artifact.create_diagram",
             ToolName::CreatePdf => "artifact.create_pdf",
             ToolName::CreateTable => "artifact.create_table",
+            ToolName::ArtifactList => "artifact.list",
+            ToolName::ArtifactRead => "artifact.read",
         }
     }
 
@@ -322,6 +334,8 @@ impl ToolName {
             ToolName::CreateDiagram => Some("create_diagram"),
             ToolName::CreatePdf => Some("create_pdf"),
             ToolName::CreateTable => Some("create_table"),
+            // Introduced namespaced and never spelled any other way.
+            ToolName::ArtifactList | ToolName::ArtifactRead => None,
         }
     }
 
@@ -426,7 +440,10 @@ impl ToolName {
             | ToolName::SearchAttachedDocuments
             | ToolName::BuildDocumentGraph
             | ToolName::NotebookList
-            | ToolName::NotebookSources => true,
+            | ToolName::NotebookSources
+            // Both read this conversation's own artifacts and write nothing.
+            | ToolName::ArtifactList
+            | ToolName::ArtifactRead => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -458,6 +475,8 @@ impl ToolName {
             ToolName::ReadScopedFile => "read a file from the task workspace",
             ToolName::WriteScopedFile => "write a file into the task workspace",
             ToolName::RunCalculation => "run a calculation",
+            ToolName::ArtifactList => "list what this conversation has produced",
+            ToolName::ArtifactRead => "read one version of a conversation artifact",
             ToolName::CreateDocx => "produce a Word document",
             ToolName::CreateXlsx => "produce a spreadsheet",
             ToolName::CreatePptx => "produce a briefing deck",
@@ -654,6 +673,25 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
     use Permission::*;
 
     match name {
+        // The cross-model channel, and the reason it is a tool rather than a
+        // prompt: a later turn cannot read an earlier run's workspace, so the
+        // artifacts have to be reachable by id through a call the backend
+        // authorises.
+        ToolName::ArtifactList => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "kind", kind: Text }],
+            network: NetworkUse::None,
+            ..defaults(name)
+        },
+        ToolName::ArtifactRead => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[
+                ArgumentSpec { name: "artifact", kind: Text },
+                ArgumentSpec { name: "version", kind: Text },
+            ],
+            network: NetworkUse::None,
+            ..defaults(name)
+        },
         ToolName::SearchDocuments => ToolSpec {
             permission: SearchKnowledge,
             arguments: &[ArgumentSpec { name: "query", kind: Text }],

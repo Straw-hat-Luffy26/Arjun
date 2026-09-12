@@ -206,9 +206,70 @@ export interface StartRunRequest {
  */
 export interface ResearchScope {
   notebookId: string;
+  /**
+   * Which of the notebook's sources this question may read.
+   *
+   * Required. The backend refuses a scope that omits it rather than taking the
+   * widest reading — see `ResearchScope::require_explicit_selection`. A
+   * selection that failed to load is not a person choosing every document, and
+   * for a while those were the same value on this wire.
+   */
+  sources: SourceSelection;
+  /**
+   * The pre-`sources` list. Present only on records written before selections
+   * were explicit; never send it from new code.
+   *
+   * @deprecated Use {@link ResearchScope.sources}.
+   */
   sourceSha256s?: string[];
   nodeIds?: string[];
   assertionIds?: string[];
+}
+
+/**
+ * Which of a notebook's sources one question may read.
+ *
+ * Three cases, named, so "none of them" cannot be represented by the same value
+ * as "all of them". Mirrors `knowledge::graph::research::SourceSelection`
+ * including its `mode` tag, which is what makes the round trip lossless.
+ */
+export type SourceSelection =
+  | { mode: 'all' }
+  | { mode: 'subset'; sha256s: string[] }
+  | { mode: 'none' };
+
+/** Every source in the notebook, as it stands when the turn is frozen. */
+export const allSources = (): SourceSelection => ({ mode: 'all' });
+/** These sources and no others. */
+export const someSources = (sha256s: string[]): SourceSelection => ({
+  mode: 'subset',
+  sha256s,
+});
+/** Deliberately none — the notebook is attached and no source may be read. */
+export const noSources = (): SourceSelection => ({ mode: 'none' });
+
+/** How many sources a selection names, given the notebook's total. */
+export function selectionCount(selection: SourceSelection, total: number): number {
+  switch (selection.mode) {
+    case 'all':
+      return total;
+    case 'subset':
+      return selection.sha256s.length;
+    case 'none':
+      return 0;
+  }
+}
+
+/** The phrase the chip shows. Matches `SourceSelection::describe` in Rust. */
+export function describeSelection(selection: SourceSelection, total: number): string {
+  switch (selection.mode) {
+    case 'all':
+      return `all ${total} sources`;
+    case 'subset':
+      return `${selection.sha256s.length} of ${total} sources`;
+    case 'none':
+      return 'no sources';
+  }
 }
 
 /** Why a model was chosen. Rendered verbatim in the task trace. */

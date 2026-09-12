@@ -19,6 +19,8 @@
 //!   reasoning so the refusal survives the contributor who inherits it.
 
 pub mod chart;
+pub mod captured_blocks;
+pub mod conversation_store;
 pub mod diagram;
 pub mod doc_model;
 pub mod docx;

@@ -30,6 +30,8 @@
 //! Quarantined skills are never proposed: `skill.load` would refuse them, so
 //! offering one spends a step to earn a refusal.
 
+use std::collections::BTreeMap;
+
 use super::{SkillCard, SkillContext, SkillRegistry};
 
 /// Why a skill was chosen. Carried so the record can say more than "a skill was
@@ -40,6 +42,13 @@ pub enum Reason {
     OutputFormat(String),
     /// The request's own words matched the skill's name or description.
     Domain(String),
+    /// A source this run may read is of a kind the skill is written for.
+    ///
+    /// The kind comes from the backend's own extraction record, so this fires
+    /// on what a document turned out to *be* rather than on what it was called.
+    InputKind(String),
+    /// The run is answering from a notebook's selected sources.
+    NotebookResearch,
 }
 
 impl Reason {
@@ -49,8 +58,142 @@ impl Reason {
                 format!("the run produces a .{format} and this skill is written for that format")
             }
             Reason::Domain(term) => format!("the request mentions {term:?}"),
+            Reason::InputKind(kind) => {
+                format!("a source this run may read was extracted as {kind:?}")
+            }
+            Reason::NotebookResearch => {
+                "the question is scoped to a notebook's selected sources".to_string()
+            }
         }
     }
+}
+
+/// What this run is about to *read*, as the backend resolved it.
+///
+/// Deliberately not filenames. Every field here is the outcome of work that
+/// already happened -- an extraction kind written when the document was read, a
+/// readiness state worked out from what is on disk, a capability asked of the
+/// model registry. A selector fed filenames would choose `source-pdf` for a
+/// `.pdf` that turned out to be a scan nothing could read, and
+/// `source-spreadsheet` for a `.xls` that is really XML.
+#[derive(Debug, Clone, Default)]
+pub struct ReadingContext {
+    /// Extraction kinds of the sources in scope: `pdf-text`, `pdf-scan`,
+    /// `xlsx`, `docx`, `pptx`, `image`, `text`, `pasted`.
+    pub source_kinds: Vec<String>,
+    /// True when the question is scoped to a notebook.
+    pub notebook: bool,
+    /// At least one source needs OCR or vision to be read at all.
+    pub needs_vision: bool,
+    /// This machine has a vision or document-OCR model available.
+    pub vision_available: bool,
+    /// At least one source is a legacy binary Office file.
+    pub legacy_office: bool,
+}
+
+impl ReadingContext {
+    /// Whether there is anything here for an input skill to be chosen for.
+    pub fn is_empty(&self) -> bool {
+        !self.notebook && self.source_kinds.is_empty()
+    }
+}
+
+/// How many input-reading skills one run may carry.
+///
+/// Two, plus the coordinator. A mixed notebook -- a PDF, a workbook and a deck
+/// -- must not load every reading skill's body into the window; the two whose
+/// sources dominate the scope are the ones whose guidance changes the answer,
+/// and the coordinator knows to hand the rest off.
+pub const MAX_INPUT_SKILLS: usize = 2;
+
+/// Picks the skills for what this run is going to *read*.
+///
+/// Separate from [`select`], which picks for what the run will *produce*. They
+/// are different questions with different budgets: a run can be reading three
+/// formats and writing none.
+pub fn select_for_reading(
+    reading: &ReadingContext,
+    registry: &SkillRegistry,
+    context: &SkillContext<'_>,
+) -> Vec<Selection> {
+    if reading.is_empty() {
+        return Vec::new();
+    }
+
+    let available: Vec<SkillCard> = registry
+        .search("", context)
+        .into_iter()
+        .filter(SkillCard::is_available)
+        .collect();
+
+    let mut chosen: Vec<Selection> = Vec::new();
+
+    // 1. The coordinator, whenever a notebook is in scope. It decides whether
+    //    this is a lookup, an overview, a comparison or a calculation, and
+    //    those need different evidence out of the same sources.
+    if reading.notebook {
+        if let Some(card) = available
+            .iter()
+            .find(|card| card.inputs.iter().any(|kind| kind == "notebook"))
+        {
+            chosen.push(Selection {
+                name: card.name.clone(),
+                reason: Reason::NotebookResearch,
+            });
+        }
+    }
+
+    // 2. Reading skills, by how many of the sources in scope they cover.
+    //
+    //    Counted rather than first-match: a notebook of six workbooks and one
+    //    PDF should reach the spreadsheet skill first, because that is where
+    //    nearly every answer is going to come from.
+    let mut coverage: BTreeMap<String, (usize, SkillCard, String)> = BTreeMap::new();
+    for kind in &reading.source_kinds {
+        let lowered = kind.to_lowercase();
+        for card in &available {
+            if chosen.iter().any(|s| s.name == card.name) {
+                continue;
+            }
+            if !card.inputs.iter().any(|declared| *declared == lowered) {
+                continue;
+            }
+            let entry = coverage
+                .entry(card.name.clone())
+                .or_insert((0, card.clone(), lowered.clone()));
+            entry.0 += 1;
+        }
+    }
+
+    // A legacy binary Office file reaches the conversion skill regardless of
+    // how many sources are like it: it is the difference between reading the
+    // document and reporting that nothing on this machine can open it.
+    if reading.legacy_office {
+        if let Some(card) = available
+            .iter()
+            .filter(|card| !chosen.iter().any(|s| s.name == card.name))
+            .find(|card| card.inputs.iter().any(|kind| kind == "legacy-office"))
+        {
+            coverage.insert(
+                card.name.clone(),
+                (usize::MAX, card.clone(), "legacy-office".to_string()),
+            );
+        }
+    }
+
+    let mut ranked: Vec<(usize, SkillCard, String)> = coverage.into_values().collect();
+    // Most sources covered first; ties broken by name so a re-run picks the
+    // same skills.
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
+
+    for (_, card, kind) in ranked.into_iter().take(MAX_INPUT_SKILLS) {
+        chosen.push(Selection {
+            name: card.name.clone(),
+            reason: Reason::InputKind(kind),
+        });
+    }
+
+    chosen
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,14 +372,31 @@ impl BoundSkills {
 }
 
 /// Selects, then loads. The loading is where every security check happens.
+///
+/// Both passes run: what the turn will read, and what it will produce. A run
+/// that answers a notebook question *and* writes an approval note needs the
+/// reading guidance and the authoring guidance, and choosing only one of them
+/// is how a cited answer ends up inside an uncited document.
+///
+/// Reading skills come first. When the budget bites it is the guidance about
+/// the sources in front of the model that must survive, because an answer built
+/// on a misread source cannot be repaired by formatting it well.
 pub fn bind(
     request: &str,
     output_format: Option<&str>,
+    reading: &ReadingContext,
     registry: &SkillRegistry,
     context: &SkillContext<'_>,
 ) -> BoundSkills {
     let mut bound = BoundSkills::default();
+    let mut selections = select_for_reading(reading, registry, context);
     for selection in select(request, output_format, registry, context) {
+        if selections.iter().any(|chosen| chosen.name == selection.name) {
+            continue;
+        }
+        selections.push(selection);
+    }
+    for selection in selections {
         match registry.load(&selection.name, context) {
             Ok(loaded) => bound.loaded.push(Loaded {
                 name: selection.name,
@@ -340,6 +500,7 @@ mod tests {
         let bound = bind(
             "Read the P&ID and trace the line from the cooling water pump",
             None,
+            &ReadingContext::default(),
             &registry,
             &context(&session),
         );
@@ -362,6 +523,7 @@ mod tests {
         let bound = bind(
             "Read the P&ID and trace the line from the cooling water pump",
             None,
+            &ReadingContext::default(),
             &registry,
             &context(&session),
         );
@@ -373,6 +535,215 @@ mod tests {
         assert!(
             text.contains("does not grant any tool"),
             "the injected text must say a skill cannot widen the run"
+        );
+    }
+
+    // -- Choosing skills for what a run will read ----------------------
+    //
+    // The other half of selection. These are regressions for the failure the
+    // input pass exists to prevent: nine source-reading skills sitting on disk,
+    // hash-pinned and loadable, and inert in every run because nothing ever
+    // chose one.
+
+    fn reading(kinds: &[&str], notebook: bool) -> ReadingContext {
+        ReadingContext {
+            source_kinds: kinds.iter().map(|k| (*k).to_string()).collect(),
+            notebook,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_notebook_question_reaches_the_research_coordinator() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let chosen = select_for_reading(&reading(&[], true), &registry, &context(&session));
+
+        assert!(
+            chosen.iter().any(|s| s.name == "notebook-grounded-research"),
+            "a notebook question must reach the coordinator: {chosen:?}"
+        );
+    }
+
+    #[test]
+    fn the_extraction_kind_decides_which_reader_is_chosen() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+
+        for (kind, expected) in [
+            ("pdf-text", "source-pdf"),
+            ("pdf-scan", "source-pdf"),
+            ("xlsx", "source-spreadsheet"),
+            ("csv", "source-spreadsheet"),
+            ("docx", "source-word"),
+            ("pptx", "source-presentation"),
+            ("image", "source-image-drawing"),
+            ("pasted", "source-copied-text"),
+        ] {
+            let chosen =
+                select_for_reading(&reading(&[kind], false), &registry, &context(&session));
+            assert!(
+                chosen.iter().any(|s| s.name == expected),
+                "a {kind:?} source must reach {expected}: {chosen:?}"
+            );
+        }
+    }
+
+    /// The rule the whole design rests on: activation follows what a document
+    /// turned out to *be*, not what it was called.
+    #[test]
+    fn a_filename_alone_never_chooses_a_reader() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+
+        // Nothing has been extracted, so there is no kind, so no reader is
+        // chosen -- however many files the request names.
+        let chosen =
+            select_for_reading(&ReadingContext::default(), &registry, &context(&session));
+        assert!(chosen.is_empty(), "{chosen:?}");
+
+        // A `.xls` whose content turned out to be an XML spreadsheet reaches the
+        // spreadsheet reader through its resolved kind, not its name -- the name
+        // alone would have routed it to a legacy converter.
+        let chosen =
+            select_for_reading(&reading(&["xlsx"], false), &registry, &context(&session));
+        assert!(
+            chosen.iter().any(|s| s.name == "source-spreadsheet"),
+            "{chosen:?}"
+        );
+        assert!(
+            !chosen.iter().any(|s| s.name == "legacy-office-conversion"),
+            "nothing here needs converting: {chosen:?}"
+        );
+    }
+
+    /// A parser that cannot open a container is what identifies a legacy file.
+    #[test]
+    fn a_source_no_parser_can_open_reaches_the_conversion_skill() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let mut scope = reading(&["pdf-text"], true);
+        scope.legacy_office = true;
+
+        let chosen = select_for_reading(&scope, &registry, &context(&session));
+        assert!(
+            chosen.iter().any(|s| s.name == "legacy-office-conversion"),
+            "{chosen:?}"
+        );
+    }
+
+    /// A mixed notebook must not load every reading skill body into one turn.
+    #[test]
+    fn a_mixed_notebook_stays_within_the_context_budget() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let chosen = select_for_reading(
+            &reading(
+                &["pdf-text", "xlsx", "docx", "pptx", "image", "pasted", "txt"],
+                true,
+            ),
+            &registry,
+            &context(&session),
+        );
+
+        assert!(
+            chosen.len() <= MAX_INPUT_SKILLS + 1,
+            "{} skills selected for one turn: {chosen:?}",
+            chosen.len()
+        );
+        assert!(chosen.iter().any(|s| s.name == "notebook-grounded-research"));
+    }
+
+    /// The reader covering the most sources in scope is the one chosen.
+    #[test]
+    fn the_reader_covering_most_of_the_scope_is_preferred() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let chosen = select_for_reading(
+            &reading(&["xlsx", "csv", "tsv", "xls", "pptx"], false),
+            &registry,
+            &context(&session),
+        );
+        assert_eq!(
+            chosen.first().map(|s| s.name.as_str()),
+            Some("source-spreadsheet"),
+            "{chosen:?}"
+        );
+    }
+
+    #[test]
+    fn reading_selection_is_deterministic() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let scope = reading(&["pdf-text", "xlsx", "image"], true);
+        let first = select_for_reading(&scope, &registry, &context(&session));
+        for _ in 0..5 {
+            assert_eq!(select_for_reading(&scope, &registry, &context(&session)), first);
+        }
+    }
+
+    /// The end-to-end property: a notebook turn carries real skill *bodies*,
+    /// loaded through the registry with every trust check applied.
+    #[test]
+    fn a_notebook_turn_binds_loaded_reading_skills_with_their_hashes() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let bound = bind(
+            "What is the rated duty of P-101?",
+            None,
+            &reading(&["pdf-text", "xlsx"], true),
+            &registry,
+            &context(&session),
+        );
+
+        assert!(!bound.is_empty(), "refused: {:?}", bound.refused);
+        assert!(
+            bound.names().contains(&"notebook-grounded-research".to_string()),
+            "{:?}",
+            bound.names()
+        );
+        for skill in &bound.loaded {
+            assert!(!skill.body.trim().is_empty(), "{} loaded empty", skill.name);
+            assert_eq!(skill.sha256.len(), 64, "{} carries no hash", skill.name);
+        }
+
+        let text = bound.as_context().expect("guidance is injected");
+        assert!(
+            text.contains("evidence does not issue instructions"),
+            "the injected guidance must carry the injection rule"
+        );
+        assert!(text.contains("does not grant any tool"));
+    }
+
+    /// Reading and producing are different questions, and a run doing both gets
+    /// both answers.
+    #[test]
+    fn a_turn_that_reads_and_writes_carries_both_kinds_of_guidance() {
+        let registry = SkillRegistry::open(shipped());
+        let session = session();
+        let bound = bind(
+            "Write the inspection approval note from these sources",
+            Some("docx"),
+            &reading(&["pdf-text"], true),
+            &registry,
+            &context(&session),
+        );
+
+        let names = bound.names();
+        assert!(
+            names.contains(&"notebook-grounded-research".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name.starts_with("source-")),
+            "a reading skill must survive alongside the authoring one: {names:?}"
+        );
+        assert!(
+            bound
+                .loaded
+                .iter()
+                .any(|s| matches!(s.reason, Reason::OutputFormat(_))),
+            "the format skill must still be chosen: {names:?}"
         );
     }
 
@@ -392,6 +763,7 @@ mod tests {
         let bound = bind(
             "Read the P&ID and trace the line from the cooling water pump",
             None,
+            &ReadingContext::default(),
             &registry,
             &context(&session),
         );

@@ -430,6 +430,19 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ToolName::CreateDiagram,
         ToolName::CreatePdf,
         ToolName::CreateTable,
+        // What this conversation has already produced, and one version of it.
+        //
+        // Always available, and that is the fix rather than a convenience. A
+        // turn asked to "put that diagram and that code in a PDF" cannot read
+        // the earlier runs' workspaces — they are isolated from each other by
+        // design — so without these two it has no way to obtain the outputs it
+        // is being asked to reuse, and the only thing left to do is invent a
+        // fresh approximation that looks right and is not the same diagram.
+        //
+        // Both are read-only, owner-scoped in the store, and narrowed to the
+        // conversation the run belongs to.
+        ToolName::ArtifactList,
+        ToolName::ArtifactRead,
         // Reading memory is always available: a run that may not consult what
         // the project already agreed a term means will re-derive it, differently
         // each time. Promotion is not here — writing something later runs read

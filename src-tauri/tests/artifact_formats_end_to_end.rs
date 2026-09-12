@@ -467,10 +467,13 @@ fn a_request_selects_and_loads_skills_that_survive_being_carried() {
     let context =
         SkillContext { session: &session, mode: OperatingMode::Work, run_permits: ToolName::ALL };
 
-    // A request that names both a format and a domain.
+    // A request that names both a format and a domain, and reads nothing --
+    // `ReadingContext::default()` is a turn with no notebook and no sources, so
+    // this still exercises the output-format pass on its own.
     let bound = selection::bind(
         "Write up the hazard and operability study for the new transfer line",
         Some("docx"),
+        &selection::ReadingContext::default(),
         &registry,
         &context,
     );

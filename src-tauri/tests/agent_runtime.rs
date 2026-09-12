@@ -48,6 +48,14 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
 
     (
         Arc::new(RuntimeDeps {
+            // A real artifact store, in the harness's own directory: the
+            // cross-model channel is part of the runtime under test.
+            conversation_artifacts: Arc::new(
+                sarathi_lib::artifacts::conversation_store::ConversationArtifacts::open(
+                    dir.path(),
+                )
+                .expect("the artifact store opens"),
+            ),
             index: Arc::new(index),
             session,
             workspaces,

@@ -11,6 +11,15 @@ import { RoutingPreview } from '../routing/RoutingPreview';
 import { OcrQualitySlider } from './OcrQualitySlider';
 import type { OcrPreference } from './useOcrPreference';
 import { ContextChip } from './ContextChip';
+import { NotebookChip, NotebookChooser } from './NotebookScopeControls';
+import {
+  caretAfterConsume,
+  consumeCommand,
+  findNotebookCommand,
+  moveHighlight,
+  type CommandSpan,
+  type NotebookScope,
+} from './notebookScope';
 import { useConversation } from '../run/useConversation';
 import styles from './ChatSurface.module.css';
 
@@ -65,6 +74,27 @@ export interface ChatComposerProps {
    * because this is where the person is looking when they attach a file.
    */
   ocrPreference?: OcrPreference;
+  /**
+   * The notebook the next question is scoped to, if any.
+   *
+   * Owned by the surface rather than here, because the surface is what freezes
+   * a turn's scope at submit time and what restores the preference when a
+   * conversation is reopened. The composer only offers the controls.
+   */
+  notebookScope?: NotebookScope | null;
+  onNotebookScopeChange?: (scope: NotebookScope | null) => void;
+  /** Opens the Notebooks screen, for anything the chip cannot do inline. */
+  onOpenNotebook?: (notebookId: string) => void;
+  /**
+   * A question composed elsewhere and handed to this composer.
+   *
+   * Placed in the draft and never sent. Somebody who asked the Notebooks page
+   * to look at a graph selection gets the question in front of them to read
+   * and edit, which is the same promise `/notebook` makes about their own
+   * half-written draft.
+   */
+  handedPrompt?: string | null;
+  onHandedPromptConsumed?: () => void;
 }
 
 export function ChatComposer({
@@ -75,6 +105,11 @@ export function ChatComposer({
   onCancelQueued,
   onSubmit,
   ocrPreference,
+  notebookScope = null,
+  onNotebookScopeChange,
+  onOpenNotebook,
+  handedPrompt = null,
+  onHandedPromptConsumed,
 }: ChatComposerProps) {
   const { conversation } = useConversation();
   const [prompt, setPrompt] = useState('');
@@ -92,6 +127,70 @@ export function ChatComposer({
   const [stopping, setStopping] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── The `/notebook` chooser ──────────────────────────────────────────
+  //
+  // `command` is where the command sits in the draft, recomputed from the
+  // text and the caret rather than from a flag. A boolean "is the chooser
+  // open" would drift: deleting the slash, moving the caret away or pressing
+  // Enter each have to close it, and each would be a separate place to
+  // remember to clear the flag.
+  //
+  // `dismissed` is the one piece of state that cannot be derived — Escape
+  // closes the chooser while the command text is still in the draft, and it
+  // stays closed until the command is edited again.
+  const [command, setCommand] = useState<CommandSpan | null>(null);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  const [choiceCount, setChoiceCount] = useState(0);
+  // Set by the chooser, so Enter resolves against the list actually on screen
+  // rather than against a second copy of the filtering rules kept here.
+  const chooseRef = useRef<((index: number) => void) | null>(null);
+  // Stable, because it is a dependency of the chooser's registration effect.
+  // An inline literal here was a new function on every render, so the effect
+  // re-fired on every keystroke -- harmless, and exactly the churn registering
+  // through a ref was meant to avoid.
+  const registerChooser = useCallback((choose: (index: number) => void) => {
+    chooseRef.current = choose;
+  }, []);
+
+  /** Recomputes the command span from the live text and caret. */
+  const syncCommand = useCallback((text: string, caret: number) => {
+    const span = findNotebookCommand(text, caret);
+    setCommand(span);
+    setHighlight(0);
+    // Editing the command after dismissing it reopens the chooser; leaving it
+    // exactly as it was does not.
+    setDismissed(previous => {
+      const token = span ? text.slice(span.start, span.end) : null;
+      return previous !== null && previous === token ? previous : null;
+    });
+  }, []);
+
+  const commandToken = command ? prompt.slice(command.start, command.end) : null;
+  const chooserOpen = command !== null && dismissed !== commandToken;
+
+  const chooseNotebook = useCallback(
+    (scope: NotebookScope) => {
+      if (!command) return;
+      // The command token is consumed rather than sent. The rest of the draft
+      // — the question somebody was half-way through — is left exactly as it
+      // was, and the caret goes back where the command started.
+      const next = consumeCommand(prompt, command);
+      setPrompt(next);
+      setCommand(null);
+      setDismissed(null);
+      onNotebookScopeChange?.(scope);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        const caret = Math.min(caretAfterConsume(command), next.length);
+        el.setSelectionRange(caret, caret);
+      });
+    },
+    [command, prompt, onNotebookScopeChange],
+  );
 
   const resize = useCallback(() => {
     const el = textareaRef.current;
@@ -143,6 +242,19 @@ export function ChatComposer({
       live = false;
     };
   }, [attachments]);
+
+  // A handed-over question joins whatever is already drafted rather than
+  // replacing it. Overwriting somebody's half-written sentence with a
+  // generated one would be the same mistake `/notebook` was careful not to
+  // make at the other end.
+  useEffect(() => {
+    if (!handedPrompt) return;
+    setPrompt(current => (current.trim() ? `${current.trim()}
+
+${handedPrompt}` : handedPrompt));
+    onHandedPromptConsumed?.();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [handedPrompt, onHandedPromptConsumed]);
 
   const hasContent = prompt.trim().length > 0 || attachments.length > 0;
   const canSubmit = hasContent;
@@ -245,6 +357,38 @@ export function ChatComposer({
   }, [stopping]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The chooser takes the navigation keys while it is open, and nothing
+    // else. Typing continues to reach the textarea underneath, so the search
+    // is just the draft — no second input, no focus change, no lost caret.
+    if (chooserOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlight(current =>
+          moveHighlight(current, e.key === 'ArrowDown' ? 1 : -1, choiceCount),
+        );
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // Dismissed, with the draft untouched. Escape closes a chooser; it
+        // does not delete what somebody typed.
+        setDismissed(commandToken);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && command?.complete && choiceCount > 0) {
+        // Selecting must not send. This is the key that would otherwise have
+        // submitted a message whose only content was `/notebook`.
+        e.preventDefault();
+        chooseRef.current?.(highlight);
+        return;
+      }
+      if (e.key === 'Tab' && command?.complete && choiceCount > 0) {
+        e.preventDefault();
+        chooseRef.current?.(highlight);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       // Mid-run this queues instead of starting a second run; the
@@ -306,6 +450,27 @@ export function ChatComposer({
         </ul>
       )}
 
+      {chooserOpen && (
+        <NotebookChooser
+          query={command?.query ?? ''}
+          highlight={highlight}
+          onHighlightChange={setHighlight}
+          onCountChange={setChoiceCount}
+          onRegisterChooser={registerChooser}
+          onChoose={chooseNotebook}
+          onDismiss={() => setDismissed(commandToken)}
+        />
+      )}
+
+      {notebookScope && (
+        <NotebookChip
+          scope={notebookScope}
+          onChange={scope => onNotebookScopeChange?.(scope)}
+          onClear={() => onNotebookScopeChange?.(null)}
+          onOpenNotebook={id => onOpenNotebook?.(id)}
+        />
+      )}
+
       <div className={styles.composerWrap}>
         <div className={styles.composer} data-streaming={streaming || undefined}>
           {queued.length > 0 && (
@@ -360,8 +525,18 @@ export function ChatComposer({
             }
             value={prompt}
             rows={1}
-            onChange={e => setPrompt(e.target.value)}
+            onChange={e => {
+              setPrompt(e.target.value);
+              syncCommand(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
             onKeyDown={onKeyDown}
+            // Clicking or arrowing away from the command closes the chooser,
+            // which is why the span is recomputed from the caret here too.
+            onSelect={e => {
+              const el = e.currentTarget;
+              syncCommand(el.value, el.selectionStart ?? el.value.length);
+            }}
+            onBlur={() => setCommand(null)}
             aria-label="Message"
           />
 
