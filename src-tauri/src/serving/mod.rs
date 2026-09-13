@@ -350,6 +350,24 @@ fn gpu_layers_arg(gpu: &GpuOffloadPlan, auto_fit: bool) -> String {
     gpu.gpu_layers.to_string()
 }
 
+/// Caches the output of `llama-server --help` silently launched without creating a window.
+///
+/// Probed once and remembered so that `--help` is not repeatedly launched, and
+/// executed via `create_hidden_command` with `CREATE_NO_WINDOW` on Windows so that
+/// no console or terminal popups appear when launching inference.
+fn llama_server_help_text() -> Option<&'static str> {
+    static HELP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HELP.get_or_init(|| {
+        let mut cmd = crate::system_analyzer::process_utils::create_hidden_command(llama_server_program());
+        cmd.arg("--help");
+        let Ok(output) = cmd.output() else {
+            return None;
+        };
+        Some(String::from_utf8_lossy(&output.stdout).to_string())
+    })
+    .as_deref()
+}
+
 /// Whether this llama-server accepts `--n-gpu-layers auto`.
 ///
 /// Probed once and remembered. Older builds take only a number and would
@@ -357,27 +375,20 @@ fn gpu_layers_arg(gpu: &GpuOffloadPlan, auto_fit: bool) -> String {
 /// assumed — and a build that cannot be probed at all falls back to the
 /// computed number, which is what shipped before.
 fn llama_server_fits_layers_itself() -> bool {
-    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        let Ok(output) = std::process::Command::new(llama_server_program())
-            .arg("--help")
-            .output()
-        else {
-            return false;
-        };
-        let help = String::from_utf8_lossy(&output.stdout);
-        // The help text documents the accepted values for the flag. Matching
-        // on that is narrower than searching the whole page for "auto", which
-        // appears in unrelated options.
-        help.lines()
-            .filter(|line| line.contains("--n-gpu-layers"))
-            .any(|line| line.contains("auto"))
-            || help
-                .lines()
-                .skip_while(|line| !line.contains("--n-gpu-layers"))
-                .take(3)
-                .any(|line| line.contains("'auto'"))
-    })
+    let Some(help) = llama_server_help_text() else {
+        return false;
+    };
+    // The help text documents the accepted values for the flag. Matching
+    // on that is narrower than searching the whole page for "auto", which
+    // appears in unrelated options.
+    help.lines()
+        .filter(|line| line.contains("--n-gpu-layers"))
+        .any(|line| line.contains("auto"))
+        || help
+            .lines()
+            .skip_while(|line| !line.contains("--n-gpu-layers"))
+            .take(3)
+            .any(|line| line.contains("'auto'"))
 }
 
 /// Whether this llama-server can put reasoning in its own response field.
@@ -388,18 +399,11 @@ fn llama_server_fits_layers_itself() -> bool {
 /// be probed at all is assumed not to support it, so the failure mode of a
 /// missing probe is the behaviour that shipped before this existed.
 fn llama_server_splits_reasoning() -> bool {
-    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        let Ok(output) = std::process::Command::new(llama_server_program())
-            .arg("--help")
-            .output()
-        else {
-            return false;
-        };
-        let help = String::from_utf8_lossy(&output.stdout);
-        // Both are needed together, so both are required before either is sent.
-        help.contains("--reasoning-format") && help.contains("--jinja")
-    })
+    let Some(help) = llama_server_help_text() else {
+        return false;
+    };
+    // Both are needed together, so both are required before either is sent.
+    help.contains("--reasoning-format") && help.contains("--jinja")
 }
 
 /// Probe whether this llama-server accepts `--flash-attn` and KV cache flags.
@@ -408,33 +412,22 @@ fn llama_server_splits_reasoning() -> bool {
 /// bare `--flash-attn` consumes the next argument (such as `-ctk`) and aborts.
 /// This probe determines the exact flags supported so the server launches cleanly.
 fn llama_server_flash_attn_flags() -> Option<Vec<String>> {
-    static FLAGS: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
-    FLAGS
-        .get_or_init(|| {
-            let Ok(output) = std::process::Command::new(llama_server_program())
-                .arg("--help")
-                .output()
-            else {
-                return None;
-            };
-            let help = String::from_utf8_lossy(&output.stdout);
-            if !help.contains("-ctk") {
-                return None;
-            }
-            let mut flags = Vec::new();
-            if help.contains("--flash-attn") {
-                flags.push("--flash-attn".to_string());
-                if help.contains("--flash-attn [on|off|auto]") || help.contains("-fa") {
-                    flags.push("on".to_string());
-                }
-            }
-            flags.push("-ctk".to_string());
-            flags.push("q8_0".to_string());
-            flags.push("-ctv".to_string());
-            flags.push("q8_0".to_string());
-            Some(flags)
-        })
-        .clone()
+    let help = llama_server_help_text()?;
+    if !help.contains("-ctk") {
+        return None;
+    }
+    let mut flags = Vec::new();
+    if help.contains("--flash-attn") {
+        flags.push("--flash-attn".to_string());
+        if help.contains("--flash-attn [on|off|auto]") || help.contains("-fa") {
+            flags.push("on".to_string());
+        }
+    }
+    flags.push("-ctk".to_string());
+    flags.push("q8_0".to_string());
+    flags.push("-ctv".to_string());
+    flags.push("q8_0".to_string());
+    Some(flags)
 }
 
 /// What [`ModelServers::spawn_managed`] resolved to, whether it had to start
