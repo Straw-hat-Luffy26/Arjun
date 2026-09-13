@@ -18,9 +18,13 @@ pub fn setup_panic_handler() {
         let err_msg = format!("Application crashed! Location: {}:{}, Message: {}", location.file(), location.line(), message);
         error!("{}", err_msg);
         
-        // At this point we could potentially also write to a specific crash.log file
-        // or trigger an alert, but just logging it through the normal logger ensures
-        // it goes to our logdir configured in tauri-plugin-log.
+        // Write directly and synchronously to crash.log so it survives even if
+        // the logger plugin's asynchronous file buffer has not flushed.
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let crash_dir = std::path::PathBuf::from(local_app_data).join("com.arjun.workbench");
+            let _ = std::fs::create_dir_all(&crash_dir);
+            let _ = std::fs::write(crash_dir.join("crash.log"), &err_msg);
+        }
     }));
     
     info!("Panic handler registered");

@@ -340,13 +340,7 @@ pub fn run() {
             // check; the path that records calls goes through
             // `app_handle.try_state::<Arc<TelemetrySink>>` and would
             // hit the same lookup mechanism.
-            // `eprintln!` is used deliberately: the Tauri log plugin's
-            // flush is lazy, and `log::info!` from the `log` crate was
-            // observed to not reach `sarathi.log` for these new lines.
-            // `eprintln!` writes to stderr, which `Start-Process` on
-            // Windows exposes via the parent's handle when the parent
-            // is a console host. The PowerShell wrapper captures it.
-            eprintln!(
+            log::info!(
                 "[telemetry] sink registered; default seq = 0; \
                  snapshot at startup = {} rows",
                 telemetry_sink.snapshot().len()
