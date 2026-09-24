@@ -1,0 +1,181 @@
+=== python3 -m unittest discover -s sidecars/document_sidecar/tests
+..............EEEEEEEEEE..........................................................................EEE.........................
+======================================================================
+ERROR: test_stdout_is_one_json_object_the_caller_can_parse (test_attachment_extract.Contract.test_stdout_is_one_json_object_the_caller_can_parse)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 208, in test_stdout_is_one_json_object_the_caller_can_parse
+    self.assertEqual(parsed["kind"], "pdf-mixed")
+                     ~~~~~~^^^^^^^^
+KeyError: 'kind'
+
+======================================================================
+ERROR: test_a_digital_cover_does_not_swallow_the_scan_behind_it (test_attachment_extract.PerPageRouting.test_a_digital_cover_does_not_swallow_the_scan_behind_it)
+The exact case from the report: page 1 digital, page 2 scanned.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 95, in test_a_digital_cover_does_not_swallow_the_scan_behind_it
+    result = self.extract("text", "scan")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_a_fully_read_document_is_not_marked_truncated (test_attachment_extract.PerPageRouting.test_a_fully_read_document_is_not_marked_truncated)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 145, in test_a_fully_read_document_is_not_marked_truncated
+    result = self.extract("text", "scan")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_a_page_below_the_threshold_keeps_its_text_as_a_fallback (test_attachment_extract.PerPageRouting.test_a_page_below_the_threshold_keeps_its_text_as_a_fallback)
+A page with a stray header over an unreadable scan.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 180, in test_a_page_below_the_threshold_keeps_its_text_as_a_fallback
+    result = extract_pdf(path, self.out, 12)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_an_all_scan_pdf_goes_entirely_to_the_model (test_attachment_extract.PerPageRouting.test_an_all_scan_pdf_goes_entirely_to_the_model)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 159, in test_an_all_scan_pdf_goes_entirely_to_the_model
+    result = self.extract("scan", "scan")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_an_all_text_pdf_needs_no_model (test_attachment_extract.PerPageRouting.test_an_all_text_pdf_needs_no_model)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 152, in test_an_all_text_pdf_needs_no_model
+    result = self.extract("text", "text", "text")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_every_page_appears_in_the_detail_exactly_once (test_attachment_extract.PerPageRouting.test_every_page_appears_in_the_detail_exactly_once)
+A page missing from the record cannot be told from a blank one
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 129, in test_every_page_appears_in_the_detail_exactly_once
+    result = self.extract("text", "scan", "text", "scan", "scan")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_one_readable_page_does_not_declare_a_long_scan_readable (test_attachment_extract.PerPageRouting.test_one_readable_page_does_not_declare_a_long_scan_readable)
+The capped threshold, which never grew with the document.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 118, in test_one_readable_page_does_not_declare_a_long_scan_readable
+    result = self.extract("text", *["scan"] * 19, max_pages=25)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_pages_over_the_render_limit_are_marked_unread (test_attachment_extract.PerPageRouting.test_pages_over_the_render_limit_are_marked_unread)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 134, in test_pages_over_the_render_limit_are_marked_unread
+    result = self.extract(*["scan"] * 5, max_pages=2)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: test_the_rendered_image_is_named_for_its_real_page (test_attachment_extract.PerPageRouting.test_the_rendered_image_is_named_for_its_real_page)
+A citation to page 2 has to mean page 2 of the file.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 106, in test_the_rendered_image_is_named_for_its_real_page
+    result = self.extract("text", "scan")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_attachment_extract.py", line 89, in extract
+    return extract_pdf(self.build(*pages), self.out, kwargs.get("max_pages", 12))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/attachment_extract.py", line 147, in extract_pdf
+    import pypdf
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: setUpClass (test_pid_engine.PidEngineEndToEnd)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 276, in setUpClass
+    handle.write(_build_pdf([text]))
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 68, in _build_pdf
+    from pypdf import PdfWriter
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: setUpClass (test_pid_engine.RouterClassify)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 410, in setUpClass
+    handle.write(_build_pdf([text]))
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 68, in _build_pdf
+    from pypdf import PdfWriter
+ModuleNotFoundError: No module named 'pypdf'
+
+======================================================================
+ERROR: setUpClass (test_pid_engine.RouterTypeRouting)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 330, in setUpClass
+    handle.write(_build_pdf([text]))
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/user/Arjun/sidecars/document_sidecar/tests/test_pid_engine.py", line 68, in _build_pdf
+    from pypdf import PdfWriter
+ModuleNotFoundError: No module named 'pypdf'
+
+----------------------------------------------------------------------
+Ran 123 tests in 10.047s
+
+FAILED (errors=13)
+=== python3 -m unittest tests.test_render_pages (cwd sidecars/document_sidecar)
+----------------------------------------------------------------------
+Ran 11 tests in 9.553s
+
+OK

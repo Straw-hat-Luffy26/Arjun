@@ -88,6 +88,10 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "agent.status",
   "agent.cancel",
   "task.request_review",
+  "document.layout_map",
+  "document.render_regions",
+  "document.ocr_regions",
+  "document.extract_tables",
 ]);
 
 /**
@@ -190,6 +194,10 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["agent.status", true],
   ["agent.cancel", false],
   ["task.request_review", false],
+  ["document.layout_map", true],
+  ["document.render_regions", true],
+  ["document.ocr_regions", true],
+  ["document.extract_tables", true],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

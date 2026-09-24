@@ -364,9 +364,6 @@ function runCodingGroup() {
  */
 function blockedOnUnbuiltAgents() {
   const pending = [
-    ['scan-01-governing-reading', 'P06', 'Document & Vision Analyst with Unlimited-OCR'],
-    ['scan-02-pitting-present', 'P06', 'Document & Vision Analyst with Unlimited-OCR'],
-    ['scan-03-no-internal-inspection', 'P06', 'Document & Vision Analyst with Unlimited-OCR'],
     ['sop-01-applicable-minimum', 'P07', 'Knowledge Retriever and local retrieval tools'],
     ['sop-02-conflict-surfaced', 'P07', 'Knowledge Retriever and local retrieval tools'],
     ['calc-01-wall-loss-mm', 'P08', 'Calculation Analyst & Checker'],
@@ -391,6 +388,28 @@ function blockedOnUnbuiltAgents() {
     // is still missing is the agent whose *result* carries a produced file.
     ['art-evidence-03-artifact-hash-recorded', 'P09', 'a writer agent whose result carries the artifact version (the P04 tools that record and verify the hash exist)'],
   ];
+
+  // P06 built the analyst (the document-extractor's structured pass over
+  // attached scans: layout, local OCR, checks, fields, publication). What these
+  // three cases still need is the model itself: the installed Unlimited-OCR
+  // weights, projector and llama-server, which only the target machine has.
+  // Blocked on that, by name, with the command that runs the gate there.
+  for (const id of ['scan-01-governing-reading', 'scan-02-pitting-present', 'scan-03-no-internal-inspection']) {
+    record({
+      id,
+      group: 'agent-cases',
+      kind: 'fixture-case',
+      status: BLOCKED,
+      detail:
+        'the Document & Vision Analyst exists (P06); answering needs the local Unlimited-OCR model, ' +
+        'which this machine does not have. The deterministic pipeline is covered by ' +
+        'src-tauri/src/agent_runtime/extraction_tests.rs; the real read is the target gate.',
+      blockedOnPhase: 'P06-target',
+      unblockCommand:
+        'On the target machine: set ARJUN_APP_DATA to the app data directory, then ' +
+        'cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1',
+    });
+  }
 
   for (const [id, phase, what] of pending) {
     record({
@@ -418,7 +437,30 @@ function blockedOnUnbuiltAgents() {
     });
   }
   const failures = JSON.parse(readFileSync(path, 'utf8'));
+  // Failure cases whose agent now exists and whose remaining blocker is a model
+  // on the target machine. Named with that blocker rather than "implement the
+  // owning phase", which would no longer be true.
+  const onTarget = {
+    'fail-03-unreadable-scan-region':
+      'the analyst reports an unreadable region with its page and box and never guesses or blanks ' +
+      'it (P06; deterministic cases in src-tauri/src/agent_runtime/extraction_tests.rs); reading ' +
+      'page-03 itself needs the local Unlimited-OCR model, which this machine does not have',
+  };
   for (const failure of failures.cases) {
+    if (onTarget[failure.id]) {
+      record({
+        id: failure.id,
+        group: 'failure-cases',
+        kind: 'fixture-case',
+        status: BLOCKED,
+        detail: onTarget[failure.id],
+        blockedOnPhase: 'P06-target',
+        unblockCommand:
+          'On the target machine: set ARJUN_APP_DATA to the app data directory, then ' +
+          'cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1',
+      });
+      continue;
+    }
     record({
       id: failure.id,
       group: 'failure-cases',

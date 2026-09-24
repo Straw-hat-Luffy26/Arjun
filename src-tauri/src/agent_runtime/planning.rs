@@ -692,6 +692,24 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ]);
     }
 
+    // The Document & Vision Analyst's page tools (P06): layout, crops, local
+    // OCR and tables over what the asker attached to this thread, owner- and
+    // conversation-scoped in the store, with any OCR local and bounded.
+    //
+    // Always permitted, for the reason `document.read_pages` is: the pages
+    // worth reading are often an earlier turn's attachment, which a plan
+    // derived from today's prompt cannot see. Listed after every tool above,
+    // so a small window drops them before any producer or reader —
+    // `media.extract_findings`, `document.read_pages` and `document.search`
+    // keep the common case covered — and before the artifact family below,
+    // which stays last as P04 decided: on deliverable work it goes first.
+    permitted.extend([
+        ToolName::DocumentLayoutMap,
+        ToolName::DocumentOcrRegions,
+        ToolName::DocumentExtractTables,
+        ToolName::DocumentRenderRegions,
+    ]);
+
     // The shared artifact tools (P04): manifest, bounded reads, templates,
     // validation, rendering, diff, evidence resolution, registration and
     // targeted edits. Offered where a deliverable is produced or an existing

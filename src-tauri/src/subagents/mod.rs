@@ -84,7 +84,7 @@ pub use result::{
     ArtifactVersion, ChildResult, ChildStatus, EvidenceRef, Finding, ReceiptRef, ValidationCheck,
 };
 pub use scheduling::{ModelLease, ModelScheduler, Residency, SchedulingRefusal};
-pub use worker::{SpecialistWorker, WorkerServices};
+pub use worker::{AnalystServices, SpecialistWorker, WorkerServices};
 
 /// A profile that could not be compiled, kept so it can be reported.
 #[derive(Debug, Clone)]

@@ -96,6 +96,13 @@ pub enum Prerequisite {
     /// The run is attached to a conversation, whose artifact store the tool
     /// reads.
     ConversationArtifacts,
+    /// The run is attached to a conversation, and the document named was
+    /// attached to it by the signed-in person, with its original bytes still
+    /// on this machine and still hashing to its id.
+    AttachedDocument,
+    /// The Unlimited-OCR model registered and servable on loopback. Unmet is
+    /// reported page by page as unread, never as an empty page.
+    LocalOcr,
 }
 
 /// Where a prerequisite is checked.
@@ -120,7 +127,9 @@ impl Prerequisite {
             | Prerequisite::MultimodalIndex
             | Prerequisite::RunCalculations
             | Prerequisite::PageRenderer
-            | Prerequisite::ConversationArtifacts => CheckedAt::Handler,
+            | Prerequisite::ConversationArtifacts
+            | Prerequisite::AttachedDocument
+            | Prerequisite::LocalOcr => CheckedAt::Handler,
         }
     }
 }
@@ -251,7 +260,20 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
         ToolName::ArtifactResolveEvidence => (AgentPath, "agent_runtime::artifact_tools::resolve_evidence"),
         ToolName::ArtifactRegisterVersion => (AgentPath, "agent_runtime::artifact_tools::register_version"),
         ToolName::ArtifactEdit => (AgentPath, "agent_runtime::artifact_tools::edit_version"),
-        ToolName::MediaExtractFindings => (Runner, "LocalToolRunner::extract_findings"),
+        // P06. On the agent path because each authorises the document against
+        // the run's conversation and the signed-in owner. `extract_findings`
+        // still answers for a knowledge-base document through the runner.
+        ToolName::MediaExtractFindings => (
+            AgentPath,
+            "agent_runtime::extraction_tools::extract_findings (a knowledge-base document: LocalToolRunner::extract_findings)",
+        ),
+        ToolName::DocumentLayoutMap => (AgentPath, "agent_runtime::extraction_tools::layout_map"),
+        ToolName::DocumentRenderRegions => (AgentPath, "agent_runtime::extraction_tools::render_regions"),
+        ToolName::DocumentOcrRegions => (
+            AgentPath,
+            "agent_runtime::extraction_tools::ocr_regions, then extraction::ocr::read_batch",
+        ),
+        ToolName::DocumentExtractTables => (AgentPath, "agent_runtime::extraction_tools::extract_tables"),
         ToolName::KnowledgeMultimodalRetrieve => (Runner, "LocalToolRunner::multimodal_retrieve"),
         ToolName::ReadScopedFile => (Runner, "LocalToolRunner::read"),
         ToolName::WriteScopedFile => (Runner, "LocalToolRunner::write"),
@@ -305,11 +327,15 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         | ToolName::ArtifactResolveEvidence
         | ToolName::ArtifactRegisterVersion
         | ToolName::ArtifactEdit => &[ConversationArtifacts],
-        // `media.extract_findings` reads text the ingest pipeline already
-        // extracted. It calls no OCR engine at request time -- a page nothing
-        // read comes back named as unread -- so it has no engine to require.
-        ToolName::MediaExtractFindings
-        | ToolName::SearchDocuments
+        ToolName::DocumentLayoutMap
+        | ToolName::DocumentRenderRegions
+        | ToolName::DocumentExtractTables => &[AttachedDocument, PageRenderer],
+        // Both read scanned pages with local OCR at request time (bounded,
+        // cached). A knowledge-base document through `extract_findings` needs
+        // neither, and the handler says which path it took.
+        ToolName::DocumentOcrRegions => &[AttachedDocument, PageRenderer, LocalOcr],
+        ToolName::MediaExtractFindings => &[PageRenderer, LocalOcr],
+        ToolName::SearchDocuments
         | ToolName::LoadMoreEvidence
         | ToolName::MemoryRecallAuthorized
         | ToolName::MemoryPromoteApproved
@@ -391,7 +417,12 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         // Publishing changes a version's stage and writes no file.
         | ToolName::ArtifactRegisterVersion
         | ToolName::TaskPlanUpdate
-        | ToolName::AgentCancel => Text,
+        | ToolName::AgentCancel
+        // Cited by evidence-region id and box, not by the run's `[En]` table.
+        | ToolName::DocumentLayoutMap
+        | ToolName::DocumentRenderRegions
+        | ToolName::DocumentOcrRegions
+        | ToolName::DocumentExtractTables => Text,
     }
 }
 
@@ -402,7 +433,11 @@ pub const fn cancellation_of(tool: ToolName) -> Cancellation {
         ToolName::AgentDelegateReadonly
         | ToolName::AgentDelegate
         | ToolName::TaskRequestReview
-        | ToolName::ExecuteCode => Cancellation::RustDeadline,
+        | ToolName::ExecuteCode
+        // Each OCR unit is started only with time left, and one cut by the
+        // deadline keeps nothing.
+        | ToolName::DocumentOcrRegions
+        | ToolName::MediaExtractFindings => Cancellation::RustDeadline,
         _ if is_side_effecting(tool) => Cancellation::AbandonWaitWithIntent,
         _ => Cancellation::AbandonWait,
     }

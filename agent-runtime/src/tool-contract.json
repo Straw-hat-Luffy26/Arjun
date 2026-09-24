@@ -1149,6 +1149,155 @@
       "approvalClass": "automatic",
       "cancellation": "abandonWait",
       "effect": "read_only",
+      "handler": "agent_runtime::extraction_tools::extract_tables",
+      "maxResponseBytes": 32768,
+      "name": "document.extract_tables",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "integer",
+          "name": "toPage"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "attachedDocument"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "documentSha256"
+        },
+        {
+          "kind": "integer",
+          "name": "fromPage"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 60
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::extraction_tools::layout_map",
+      "maxResponseBytes": 24576,
+      "name": "document.layout_map",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "integer",
+          "name": "toPage"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "attachedDocument"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "documentSha256"
+        },
+        {
+          "kind": "integer",
+          "name": "fromPage"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 60
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "rustDeadline",
+      "effect": "read_only",
+      "handler": "agent_runtime::extraction_tools::ocr_regions, then extraction::ocr::read_batch",
+      "maxResponseBytes": 32768,
+      "name": "document.ocr_regions",
+      "network": "loopback",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "pages"
+        },
+        {
+          "kind": "integer",
+          "name": "page"
+        },
+        {
+          "kind": "list",
+          "name": "regions"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "attachedDocument"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "localOcr"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "documentSha256"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
       "handler": "agent_runtime::read_attached_pages",
       "maxResponseBytes": 32768,
       "name": "document.read_pages",
@@ -1181,6 +1330,57 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::extraction_tools::render_regions",
+      "maxResponseBytes": 8192,
+      "name": "document.render_regions",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "regions"
+        },
+        {
+          "kind": "integer",
+          "name": "dpi"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "attachedDocument"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "documentSha256"
+        },
+        {
+          "kind": "integer",
+          "name": "page"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 60
     },
     {
       "aliases": [],
@@ -1378,21 +1578,42 @@
     {
       "aliases": [],
       "approvalClass": "automatic",
-      "cancellation": "abandonWait",
+      "cancellation": "rustDeadline",
       "effect": "read_only",
-      "handler": "LocalToolRunner::extract_findings",
-      "maxResponseBytes": 16384,
+      "handler": "agent_runtime::extraction_tools::extract_findings (a knowledge-base document: LocalToolRunner::extract_findings)",
+      "maxResponseBytes": 32768,
       "name": "media.extract_findings",
       "network": "loopback",
       "optional": [
         {
           "kind": "integer",
           "name": "toPage"
+        },
+        {
+          "kind": "list",
+          "name": "fields"
+        },
+        {
+          "kind": "text",
+          "name": "question"
+        },
+        {
+          "kind": "list",
+          "name": "regionIds"
         }
       ],
       "output": "evidence",
       "permission": "searchKnowledge",
-      "prerequisites": [],
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "localOcr"
+        }
+      ],
       "readOnly": true,
       "required": [
         {
@@ -1409,9 +1630,9 @@
         "reconciliation": "notNeeded",
         "safeToRetry": true
       },
-      "route": "runner",
+      "route": "agentPath",
       "sideEffecting": false,
-      "timeoutSeconds": 90
+      "timeoutSeconds": 120
     },
     {
       "aliases": [

@@ -474,3 +474,18 @@
 .jobRow[data-status='completed'] {
   border-left: 3px solid var(--status-success, #4ade80);
 }
+
+/* The analyst panel's models: name, readiness with its reason, the probe. */
+.analystRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(240px, 2.2fr) max-content;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.analystRow:last-child { border-bottom: none; }
+.analystRow[data-status='not-ready'] { border-left: 3px solid var(--status-warning, #fbbf24); }

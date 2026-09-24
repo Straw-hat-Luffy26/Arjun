@@ -150,6 +150,10 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             sarathi_lib::knowledge::NotebookStore::open(dir.path()).expect("notebook store opens"),
         ),
         jobs: Arc::default(),
+        extraction: Arc::new(sarathi_lib::extraction::service::ExtractionService::without_models(
+            &dir.path().join("documents"),
+            "no OCR or vision model in this test",
+        )),
         }),
         // Returned so the directory outlives the test; dropping it early would
         // delete the SQLite file out from under the runtime.
@@ -1677,6 +1681,11 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         session: base.session.clone(),
         child_loop: None,
         cancellations: cancellations.clone(),
+        analyst: Some(sarathi_lib::subagents::AnalystServices {
+            extraction: base.extraction.clone(),
+            documents: base.documents.clone(),
+            conversations: base.run_to_conversation.clone(),
+        }),
     });
     let profiles = sarathi_lib::subagents::load_profiles(
         &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents"),
@@ -1726,6 +1735,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         run_to_conversation: base.run_to_conversation.clone(),
         notebooks: base.notebooks.clone(),
         jobs: Arc::default(),
+        extraction: base.extraction.clone(),
     });
 
     (deps, dir)

@@ -24,6 +24,7 @@ pub mod registry;
 pub mod serving;
 pub mod skills;
 pub mod subagents;
+pub mod extraction;
 
 // Phase modules
 pub mod system_analyzer;
@@ -854,18 +855,52 @@ pub fn run() {
                     app.manage(StdArc::clone(graph));
                 }
 
+                // Residency is decided against this machine's own measured
+                // memory, so four logically parallel children on an 8 GB card
+                // take turns rather than each getting a fraction of it. One
+                // scheduler, shared by the workers and the analyst's OCR and
+                // vision calls, so a page being read and a child's model are
+                // two claims on the same card rather than two schedulers each
+                // believing it has it. See `subagents::scheduling`.
+                let scheduler = StdArc::new(subagents::ModelScheduler::new(
+                    models.inner().clone(),
+                    servers.inner().clone(),
+                ));
+
+                // The Document & Vision Analyst's page service (P06): local
+                // Unlimited-OCR and vision-ready models only, through the
+                // scheduler above; PyMuPDF for geometry.
+                let extraction_service = StdArc::new(extraction::service::ExtractionService::new(
+                    &app_data_dir.join("documents"),
+                    StdArc::new(extraction::ocr::ServedOcr {
+                        registry: models.inner().clone(),
+                        servers: servers.inner().clone(),
+                        scheduler: StdArc::clone(&scheduler),
+                    }),
+                    StdArc::new(extraction::vision::ServedVision {
+                        registry: models.inner().clone(),
+                        servers: servers.inner().clone(),
+                        scheduler: StdArc::clone(&scheduler),
+                    }),
+                    extraction::sidecar::Sidecar::resolve(),
+                ));
+                app.manage(commands::agent::ExtractionState(StdArc::clone(&extraction_service)));
+                // Managed so the vision probe reserves the card through the
+                // same scheduler as every worker and every page read.
+                app.manage(StdArc::clone(&scheduler));
+                let analyst = subagents::AnalystServices {
+                    extraction: extraction_service,
+                    documents: StdArc::clone(&app.state::<commands::agent::DocumentsState>().0),
+                    conversations: StdArc::clone(
+                        &app.state::<commands::conversations::RunToConversationState>().0,
+                    ),
+                };
+
                 let services = StdArc::new(subagents::WorkerServices {
                     index: index.inner().clone(),
                     graph,
                     events: StdArc::clone(&worker_events),
-                    // Residency is decided against this machine's own measured
-                    // memory, so four logically parallel children on an 8 GB
-                    // card take turns rather than each getting a fraction of
-                    // it. See `subagents::scheduling`.
-                    scheduler: StdArc::new(subagents::ModelScheduler::new(
-                        models.inner().clone(),
-                        servers.inner().clone(),
-                    )),
+                    scheduler,
                     session: session.inner().clone(),
                     // A child's own model loop, on the runtime the parent is
                     // using. The handle is the lazily-filled slot
@@ -892,6 +927,7 @@ pub fn run() {
                         models_dir: models.models_dir().to_path_buf(),
                     })),
                     cancellations: StdArc::clone(&cancellations.0),
+                    analyst: Some(analyst),
                 });
 
                 for worker in
@@ -1402,6 +1438,9 @@ pub fn run() {
             commands::agent_admin::agent_orchestrator_jobs,
             commands::agent_admin::agent_test_run,
             commands::registry::registry_review_model,
+            commands::extraction::document_analyst_status,
+            commands::extraction::registry_bind_projector,
+            commands::extraction::vision_probe_model,
             commands::agents::agent_model_transition_begin,
             commands::agents::agent_model_transition_status,
             commands::agents::agent_model_transition_rollback,

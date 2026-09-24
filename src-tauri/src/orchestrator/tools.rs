@@ -248,6 +248,16 @@ pub enum ToolName {
     /// Backend acceptance checks and an independent reviewer over a step's
     /// outputs.
     TaskRequestReview,
+    // -- P06: the Document & Vision Analyst's page tools. ------------------
+    /// Page geometry, text-layer blocks and embedded tables, as evidence
+    /// regions with ids, boxes and the method that read them.
+    DocumentLayoutMap,
+    /// Renders page regions to preserved crop images, exactly the box asked.
+    DocumentRenderRegions,
+    /// Local Unlimited-OCR over bounded pages or crops, checked and cached.
+    DocumentOcrRegions,
+    /// Tables from the text layer or from OCR, cell by cell.
+    DocumentExtractTables,
 }
 
 impl ToolName {
@@ -300,6 +310,10 @@ impl ToolName {
         ToolName::AgentStatus,
         ToolName::AgentCancel,
         ToolName::TaskRequestReview,
+        ToolName::DocumentLayoutMap,
+        ToolName::DocumentRenderRegions,
+        ToolName::DocumentOcrRegions,
+        ToolName::DocumentExtractTables,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -353,6 +367,10 @@ impl ToolName {
             ToolName::AgentStatus => "agent.status",
             ToolName::AgentCancel => "agent.cancel",
             ToolName::TaskRequestReview => "task.request_review",
+            ToolName::DocumentLayoutMap => "document.layout_map",
+            ToolName::DocumentRenderRegions => "document.render_regions",
+            ToolName::DocumentOcrRegions => "document.ocr_regions",
+            ToolName::DocumentExtractTables => "document.extract_tables",
         }
     }
 
@@ -420,6 +438,11 @@ impl ToolName {
             | ToolName::AgentStatus
             | ToolName::AgentCancel
             | ToolName::TaskRequestReview => None,
+            // Introduced namespaced by P06.
+            ToolName::DocumentLayoutMap
+            | ToolName::DocumentRenderRegions
+            | ToolName::DocumentOcrRegions
+            | ToolName::DocumentExtractTables => None,
         }
     }
 
@@ -563,7 +586,14 @@ impl ToolName {
             | ToolName::ArtifactDiff
             | ToolName::ArtifactResolveEvidence
             // Reads the job table; waiting is not writing.
-            | ToolName::AgentStatus => true,
+            | ToolName::AgentStatus
+            // Read an attached document. The regions, crops and OCR reads they
+            // keep are derived observations about immutable bytes, stored by
+            // content address in ARJUN's own store; the document is untouched.
+            | ToolName::DocumentLayoutMap
+            | ToolName::DocumentRenderRegions
+            | ToolName::DocumentOcrRegions
+            | ToolName::DocumentExtractTables => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -598,7 +628,7 @@ impl ToolName {
         match self {
             ToolName::SearchDocuments => "search the knowledge base",
             ToolName::LoadMoreEvidence => "read a specific page range of a document",
-            ToolName::MediaExtractFindings => "read findings from a scanned page range",
+            ToolName::MediaExtractFindings => "find requested fields in a document's pages, with their evidence",
             ToolName::MemoryRecallAuthorized => "read this machine's memory for one scope",
             ToolName::MemoryPromoteApproved => "record an approved fact in the project's memory",
             ToolName::ReadScopedFile => "read a file from the task workspace",
@@ -646,6 +676,10 @@ impl ToolName {
             ToolName::AgentStatus => "check on a delegated job",
             ToolName::AgentCancel => "stop a delegated job",
             ToolName::TaskRequestReview => "have a step's outputs checked and independently reviewed",
+            ToolName::DocumentLayoutMap => "map the layout of pages of an attached document",
+            ToolName::DocumentRenderRegions => "render regions of an attached document's pages",
+            ToolName::DocumentOcrRegions => "read scanned pages or regions with local OCR",
+            ToolName::DocumentExtractTables => "read the tables on pages of an attached document",
         }
     }
 
@@ -712,6 +746,18 @@ impl ToolName {
                 "`stage` is \"final\" to publish an exact version (art-…@N) whose latest ",
                 "artifact.validate accepted it, or \"candidate\". Publishing rechecks every ",
                 "dependency first and refuses if any moved.",
+            )),
+            ToolName::DocumentRenderRegions | ToolName::DocumentOcrRegions => Some(concat!(
+                "`regions` is a list, each entry either a region id (rg-…) from document.layout_map ",
+                "or an earlier read, or a box \"x0,y0,x1,y1\" on `page` in the page's own ",
+                "coordinates (PDF points or image pixels, as layout_map reports). With none, the ",
+                "whole page is used; document.ocr_regions also takes `pages`, page numbers each ",
+                "read whole.",
+            )),
+            ToolName::MediaExtractFindings => Some(concat!(
+                "`fields` is a list of field names to find (\"design pressure\", \"tag\"), at most ",
+                "12. `question`, if given, asks a vision-ready model about `regionIds` (or the first ",
+                "page) and comes back as a labelled proposal, never as a finding.",
             )),
             _ => None,
         }
@@ -1066,14 +1112,23 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "documentSha256", kind: Text },
                 ArgumentSpec { name: "fromPage", kind: Integer },
             ],
-            optional_arguments: &[ArgumentSpec { name: "toPage", kind: Integer }],
-            // The OCR and vision engines are Python sidecars this machine talks
+            optional_arguments: &[
+                ArgumentSpec { name: "toPage", kind: Integer },
+                // P06: requested fields, and an optional question for a
+                // vision-ready model over named regions.
+                ArgumentSpec { name: "fields", kind: List },
+                ArgumentSpec { name: "question", kind: Text },
+                ArgumentSpec { name: "regionIds", kind: List },
+            ],
+            // The OCR and vision models are llama-servers this machine talks
             // to over loopback. Loopback is not egress, so this stays available
             // in Work mode — which is the mode a scanned inspection report is
             // actually read in.
             network: NetworkUse::Loopback,
-            // A vision pass over a page is slow next to a text read.
-            timeout: Duration::from_secs(90),
+            // Scanned pages in range are OCR-read first (at most four, cached),
+            // so this takes the contract's ceiling.
+            timeout: Duration::from_secs(120),
+            max_response_bytes: 32 * 1024,
             ..defaults(name)
         },
         ToolName::KnowledgeMultimodalRetrieve => ToolSpec {
@@ -1732,6 +1787,68 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             // ceiling, and the reviewer child by a 40-second deadline.
             timeout: ARTIFACT_RENDER_TIMEOUT,
             max_response_bytes: 12 * 1024,
+            ..defaults(name)
+        },
+        // P06. Each reads a document the signed-in person attached to this
+        // conversation, so each takes `UseModel` for the reason
+        // `ReadAttachedPages` does: the isolation is owner and conversation,
+        // enforced by the store, not shelf clearance.
+        ToolName::DocumentLayoutMap => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "documentSha256", kind: Text },
+                ArgumentSpec { name: "fromPage", kind: Integer },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "toPage", kind: Integer }],
+            // PyMuPDF on this machine, bounded in Rust at the sidecar timeout.
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentRenderRegions => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "documentSha256", kind: Text },
+                ArgumentSpec { name: "page", kind: Integer },
+            ],
+            optional_arguments: &[
+                ArgumentSpec { name: "regions", kind: List },
+                ArgumentSpec { name: "dpi", kind: Integer },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentOcrRegions => ToolSpec {
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "documentSha256", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "pages", kind: List },
+                ArgumentSpec { name: "page", kind: Integer },
+                ArgumentSpec { name: "regions", kind: List },
+            ],
+            // The OCR model is a llama-server on loopback. Loopback is not
+            // egress, so this stays available in Work mode.
+            network: NetworkUse::Loopback,
+            // The ceiling the contract allows. A page is minutes on a small
+            // card; the batch is bounded to four units and stops starting new
+            // ones before this, and the cache keeps what was finished.
+            timeout: Duration::from_secs(120),
+            max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentExtractTables => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "documentSha256", kind: Text },
+                ArgumentSpec { name: "fromPage", kind: Integer },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "toPage", kind: Integer }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 32 * 1024,
             ..defaults(name)
         },
         ToolName::SovereigntyGetEvidence => ToolSpec {

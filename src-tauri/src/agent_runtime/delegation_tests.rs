@@ -153,6 +153,11 @@ impl World {
             session: base.session.clone(),
             child_loop: None,
             cancellations: cancellations.clone(),
+            analyst: Some(crate::subagents::AnalystServices {
+                extraction: base.extraction.clone(),
+                documents: base.documents.clone(),
+                conversations: base.run_to_conversation.clone(),
+            }),
         });
         let profiles = load_profiles(&profiles_dir()).profiles;
         assert!(!profiles.is_empty(), "no profiles in {}", profiles_dir().display());
@@ -209,6 +214,7 @@ impl World {
             run_to_conversation: base.run_to_conversation.clone(),
             notebooks: base.notebooks.clone(),
             jobs: Arc::default(),
+            extraction: base.extraction.clone(),
         });
         World { deps, graph, cancellations, _dir: Some(dir) }
     }

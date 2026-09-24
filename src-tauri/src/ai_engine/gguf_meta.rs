@@ -298,6 +298,80 @@ pub fn read_gguf_metadata(path: &Path) -> Result<GgufMetadata> {
 /// Split from [`read_gguf_metadata`] so the format handling is testable against
 /// synthetic headers without writing multi-gigabyte fixtures.
 pub fn parse_gguf_metadata<R: Read + Seek>(r: &mut R) -> Result<GgufMetadata> {
+    from_kv(&read_kv(r)?)
+}
+
+/// A header value, for a caller that has to look at keys this module does not
+/// interpret.
+///
+/// The projector check is that caller. A vision projector is a `clip` GGUF with
+/// no `{arch}.block_count`, so [`parse_gguf_metadata`] rightly refuses it as a
+/// language model — and the keys that say what it is (`clip.has_vision_encoder`,
+/// `clip.projector_type`, `clip.vision.projection_dim`) are exactly the ones
+/// `from_kv` never reads. Arrays are skipped here as everywhere else.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GgufValue {
+    Unsigned(u64),
+    Signed(i64),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+}
+
+impl GgufValue {
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::Unsigned(v) => Some(*v),
+            Self::Signed(v) => u64::try_from(*v).ok(),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+}
+
+/// Every scalar in a GGUF header, keyed as written.
+///
+/// Reads the header only, like [`read_gguf_metadata`]; the tensors are never
+/// touched. The bookkeeping keys this module derives from arrays are left out:
+/// they are not in the file, and a caller reading "what the file says" should
+/// not find them.
+pub fn read_gguf_scalars(path: &Path) -> Result<std::collections::BTreeMap<String, GgufValue>> {
+    let file = File::open(path)
+        .with_context(|| format!("could not open GGUF file '{}'", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let kv = read_kv(&mut reader)
+        .with_context(|| format!("could not read GGUF header of '{}'", path.display()))?;
+    Ok(kv
+        .into_iter()
+        .filter(|(key, _)| !key.starts_with("arjun."))
+        .map(|(key, value)| {
+            let value = match value {
+                Scalar::U(v) => GgufValue::Unsigned(v),
+                Scalar::I(v) => GgufValue::Signed(v),
+                Scalar::F(v) => GgufValue::Float(v),
+                Scalar::Bool(v) => GgufValue::Bool(v),
+                Scalar::Str(v) => GgufValue::Text(v),
+            };
+            (key, value)
+        })
+        .collect())
+}
+
+/// The magic, the version and the key-value block, and nothing after it.
+fn read_kv<R: Read + Seek>(r: &mut R) -> Result<HashMap<String, Scalar>> {
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic).context("file is too short to be a GGUF")?;
     if &magic != GGUF_MAGIC {
@@ -362,7 +436,7 @@ pub fn parse_gguf_metadata<R: Read + Seek>(r: &mut R) -> Result<GgufMetadata> {
         }
     }
 
-    from_kv(&kv)
+    Ok(kv)
 }
 
 /// Tag openers that mean "what follows is reasoning".

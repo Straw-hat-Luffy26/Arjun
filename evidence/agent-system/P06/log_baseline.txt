@@ -1,0 +1,22 @@
+
+agent-system baseline — P00
+  cases      39
+  executed   8
+  passed     6
+  failed     2
+  blocked    31
+  skipped    0
+
+  written to evidence/agent-system/P06/baseline.json
+
+blocked, and what would unblock each:
+    1x  Start a server, e.g.  llama-server -m <weights.gguf> --port 8080 -c 4096  then set ARJUN_BASELINE_MODEL_URL=http://127.0.0.1:8080/v1 and re-run `cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture`.
+    4x  On the target machine: set ARJUN_APP_DATA to the app data directory, then cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1
+    2x  Implement P07 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    6x  Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    4x  Implement P09 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    1x  Implement P11 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    2x  Implement P12 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    2x  Implement P13 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    2x  Implement P02 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness.
+    7x  Implement the owning phase, then re-run this harness.

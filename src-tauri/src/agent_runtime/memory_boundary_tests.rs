@@ -102,6 +102,10 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
         ),
         jobs: Arc::default(),
+        extraction: Arc::new(crate::extraction::service::ExtractionService::without_models(
+            &dir.path().join("documents"),
+            "no OCR or vision model in this test",
+        )),
     });
     (deps, dir)
 }

@@ -115,6 +115,7 @@ fn services(
         // `tests/subagent_model_loop_live.rs`.
         child_loop: None,
         cancellations,
+        analyst: None,
     })
 }
 

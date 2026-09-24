@@ -1270,6 +1270,16 @@ impl ToolRunner for LocalToolRunner<'_> {
                 "{} is answered on the agent path, which holds the run's plan and jobs.",
                 tool.as_str()
             )),
+            // P06: each authorises an attached document against the owner and
+            // the conversation, which this runner does not hold.
+            ToolName::DocumentLayoutMap
+            | ToolName::DocumentRenderRegions
+            | ToolName::DocumentOcrRegions
+            | ToolName::DocumentExtractTables => Err(format!(
+                "{} is answered on the agent path, which knows the signed-in owner and the \
+                 conversation the document was attached to.",
+                tool.as_str()
+            )),
             ToolName::SearchDocuments => self.search(call),
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),

@@ -205,7 +205,8 @@ pub const DEPENDENCIES: &[Dependency] = &[
     Dependency {
         id: "page-rasteriser",
         label: "Page rasteriser",
-        needed_for: "showing a produced document's pages for visual review",
+        needed_for: "showing a produced document's pages for visual review, and the document \
+                     analyst's page layout, crops and skew measurement",
         packaging: Packaging::Bundled,
         // A Feature: without it a produced file is still reopened and its
         // content checked; its pages are reported as not rendered, never as

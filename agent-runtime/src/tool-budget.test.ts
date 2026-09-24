@@ -38,13 +38,13 @@ function catalogue(): BudgetableTool[] {
  * A budget of `1` would also reach the smallest stage, but it reaches it by
  * amputating the catalogue down to one tool — which is a different question
  * from "how small can the whole catalogue be made". The budget has to sit
- * between the `minimal` size and the next stage up. Measured at P05 (48 tools)
- * as 4,521 tokens at `minimal` and 5,089 at `schemaOnly`, so 4,800 compresses to
- * `minimal` and drops nothing. It was 4,000 at 43 tools (P04: 3,902 / 4,399) and
- * 3,000 at 33.
+ * between the `minimal` size and the next stage up. Measured at P06 (52 tools)
+ * as 4,990 tokens at `minimal` and 5,619 at `schemaOnly`, so 5,400 compresses to
+ * `minimal` and drops nothing. It was 4,800 at 48 tools (P05: 4,521 / 5,089),
+ * 4,000 at 43 (P04: 3,902 / 4,399) and 3,000 at 33.
  */
 function minimalCatalogue(): BudgetableTool[] {
-  const fitted = fitToolsToBudget(catalogue(), 4_800);
+  const fitted = fitToolsToBudget(catalogue(), 5_400);
   if (fitted.report.stage !== "minimal" || fitted.report.dropped.length > 0) {
     throw new Error(
       `expected the whole catalogue at the smallest stage, got ${fitted.report.stage} with ` +
@@ -66,6 +66,19 @@ const P04_ARTIFACT_TOOLS: ReadonlySet<string> = new Set([
   "artifact.resolve_evidence",
   "artifact.register_version",
   "artifact.edit",
+]);
+
+/**
+ * The four page tools P06 added, listed just before the artifact family (the
+ * order a plan lists them in), so a small window drops the artifact family
+ * first and these next. `media.extract_findings`, `document.read_pages` and
+ * `document.search` sit earlier and keep the common case covered.
+ */
+const P06_PAGE_TOOLS: ReadonlySet<string> = new Set([
+  "document.layout_map",
+  "document.render_regions",
+  "document.ocr_regions",
+  "document.extract_tables",
 ]);
 
 /** Every `properties` key in a schema, at every depth. */
@@ -94,7 +107,9 @@ describe("the tool catalogue against a small window", () => {
 
   it("fits the budget an 8k model can afford, with every tool before P04 intact", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
-    const core = catalogue().filter((tool) => !P04_ARTIFACT_TOOLS.has(tool.name));
+    const core = catalogue().filter(
+      (tool) => !P04_ARTIFACT_TOOLS.has(tool.name) && !P06_PAGE_TOOLS.has(tool.name),
+    );
     const fitted = fitToolsToBudget(core, budget);
 
     expect(fitted.report.tokens).toBeLessThanOrEqual(budget);
@@ -116,17 +131,32 @@ describe("the tool catalogue against a small window", () => {
    * P05 adds the five orchestrator tools *before* that family (4,521 tokens
    * at `minimal` for 48 tools); at 8k the fitter now drops nine of the ten
    * artifact tools and keeps every orchestrator tool, which this still pins.
+   *
+   * P06 adds four page tools between the orchestrator tools and that family
+   * (4,990 tokens at `minimal` for 52 tools, 95.96 per tool against the 96
+   * Rust reserves). Measured at 8k: the ten artifact tools and then the four
+   * page tools are dropped, and every orchestrator tool, producer and reader
+   * is kept.
    */
-  it("drops only the P04 artifact family, from the tail, when the whole catalogue meets an 8k window", () => {
+  it("drops only the P04 artifact family and the P06 page tools, from the tail, when the whole catalogue meets an 8k window", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
     const fitted = fitToolsToBudget(catalogue(), budget);
+    const droppable = (name: string) => P04_ARTIFACT_TOOLS.has(name) || P06_PAGE_TOOLS.has(name);
 
     expect(fitted.report.overBudget).toBe(false);
     expect(fitted.report.dropped.length).toBeGreaterThan(0);
     for (const name of fitted.report.dropped) {
-      expect(P04_ARTIFACT_TOOLS.has(name), `${name} was dropped`).toBe(true);
+      expect(droppable(name), `${name} was dropped`).toBe(true);
     }
-    for (const tool of catalogue().filter((t) => !P04_ARTIFACT_TOOLS.has(t.name))) {
+    // From the tail: the whole artifact family goes before any page tool does.
+    const dropped = fitted.report.dropped;
+    const firstPageTool = dropped.findIndex((name) => P06_PAGE_TOOLS.has(name));
+    if (firstPageTool >= 0) {
+      for (const name of P04_ARTIFACT_TOOLS) {
+        expect(dropped.includes(name), `${name} kept while a page tool was dropped`).toBe(true);
+      }
+    }
+    for (const tool of catalogue().filter((t) => !droppable(t.name))) {
       expect(fitted.tools.some((kept) => kept.name === tool.name), `${tool.name} kept`).toBe(true);
     }
   });

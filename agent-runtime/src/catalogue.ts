@@ -160,25 +160,29 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 
   {
     name: "media.extract_findings",
-    label: "Read a scanned page range",
+    label: "Find fields in a document, with their evidence",
     readOnly: true,
     description:
-      "Reports what a page range of a document does and does not yield, separating pages with " +
-      "extracted text from pages that are images nobody has read. " +
-      "Use it when a page range came back empty or thin and you need to know whether the clause " +
-      "is genuinely absent or simply unread — those two lead to opposite conclusions and this is " +
-      "the only tool that tells them apart. " +
-      "Do not use it as a general reader: knowledge.load_evidence_region is for pages that have " +
-      "text, and this one exists for the pages that do not. " +
-      "Effects: none. It only reads. It talks to a local extraction sidecar on this machine and " +
-      "reaches no outside network. " +
-      "Limits: the same 10-page range as load_evidence_region. This deployment may have no OCR or " +
-      "vision model installed, in which case it says so. " +
-      "If it reports pages unread: say the pages could not be read and that a person needs to look " +
-      "at them. Never describe or quote a page reported as unread.",
+      "Finds the fields you name in a page range of a document, and reports each value with the " +
+      "page, the region id, the box and the method that read it — the document's own text layer " +
+      "or local OCR. Scanned pages in range that nobody has read are OCR-read first (at most 4, " +
+      "cached). Pages and regions that could not be read are named. " +
+      "Use it when you need specific values (a tag, a design pressure, a date) from an attached " +
+      "document or a knowledge-base document, or need to know whether a page range is genuinely " +
+      "empty or simply unread — those lead to opposite conclusions. " +
+      "Do not use it to read whole pages: document.read_pages and knowledge.load_evidence_region " +
+      "do that. Do not treat its PROPOSAL section as a finding: that is a vision model's " +
+      "interpretation, only given when you ask a question. " +
+      "Effects: none outside ARJUN's own store. It may run the local OCR model on this machine; " +
+      "nothing leaves it. " +
+      "Limits: 10 pages per call, 12 fields, 4 scanned pages OCR-read per call; no value carries a " +
+      "confidence number, because none is measured. " +
+      "If it reports a field NOT FOUND, say it was not found on the pages read and name any pages " +
+      "not read. If a region is unreadable, say it could not be read — never supply a likely value.",
     parameters: closed({
       documentSha256: Type.String({
-        description: "The document identifier carried on a passage you already retrieved.",
+        description:
+          "The document id: the id on an <attachment> tag, or the documentSha256 of a retrieved passage.",
         minLength: 1,
       }),
       fromPage: Type.Integer({ minimum: 1, description: "First page to examine, inclusive." }),
@@ -186,6 +190,23 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         Type.Integer({
           minimum: 1,
           description: "Last page to examine, inclusive. Defaults to fromPage. At most 10 pages.",
+        }),
+      ),
+      fields: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), {
+          description: "Field names to find, e.g. \"design pressure\", \"tag\". At most 12.",
+        }),
+      ),
+      question: Type.Optional(
+        Type.String({
+          description:
+            "A question for a vision-ready model about regionIds (or the first page). Its answer " +
+            "comes back as a labelled proposal.",
+        }),
+      ),
+      regionIds: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), {
+          description: "Region ids (rg-…) the question is about. At most 2.",
         }),
       ),
     }),
@@ -1206,6 +1227,101 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   // At the end on purpose: with no plan-ordered list to follow, the budget
   // fitter drops from the tail, and these are what a run can best do without.
   // Rust's plans put them last for the same reason (`planning::derive`).
+  // P06's page tools, after every other tool and before the P04 artifact
+  // family, in the order a plan lists them: a small window drops the artifact
+  // family first, then these; media.extract_findings, document.read_pages and
+  // document.search (above) keep the common case covered.
+  {
+    name: "document.layout_map",
+    label: "Map the layout of document pages",
+    readOnly: true,
+    description:
+      "Maps pages of a document attached to THIS conversation: page size, coordinate space, how " +
+      "much text layer each page has, and every text block, image and embedded table as an " +
+      "evidence region with an rg- id and a box. " +
+      "Use it first when you need to know where something is on a page, which pages are scans, " +
+      "or which region to crop or OCR. " +
+      "Do not use it to read a page's text in full — document.read_pages does — and do not use it " +
+      "for knowledge-base documents. " +
+      "Effects: none outside ARJUN's own store; it reads the attached file with PyMuPDF on this " +
+      "machine and records the regions. " +
+      "Limits: at most 10 pages per call; 40 regions listed per page. " +
+      "If it says a page has no adequate text layer, read that page with document.ocr_regions.",
+    parameters: closed({
+      documentSha256: Type.String({ description: "The <attachment> id.", minLength: 1 }),
+      fromPage: Type.Integer({ minimum: 1, description: "First page." }),
+      toPage: Type.Optional(Type.Integer({ minimum: 1, description: "Last page; at most 10." })),
+    }),
+  },
+  {
+    name: "document.render_regions",
+    label: "Render regions of a page",
+    readOnly: true,
+    description:
+      "Renders regions of one page of an attached document to images, exactly the boxes asked, " +
+      "and preserves each crop under an id and a SHA-256 so what a model was shown can be shown again. " +
+      "Use it to prepare a region — a title block, a label, a table — for document.ocr_regions or " +
+      "for a question in media.extract_findings. " +
+      "Do not use it expecting text back: a crop is pixels. " +
+      "Effects: none outside ARJUN's own store; the original document is never modified. " +
+      "Limits: at most 6 regions per call; 72-400 dpi for a PDF, stored pixels for an image. " +
+      "If it says a region lies outside the page, take the box from document.layout_map.",
+    parameters: closed({
+      documentSha256: Type.String({ description: "The <attachment> id.", minLength: 1 }),
+      page: Type.Integer({ minimum: 1 }),
+      regions: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), { description: 'rg- ids or boxes "x0,y0,x1,y1". At most 6.' }),
+      ),
+      dpi: Type.Optional(Type.Integer({ minimum: 72, maximum: 400 })),
+    }),
+  },
+  {
+    name: "document.ocr_regions",
+    label: "Read scanned pages with local OCR",
+    readOnly: true,
+    description:
+      "Reads scanned pages or regions of an attached document with the local Unlimited-OCR model " +
+      "on this machine, and returns each region it transcribed with an rg- id, a box on the page, " +
+      "and its status: read, unreadable, truncated, looped (cut at a repetition) or malformed. " +
+      "Use it for a page document.layout_map reports as a scan, or for a region — a label on a " +
+      "drawing, a stamp, a handwritten note — whose text you need. " +
+      "Do not use it on a page whose text layer is adequate: that page is refused, because the " +
+      "file's own text is the better reading. It transcribes; it does not interpret. " +
+      "Effects: none outside ARJUN's own store; the model runs on loopback and nothing leaves the " +
+      "machine. Reads are cached by document, crop, model and settings. " +
+      "Limits: at most 4 pages or regions per call; a page is slow on a small GPU, and a unit " +
+      "that cannot finish inside the call is listed as not read. " +
+      "If it reports a region unreadable or a page not read, say so; never fill in what it might say.",
+    parameters: closed({
+      documentSha256: Type.String({ description: "The <attachment> id.", minLength: 1 }),
+      pages: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }), { description: "Whole pages." })),
+      page: Type.Optional(Type.Integer({ minimum: 1, description: "The page boxes are on." })),
+      regions: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), { description: 'rg- ids or boxes "x0,y0,x1,y1". At most 4 in all.' }),
+      ),
+    }),
+  },
+  {
+    name: "document.extract_tables",
+    label: "Read the tables in a document",
+    readOnly: true,
+    description:
+      "Returns the tables on pages of an attached document, cell by cell, from the text layer " +
+      "(each cell with its own box) or from OCR already run (located by the table's box). " +
+      "Use it when you need rows and columns rather than running text: a measurement register, " +
+      "a line list, a bill of materials. " +
+      "Do not use it to OCR a scan: run document.ocr_regions on the page first, and scanned pages " +
+      "not yet read are listed as unknown. " +
+      "Effects: none outside ARJUN's own store. " +
+      "Limits: at most 10 pages per call; 40 rows shown per table. " +
+      "If it finds no tables on a scanned page, the page may not have been read yet — check the " +
+      "list of unread pages before saying there is no table.",
+    parameters: closed({
+      documentSha256: Type.String({ description: "The <attachment> id.", minLength: 1 }),
+      fromPage: Type.Integer({ minimum: 1, description: "First page." }),
+      toPage: Type.Optional(Type.Integer({ minimum: 1, description: "Last page; at most 10." })),
+    }),
+  },
   {
     name: "artifact.manifest",
     label: "Read an artifact's manifest",

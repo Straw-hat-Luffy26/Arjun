@@ -64,6 +64,11 @@ export const CANONICAL_TOOL_NAMES = [
   'agent.status',
   'agent.cancel',
   'task.request_review',
+  // P06's Document & Vision Analyst page tools.
+  'document.layout_map',
+  'document.render_regions',
+  'document.ocr_regions',
+  'document.extract_tables',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -122,7 +127,7 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'knowledge.search_authorized': 'Searching the documents',
   'knowledge.load_evidence_region': 'Reading more of a document',
   'knowledge.multimodal_retrieve': 'Reading a drawing or table',
-  'media.extract_findings': 'Reading a scanned page',
+  'media.extract_findings': 'Finding fields in a document, with their evidence',
   'memory.recall_authorized': 'Recalling what this machine knows',
   'memory.promote_approved': 'Recording an approved fact',
   'workspace.read_text': 'Reading a file',
@@ -155,6 +160,10 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'agent.status': 'Checking on a specialist job',
   'agent.cancel': 'Stopping a specialist job',
   'task.request_review': 'Requesting an independent review',
+  'document.layout_map': 'Mapping the layout of document pages',
+  'document.render_regions': 'Rendering regions of a page',
+  'document.ocr_regions': 'Reading scanned pages with local OCR',
+  'document.extract_tables': 'Reading the tables in a document',
 };
 
 /**

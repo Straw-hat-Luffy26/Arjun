@@ -901,6 +901,21 @@
       "owner": "governance",
       "consumer": "external",
       "note": "Confirms an approval decision through the zero-trust gate."
+    },
+    "document_analyst_status": {
+      "owner": "extraction",
+      "consumer": "frontend",
+      "note": "Called from src/. What reads pages on this machine (P06): the OCR model's exact files, the page analyser, and each projector-bearing model's vision readiness with the reason."
+    },
+    "registry_bind_projector": {
+      "owner": "extraction",
+      "consumer": "frontend",
+      "note": "Called from src/. Binds an image projector to a model by any filename after verifying both GGUF headers (P06); in force at the next start, and never by itself vision-ready."
+    },
+    "vision_probe_model": {
+      "owner": "extraction",
+      "consumer": "frontend",
+      "note": "Called from src/. Shows a model a random token in an image and records whether it read it (P06). Only a pass makes a model vision-ready."
     }
   }
 }

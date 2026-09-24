@@ -1,0 +1,16 @@
+# P06 mutation checks
+# Each mutation applied to the named file, the named test run, the file restored.
+
+## Run 1
+M1 coordinate mapping loses the crop offset | NOT CAUGHT (1 passed, 0 failed)
+M2 loop detection disabled | CAUGHT (0 passed, 1 failed)
+M3 proposals published with a receipt | CAUGHT (0 passed, 1 failed)
+M4 a typed page is sent to OCR | CAUGHT (0 passed, 1 failed)
+M5 an empty OCR region is dropped rather than reported unreadable | CAUGHT (0 passed, 1 failed)
+M6 the OCR cache never hits | CAUGHT (0 passed, 1 failed)
+M7 another conversation's document is readable | CAUGHT (0 passed, 1 failed)
+
+## Run 2 (after adding the region-crop end-to-end test and the worker detent wiring)
+M1 coordinate mapping loses the crop offset (region-crop e2e) | CAUGHT (0 passed, 1 failed)
+M1 coordinate mapping loses the crop offset (unit) | CAUGHT (0 passed, 1 failed)
+M8 the worker ignores the OCR model it holds | NOT CAUGHT (2 passed, 0 failed)

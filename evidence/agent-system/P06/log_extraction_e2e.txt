@@ -1,0 +1,637 @@
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Block`, `Document`, `Properties`, and `Section`
+    --> src/artifacts/content.rs:1249:39
+     |
+1249 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+     |                                       ^^^^^                            ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^
+
+warning: unused import: `crate::agent_runtime::audit_health::AuditHealth`
+    --> src/agent_runtime/tests.rs:1330:9
+     |
+1330 |     use crate::agent_runtime::audit_health::AuditHealth;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Modality`
+   --> src/registry/scan.rs:496:27
+    |
+496 |     use crate::registry::{Modality, ModelRole};
+    |                           ^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+    --> src/ai_engine/runtime.rs:1415:76
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                                                                            ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1868:9
+     |
+1868 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+    --> src/ai_engine/runtime.rs:1415:31
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                               ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:384:13
+    |
+384 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:396:13
+    |
+396 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:408:13
+    |
+408 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1252:8
+     |
+1252 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1771:9
+     |
+1769 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1770 |         _dir: tempfile::TempDir,
+1771 |         root: PathBuf,
+     |         ^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib test) generated 79 warnings (run `cargo fix --lib -p sarathi --tests` to apply 53 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.96s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+
+running 12 tests
+test agent_runtime::extraction_tests::a_document_from_another_owner_or_thread_is_not_there_and_changed_bytes_are_refused ... ok
+test agent_runtime::extraction_tests::a_long_repeated_output_is_cut_and_the_page_is_reported_incomplete ... ok
+test agent_runtime::extraction_tests::a_photo_is_transcribed_and_its_interpretation_is_a_labelled_proposal ... ok
+test agent_runtime::extraction_tests::a_pid_with_a_smudged_label_reports_it_unreadable_at_its_box ... --- pid.png: media.extract_findings with a question ---
+Findings for pages 1-1 of pid.png (1 page(s) in all). A value below is a checked observation: its text occurs in the cited region, which was transcribed by the method named. No confidence number is given because none was measured.
+
+No fields were asked for.
+
+Regions that could not be quoted:
+  rg-3e878d1ea86f3846 text [876.0, 166.0, 941.0, 194.0] [local OCR transcription] UNREADABLE: the model marked a text region here and transcribed nothing from it
+A label in an unreadable region is unknown. Say it could not be read; never supply a likely value.
+
+Scanned page(s) 1 were read by local OCR for this call (fixture-ocr Detailed).
+
+Coverage:
+  page 1: local OCR (local OCR transcription); 1 unreadable region(s)
+
+PROPOSAL — vision-model inference by fixture-vision (deterministic fixture transport (canned answer; no model)). Not a transcription and not verified against the page; present it as a possibility and do not merge it with the findings above:
+  rg-111932c05967aeae p.1 [0.0, 0.0, 1200.0, 600.0] (crop cr-aa43194ea6d0e628): text [196, 277, 251, 323]PT-101 text [463, 277, 517, 323]FV-102 text [729, 277, 783, 323]
+
+Regions read cleanly on these pages: 2 by local OCR transcription.
+
+ok
+test agent_runtime::extraction_tests::a_region_crop_is_read_and_its_boxes_land_on_the_page_not_on_the_crop ... ok
+test agent_runtime::extraction_tests::a_scan_is_read_by_local_ocr_with_boxes_mapped_back_onto_the_page_and_cached ... --- scan.pdf: media.extract_findings ---
+Findings for pages 1-2 of scan.pdf (2 page(s) in all). A value below is a checked observation: its text occurs in the cited region, which was transcribed by the method named. No confidence number is given because none was measured.
+
+Field "tag": FOUND
+  "PT-3301" — rg-ecb6538a9fba9613 p.1 [72.0, 106.9, 145.4, 123.8] pdf-points (local OCR transcription; read; matched as labelled-line)
+
+Field "design pressure": FOUND
+  "16 bar" — rg-23f378ec9390babd p.1 [72.0, 127.4, 200.1, 143.3] pdf-points (local OCR transcription; read; matched as labelled-line)
+
+Field "material": FOUND
+  "CS A106" — rg-635db081c7dea669 p.2 [72.0, 76.7, 169.2, 93.6] pdf-points (local OCR transcription; read; matched as labelled-line)
+
+Scanned page(s) 1, 2 were read by local OCR for this call (fixture-ocr Detailed).
+
+Coverage:
+  page 1: local OCR (local OCR transcription)
+  page 2: local OCR (local OCR transcription)
+
+Regions read cleanly on these pages: 4 by local OCR transcription.
+
+ok
+test agent_runtime::extraction_tests::a_skewed_page_is_measured_and_its_boxes_say_so ... ok
+test agent_runtime::extraction_tests::a_typed_pdf_is_read_from_its_text_layer_with_boxes_where_the_ink_is ... --- typed.pdf: document.layout_map ---
+typed.pdf (document d42e19feb254…), pages 1-2 of 2. Boxes are x0,y0,x1,y1 in pdf-points, origin top-left. Every region below is transcription evidence from the file's own text layer unless it says otherwise; cite it by its rg- id.
+
+Page 1 — 595.0 x 842.0 pdf-points, rotation 0, text layer 103 characters: the text layer is adequate; no OCR is needed.
+  rg-221676b34cc56d09 text [72.0, 60.6, 262.0, 85.4] [embedded text layer] "INSPECTION REPORT"
+  rg-bdde74d0cdd3e995 text [72.0, 107.1, 145.4, 123.6] [embedded text layer] "Tag: PT-2201"
+  rg-3b1586a96dfc339c text [72.0, 127.1, 200.1, 143.6] [embedded text layer] "Design pressure: 10 bar"
+  rg-ee780f316117ecd4 text [72.0, 147.1, 164.7, 163.6] [embedded text layer] "Inspector: A. Rao"
+  rg-93ba7876cf384c5e table [72.0, 200.0, 372.0, 266.0] [embedded table] table 3x3: Point | mm | Status A | 9.4 | ok C | 8.2 | below
+  rg-df34e71ea850d269 text [77.0, 204.2, 305.4, 218.0] [embedded text layer] "Point mm Status"
+  rg-2e2522e299769579 text [77.0, 226.2, 287.6, 240.0] [embedded text layer] "A 9.4 ok"
+  rg-fbdb7a33e2943f31 text [77.0, 248.2, 303.1, 262.0] [embedded text layer] "C 8.2 below"
+
+Page 2 — 595.0 x 842.0 pdf-points, rotation 0, text layer 30 characters: the text layer is adequate; no OCR is needed.
+  rg-83c415955b3cbc09 text [72.0, 77.1, 157.4, 93.6] [embedded text layer] "Material: SS316"
+  rg-551635a88addfc84 text [72.0, 97.1, 145.4, 113.6] [embedded text layer] "Line size: 4 in"
+
+Coverage:
+  page 1: text layer (embedded text layer, embedded table)
+  page 2: text layer (embedded text layer)
+
+ok
+test agent_runtime::extraction_tests::an_ocr_table_is_returned_cell_by_cell_and_two_readings_are_both_reported ... ok
+test agent_runtime::extraction_tests::extraction_from_a_parent_task_commits_observations_and_proposals_to_the_graph ... --- the task's shared memory after two extraction jobs (graph revision 2 -> 11) ---
+Goal Admitted - | Goal: Record the inspection data from the attached scan and drawing
+Plan Admitted - | Plan v5 — goal: Record the inspection data from the attached scan and drawing
+- scan delegate [document-extractor]: Extract the scan's fields — completed (attempts 1/2)
+    last receipt: job job-f5fa4
+ToolObservation Admitted page 1 region rg-436c379fd67b766a [72.0, 106.9, 145.4, 123.8] pdf-points | scan.pdf: tag = "PT-3301" (page 1 region rg-436c379fd67b766a [72.0, 106.9, 145.4, 123.8] pdf-points; local OCR transcription)
+ToolObservation Admitted page 1 region rg-6ad872a444850d88 [72.0, 127.4, 200.1, 143.3] pdf-points | scan.pdf: design pressure = "16 bar" (page 1 region rg-6ad872a444850d88 [72.0, 127.4, 200.1, 143.3] pdf-points; local OCR transcription)
+ToolObservation Admitted page 2 region rg-5e210b2213e616d4 [0.0, 0.0, 595.0, 842.0] pdf-points | scan.pdf: page region at page 2 region rg-5e210b2213e616d4 [0.0, 0.0, 595.0, 842.0] pdf-points is unreadable (local OCR transcription): the model read this image and returned no text for any part of i
+ToolObservation Admitted pages 1-2 | coverage — scan.pdf: pages 1-2 — p.1 local OCR, p.2 local OCR (1 unreadable region(s))
+ToolObservation Admitted page 1 region rg-a42adcf640727786 [876.0, 166.0, 941.0, 194.0] image-pixels | pid.png: text region at page 1 region rg-a42adcf640727786 [876.0, 166.0, 941.0, 194.0] image-pixels is unreadable (local OCR transcription): the model marked a text region here and transcribed nothing
+ToolObservation Admitted pages 1-1 | coverage — pid.png: pages 1-1 — p.1 local OCR (1 unreadable region(s))
+Fact Proposed page 1 region rg-f0586beda7f86bbc [0.0, 0.0, 1200.0, 600.0] image-pixels (crop cr-aa43194ea6d0e628) | PROPOSAL (vision-model inference by fixture-vision, not a transcription and not verified): pid.png page 1 region rg-f0586beda7f86bbc [0.0, 0.0, 1200.0, 600.0] image-pixels (crop cr-aa43194ea6d0e628): 
+ok
+test agent_runtime::extraction_tests::handwriting_is_located_in_image_pixels_and_a_scribble_is_unreadable_not_guessed ... ok
+test agent_runtime::extraction_tests::with_no_vision_ready_model_interpretation_is_refused_by_name_and_nothing_is_guessed ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2870 filtered out; finished in 11.68s
+

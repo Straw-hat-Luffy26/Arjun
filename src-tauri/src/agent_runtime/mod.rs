@@ -42,6 +42,7 @@ pub mod conversations;
 pub mod delegation;
 pub mod doc_pipeline;
 pub mod documents;
+pub mod extraction_tools;
 pub mod events;
 pub mod grants;
 pub mod memory;
@@ -290,6 +291,10 @@ pub struct RuntimeDeps {
     /// The jobs the orchestrator's `agent.delegate` has running, and the lock
     /// its plan writes take. See [`delegation`].
     pub jobs: Arc<delegation::JobBoard>,
+    /// The Document & Vision Analyst's page service (P06): layout, crops,
+    /// local OCR and interpretation over attached documents. See
+    /// [`crate::extraction`].
+    pub extraction: Arc<crate::extraction::service::ExtractionService>,
 }
 
 impl RuntimeDeps {
@@ -999,7 +1004,12 @@ fn tool_catalogue(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireE
             // Both handler-checked: a missing renderer is reported as an
             // unavailable rung, and a run with no conversation is told so.
             | Prerequisite::PageRenderer
-            | Prerequisite::ConversationArtifacts => true,
+            | Prerequisite::ConversationArtifacts
+            // Handler-checked: a document not attached here is refused in the
+            // same words as one that does not exist, and a missing OCR model
+            // is reported page by page.
+            | Prerequisite::AttachedDocument
+            | Prerequisite::LocalOcr => true,
         }
     };
 
@@ -2261,6 +2271,31 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         // memory is: the answer depends on who is asking and which conversation
         // they are in, and the runner is rebuilt per call holding neither.
         ToolName::ReadAttachedPages => read_attached_pages(deps, &call, &session, &tool_call),
+        // P06's page tools. The three that start PyMuPDF run on the blocking
+        // pool; OCR and findings are async and bounded by their own deadline.
+        ToolName::DocumentLayoutMap
+        | ToolName::DocumentRenderRegions
+        | ToolName::DocumentExtractTables => {
+            let (deps, call, session, tool_call) =
+                (deps.clone(), call.clone(), session.clone(), tool_call.clone());
+            tokio::task::spawn_blocking(move || match tool {
+                ToolName::DocumentLayoutMap => {
+                    extraction_tools::layout_map(&deps, &call, &session, &tool_call)
+                }
+                ToolName::DocumentRenderRegions => {
+                    extraction_tools::render_regions(&deps, &call, &session, &tool_call)
+                }
+                _ => extraction_tools::extract_tables(&deps, &call, &session, &tool_call),
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("the page analyser stopped unexpectedly: {error}")))
+        }
+        ToolName::DocumentOcrRegions => {
+            extraction_tools::ocr_regions(deps, &call, &session, &tool_call).await
+        }
+        ToolName::MediaExtractFindings => {
+            extraction_tools::extract_findings(deps, &call, &session, &tool_call).await
+        }
         ToolName::SearchAttachedDocuments => {
             search_attached_documents(deps, &call, &session, &tool_call)
         }
@@ -3272,7 +3307,11 @@ fn read_attached_pages(
         to_page,
     )?;
 
-    Ok(render_pages(&read))
+    // How each page was read and what the document's coverage is (P06): a
+    // page of OCR and a page of the file's own text are different evidence.
+    let mut out = render_pages(&read);
+    out.push_str(&extraction_tools::page_methods(deps, &read, &session.user.id, &conversation_id));
+    Ok(out)
 }
 
 /// Finds a passage in this conversation's documents by what it says.
@@ -3319,7 +3358,11 @@ fn search_attached_documents(
         &conversation_id,
         documents::MAX_SEARCH_HITS,
     )?;
-    Ok(render_search(&found))
+    let mut out = render_search(&found);
+    // Pages nothing transcribed cannot match, so a miss over them is not
+    // absence (P06).
+    out.push_str(&extraction_tools::search_coverage(deps, &session.user.id, &conversation_id));
+    Ok(out)
 }
 
 /// Reads a notebook graph and returns it drawn.
@@ -4749,6 +4792,8 @@ pub fn catalogue() -> Vec<&'static str> {
 mod artifact_carryover_tests;
 #[cfg(test)]
 mod artifact_tools_tests;
+#[cfg(test)]
+mod extraction_tests;
 
 #[cfg(test)]
 mod conversations_tests;

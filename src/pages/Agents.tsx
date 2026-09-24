@@ -32,6 +32,7 @@ import {
   type TransitionStatus,
 } from '../services/modelTransition.service';
 import styles from './Agents.module.css';
+import { DocumentAnalystPanel } from './DocumentAnalystPanel';
 
 /**
  * Agent administration.
@@ -528,6 +529,8 @@ export const Agents: React.FC = () => {
       )}
 
       <OrchestratorJobs jobs={jobs} />
+
+      <DocumentAnalystPanel />
 
       {draft && selected && (
         <section className={styles.editor} aria-label={`Editing ${draft.displayName}`}>

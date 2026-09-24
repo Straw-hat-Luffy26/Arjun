@@ -768,6 +768,9 @@ pub struct RuntimeState<'a> {
     pub conversation_artifacts: &'a ConversationArtifactsState,
 }
 
+/// The Document & Vision Analyst's page service, as Tauri manages it (P06).
+pub struct ExtractionState(pub Arc<crate::extraction::service::ExtractionService>);
+
 /// The conversation artifact store, as Tauri manages it.
 pub struct ConversationArtifactsState(
     pub Arc<crate::artifacts::conversation_store::ConversationArtifacts>,
@@ -867,6 +870,18 @@ fn runtime(
         // The managed board, so the commands that correct a run reach the same
         // jobs this runtime started. A fresh one only where nothing is managed
         // (a test app), which then has no command reaching it either.
+        // The managed service, so the runtime's page tools and the extractor
+        // worker share one region store, one OCR cache and one scheduler. A
+        // service with no models only where nothing is managed (a test app),
+        // which then says so on every model-backed call.
+        extraction: tauri::Manager::try_state::<ExtractionState>(app)
+            .map(|state| Arc::clone(&state.0))
+            .unwrap_or_else(|| {
+                Arc::new(crate::extraction::service::ExtractionService::without_models(
+                    &app_data_dir(app).unwrap_or_default().join("documents"),
+                    "this process has no OCR or vision service configured",
+                ))
+            }),
         jobs: tauri::Manager::try_state::<JobsState>(app)
             .map(|jobs| Arc::clone(&jobs.0))
             .unwrap_or_default(),

@@ -72,6 +72,10 @@ use super::packet::{ChildTaskPacket, InputRef};
 use super::result::{ChildResult, ChildStatus, EvidenceRef, Finding};
 use super::scheduling::ModelScheduler;
 
+#[path = "worker_analyst.rs"]
+mod analyst;
+pub use analyst::{requested_fields, requested_question};
+
 /// How many passages a retrieval worker brings back.
 ///
 /// Six, matching what `LocalToolRunner` clamps a model's request to. A worker
@@ -108,6 +112,19 @@ pub struct WorkerServices {
     /// task, and a child that carried on because it had its own timer would be
     /// a child doing work nobody is waiting for.
     pub cancellations: Arc<crate::agent_runtime::cancellation::RunCancellations>,
+    /// The Document & Vision Analyst's page service and the stores it
+    /// authorises against (P06). `None` where a deployment or test has none;
+    /// the extractor then reads workspace files only, and says a document it
+    /// was pointed at could not be reached.
+    pub analyst: Option<AnalystServices>,
+}
+
+/// What the document extractor reads an attached document through.
+#[derive(Clone)]
+pub struct AnalystServices {
+    pub extraction: Arc<crate::extraction::service::ExtractionService>,
+    pub documents: Arc<crate::agent_runtime::documents::DocumentStore>,
+    pub conversations: Arc<crate::agent_runtime::conversations::RunToConversation>,
 }
 
 impl WorkerServices {
@@ -382,6 +399,14 @@ impl ChildWorker for SpecialistWorker {
             .filter(|child_loop| child_loop.available() && packet.model_id.is_some());
 
         let outcome = match runnable_loop {
+            // An attached document goes through the analyst's structured pass
+            // whether or not a model loop is available: layout, local OCR and
+            // field matching are deterministic, and what they establish is
+            // published as observations with the region they came from. A
+            // model loop here would publish its tool calls' prose instead.
+            _ if self.reads_attached_documents(packet) => {
+                self.extract_documents(packet, policy, &session, &cancel, lease.as_ref()).await
+            }
             Some(child_loop) => self.via_model(child_loop, packet, policy, &cancel).await,
             // No runtime, or no model. A role that cannot be done without one
             // says so rather than doing a fraction of it.

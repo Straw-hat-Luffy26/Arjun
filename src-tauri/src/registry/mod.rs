@@ -529,7 +529,19 @@ impl ModelRegistry {
         let discovered = discovery::discover(app_data_dir);
 
         let count = discovered.len();
-        let merged = discovery::merge(declared.entries, discovered);
+        let mut merged = discovery::merge(declared.entries, discovered);
+
+        // Explicit projector bindings, re-verified from both headers, and then
+        // vision readiness from a recorded image probe that still matches the
+        // files on disk (plan P06). A binding sets the file `--mmproj` is
+        // given; only a passing probe adds the vision role. See
+        // `crate::extraction::projector` and `crate::extraction::vision`.
+        for line in crate::extraction::projector::apply(&models_dir, &mut merged) {
+            log::info!("[REGISTRY] {line}");
+        }
+        for line in crate::extraction::vision::apply(&models_dir, &mut merged) {
+            log::info!("[REGISTRY] {line}");
+        }
         if count > 0 {
             log::info!(
                 "[REGISTRY] {count} model(s) found on disk; they are listed but cleared for no                  classification until an administrator reviews them"

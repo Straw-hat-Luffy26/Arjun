@@ -21,4 +21,5 @@ pub mod notebook_research;
 pub mod registry;
 pub mod voice;
 pub mod ocr;
+pub mod extraction;
 pub mod widget;

@@ -5,7 +5,8 @@ Delivered by plan prompt **P01**. The machine-readable authority is
 generated from [`src-tauri/src/orchestrator/contract.rs`](../../src-tauri/src/orchestrator/contract.rs)
 and held byte-equal to it by `orchestrator::contract::tests::the_published_contract_is_current`.
 This page is the human reading of that file at the P01 working tree, extended by
-P04 (ten artifact tools, §2 and §8) and P05 (five orchestrator tools, §2, §6 and §9);
+P04 (ten artifact tools, §2 and §8), P05 (five orchestrator tools, §2, §6 and §9)
+and P06 (four page tools and the completed document tools, §2 and §10);
 where the two disagree, the JSON is right and
 this page is stale.
 
@@ -76,13 +77,17 @@ the same, with the pending intent promoted to `unknown` rather than retried;
 | `artifact.verify_docx` (a reopen check, not acceptance — P04) | validate_artifact | path | — | read / read-only | automatic | A → `validate` | workspace@gw | text | wait | 60 |
 | `calculation.evaluate_with_units` | run_calculation | expression | — | read / reversible | automatic | R → `calculate`, then the run's calculation table | — | calculation | wait | 5 |
 | `capability.search` | — | query | — | read / read-only | automatic | A → `capability_search` | — | text | wait | 5 |
-| `document.read_pages` | — | documentSha256, fromPage | toPage | read / read-only | automatic | A → `read_attached_pages` | — | text | wait | 10 |
-| `document.search` | — | query | — | read / read-only | automatic | A → `search_attached_documents` | — | text | wait | 10 |
+| `document.extract_tables` | — | documentSha256, fromPage | toPage | read / read-only | automatic | A → `extraction_tools::extract_tables` | attached document@h, page renderer@h | text | wait | 60 |
+| `document.layout_map` | — | documentSha256, fromPage | toPage | read / read-only | automatic | A → `extraction_tools::layout_map` | attached document@h, page renderer@h | text | wait | 60 |
+| `document.ocr_regions` | — | documentSha256 | pages[], page, regions[] | read / read-only | automatic | A → `extraction_tools::ocr_regions` → `extraction::ocr::read_batch` | attached document@h, page renderer@h, local OCR@h | text | deadline | 120 |
+| `document.read_pages` | — | documentSha256, fromPage | toPage | read / read-only | automatic | A → `read_attached_pages` (+ P06: how each page was read, coverage) | — | text | wait | 10 |
+| `document.render_regions` | — | documentSha256, page | regions[], dpi | read / read-only | automatic | A → `extraction_tools::render_regions` | attached document@h, page renderer@h | text | wait | 60 |
+| `document.search` | — | query | — | read / read-only | automatic | A → `search_attached_documents` (+ P06: pages no search can reach) | — | text | wait | 10 |
 | `knowledge.build_graph` | — | — | notebook, documentSha256, focus | read / read-only | automatic | A → `build_document_graph` | — | text | wait | 15 |
 | `knowledge.load_evidence_region` | load_more_evidence | documentSha256, fromPage | toPage | read / read-only | automatic | A → `region_hits` + `retrieval::record_region` | — | evidence | wait | 30 |
 | `knowledge.multimodal_retrieve` | — | query | documentType, documentSha256, maxResults | read / read-only | automatic | R → `multimodal_retrieve` | multimodal index@h | evidence | wait | 45 |
 | `knowledge.search_authorized` | search_documents | query | detail, maxResults | read / read-only | automatic | A → `search_hits` + `retrieval::record` | — | evidence | wait | 30 |
-| `media.extract_findings` | — | documentSha256, fromPage | toPage | read / read-only | automatic | R → `extract_findings` | — | evidence | wait | 90 |
+| `media.extract_findings` | — | documentSha256, fromPage | toPage, fields[], question, regionIds[] | read / read-only | automatic | A → `extraction_tools::extract_findings` (a knowledge-base document: R → `extract_findings`) | page renderer@h, local OCR@h | evidence | deadline | 120 |
 | `memory.promote_approved` | memory_promote_approved | key, approvalId | — | write / reversible | pre-approved value | A → `memory_api::promote_approved` | — | text | wait | 10 |
 | `memory.recall_authorized` | memory_recall_authorized | scope | — | read / read-only | automatic | A → `memory_api::recall_authorized` | — | text | wait | 10 |
 | `notebook.add_source` | — | document | notebook | write / reversible | automatic | A → `notebook_add_source` | — | text | wait | 10 |
@@ -100,8 +105,8 @@ the same, with the pending intent promoted to `unknown` rather than retried;
 | `workspace.read_text` | read_scoped_file | path | fromLine, maxLines | read / read-only | automatic | R → `read` | workspace@gw | text | wait | 15 |
 | `workspace.write_text` | write_scoped_file | path, content | — | write / side-effecting | person | R → `write` | workspace@gw | artifact | wait+intent | 30 |
 
-Every tool has `network: none` except `media.extract_findings` (`loopback`);
-none is `outbound`. Permissions and response ceilings are in the JSON.
+Every tool has `network: none` except `media.extract_findings` and `document.ocr_regions`
+(`loopback`); none is `outbound`. Permissions and response ceilings are in the JSON.
 
 ---
 
@@ -246,3 +251,24 @@ tools, so there is no nested orchestrator and no child that can delegate.
 | Completion | `completion::verify` | With a plan: `taskplan.steps_accepted` (every step complete by receipt or skipped with a reason), `taskplan.no_job_running`, `taskplan.independent_review` (a step asking for review or an accepted artifact has a passed review receipt). Without a plan (simple work): not applicable. |
 | Review | `delegation::request_review` | Backend first (P04 ladder for every artifact, currency for every published item), then an independent reviewer role that did not produce the work, bounded at 40 s. |
 | Lease | `delegation::lease_decision` | Recorded per job. **P03's parent-lease suspension is not built**: a child on another model is serialised by `subagents::scheduling` and the coordinator's model is not suspended; the record says so. |
+
+---
+
+## 10. The analyst contract (P06)
+
+The Document & Vision Analyst is the bundled `document-extractor` agent, same
+name and id, version 1.1.0 (`agents/document-extractor.md`). Its tools read only
+documents the signed-in person attached to the run's conversation.
+
+| Concept | Where | Contract |
+|---|---|---|
+| Input | `extraction::service::ExtractionService::authorise` | A document id is the SHA-256 of its bytes, and so also its version. Visible only if `DocumentStore::get(sha, owner, conversation)` says so (the same sentence for "not yours" and "does not exist"); the stored bytes must still hash to the id. Pages ≤ 10 per call, crops ≤ 6, OCR units ≤ 4, fields ≤ 12, interpretations ≤ 2 — refused over the bound, never trimmed. |
+| Evidence region | `extraction::regions::EvidenceRegion` | `rg-` id derived from document, page, method, label, box and the settings it was read under. Box in the page's own space, named beside it: `pdf-points` or `image-pixels`. Method: `embedded-text`, `embedded-table`, `ocr`, `vision-inference`. Status: `read`, `unreadable`, `truncated`, `looped`, `malformed`. Cells (with boxes for embedded tables only), notes, crop id and image hash, extractor identity, OCR cache key. |
+| Route | `ExtractionService::ocr`, `PageRecord::text_layer_adequate` | The text layer first. A page is a scan when its text layer is under 32 characters and it has no text or an image covers half of it. A whole page with an adequate text layer is not sent to OCR; an explicit crop always is. |
+| OCR | `extraction::ocr` | Local Unlimited-OCR through `stream_ocr` unchanged, on loopback, the card reserved through the shared `ModelScheduler`. Checks: repetition (line guard, then a period check for a phrase repeated along one line), decode cap, text with no box, boxes off the 0–999 grid, empty regions, stop and deadline, and a batch check for missing / duplicated / out-of-order pages. A read cut by a stop or the deadline keeps nothing and is not cached. |
+| Cache | `extraction::ocr::OcrCache` | Keyed by document, page, crop box, resolution, crop image hash, weights hash, projector file and size, detent, the request as sent, the parser version and the coordinate convention. Stores the stream's events; regions are re-derived through the same checks. |
+| Fields | `extraction::fields` | Deterministic: a header cell's column, a key/value row, `Field: value` or `Field value` at a line start, in transcribed regions only. `found`, `conflicting` (all values, none chosen), `uncertain` (only in a cut read), `not-found` (with the pages not read). No confidence number anywhere. |
+| Projector | `extraction::projector` | Bound by any filename after both headers verify: `clip` architecture, `clip.has_vision_encoder`, `clip.vision.projection_dim` equal to the model's embedding width. Recorded in `<models>/projector-bindings.json`, re-verified at load. Sets `--mmproj`; grants no role. |
+| Vision-ready | `extraction::vision` | Only after an image probe on this machine read a fresh random token back; recorded in `<models>/vision-readiness.json` with the projector's measured SHA-256; void when the weights or projector on disk change. A ready model gains the vision role at load. |
+| Interpretation | `ExtractionService::interpret` | A vision-ready model, over a selected crop, at temperature 0. Stored as a `vision-inference` region and returned under "PROPOSAL"; never a source of a field value. |
+| Publication | `subagents::worker_analyst` | One `media.extract_findings` receipt per document pass. Clean values, fields not found and unreadable regions: tool observations on that receipt (admitted). Values only in a cut read: open questions, no receipt (proposed). Interpretations: facts headed PROPOSAL, no receipt (proposed). Each carries the document hash and `page N region rg-… [box] space`. |

@@ -35,7 +35,8 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P03 | Context compiler, GPU scheduling and continuation | Not started |
 | P04 | Shared artifact, evidence and validation tools | **Complete for portable code, the production path and a real render on a Linux machine**; the render/acceptance gate on the Windows target stays open until LibreOffice is provisioned there — see below |
 | P05 | Orchestrator and delegation tools | **Complete for portable code and the production path with a fixture coordinator**; the Spark-driven run and P03's parent-lease suspension are open gates — see below |
-| P06–P16 | — | Not started |
+| P06 | Document & Vision Analyst with Unlimited-OCR | **Complete for portable code and the production path with deterministic OCR transport**; every real-model read and the vision probe are the open target gate — see below |
+| P07–P16 | — | Not started |
 
 ---
 
@@ -937,3 +938,169 @@ everything; P04-OBS-1's remedy (P03 role-scoped loading) stands.
 handoff: the parent-lease suspension P05 records as open (`delegation::lease_decision`
 names the seam), role-scoped tool loading for P05-OBS-1, and context refresh
 for jobs that settle between rounds.
+---
+
+# P06 — The Document & Vision Analyst with Unlimited-OCR
+
+Worked on 2026-09-24 on branch `claude/hopeful-brahmagupta-1eol9d` from HEAD
+`55da242` (P05), in the same **Linux cloud container** — not the Windows host and
+not the target machine. No OCR or vision weights and no `llama-server` exist
+here; PyMuPDF 1.28.2 does. **P03 is not started**; the analyst reserves the card
+through the existing `subagents::scheduling::ModelScheduler`, which is the shared
+GPU service this build has. Raw output: `evidence/agent-system/P06/` (index in
+its `README.md`).
+
+## Found before, or while, building it
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | An attachment's pages were kept as text only: no coordinates, no method, no record of which regions could not be read, no cache. `media.extract_findings` read the knowledge-base shelf and never OCR; nothing could crop, lay out or read a table. | `agent_runtime/documents.rs`, `orchestrator/runner.rs` | `crate::extraction`: evidence regions with ids, boxes in a named space, method and status; four page tools; `extract_findings` over attached documents (the shelf path kept for knowledge-base ids). |
+| 2 | The OCR loop and decode-cap signals reached only UI events; a stored page could not say it was cut. | `commands/ocr.rs` | Every OCR region carries its status (`looped`, `truncated`, `malformed`, `unreadable`) and a note; a page's coverage says so. |
+| 3 | The repetition guard ignores any line longer than 96 characters, so a phrase repeated along one line runs to the decode cap unflagged. | `ai_engine/ocr_repetition.rs` | `extraction::ocr::periodic_tail` catches that shape after the line guard; a register whose rows differ is not flagged (tested). The shared guard is unchanged. |
+| 4 | Discovery pairs a projector only when its file is named `mmproj-*`, and grants the vision role on a projector or a name token — without anything having shown the model an image. | `registry/discovery.rs` | Explicit binding by any filename, verified from both GGUF headers; vision readiness only from a recorded image probe. Discovery's own inference is left as it was (see "Unverified"). |
+| 5 | `parse_gguf_metadata` refuses a `clip` GGUF (no `{arch}.block_count`), and the projector's own keys were never read. | `ai_engine/gguf_meta.rs` | `read_gguf_scalars`, a public header reader sharing the parser. |
+| 6 | A page with two typed lines (30 characters) read as a scan under a character threshold alone. Found by the typed-PDF fixture. | `extraction::service` | A page is a scan only when its text layer is thin **and** it has no text or an image covers half of it (`PageRecord::text_layer_adequate`, image coverage measured by the layout pass). |
+| 7 | An OCR read that returned nothing left no region, so the page read as never read. | `extraction::ocr` | Recorded as the crop being unreadable. |
+| 8 | After OCR, the layout's picture placeholder was still listed as unreadable — the answer said a page could not be read that just had been. Found reading the captured tool output. | `extraction::service` | `superseded_by_ocr`: a placeholder covered by a read OCR crop is not listed. |
+| 9 | A document-extractor child is routed to the coordinator's model unless the OCR model carries a certification pack (`certification::choose` → `CHEAPER_ELIGIBLE`); none ships. | `subagents/certification.rs` | Kept: OCR is a service call inside the worker (plan §5.2) that reserves its own card. If a certified OCR model is ever routed to, the worker reads at that model's detent rather than waiting on a card it holds (`detent_for_model`). |
+| 10 | `scheduler::queueing_tests::submissions_are_ordered_into_one_queue` fails intermittently under full-suite load: a live worker drains the queue while the test asserts monotonic positions. Not P06 code. | `ai_engine/scheduler.rs` | Recorded; queued as a separate task. Passes 5/5 alone. |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| **Evidence regions** | `rg-` ids derived from document, page, method, label, box and the settings read under; boxes in `pdf-points` or `image-pixels`, always named; method `embedded-text` / `embedded-table` / `ocr` / `vision-inference`; status; table cells (boxes for embedded tables only — OCR locates the table, not its cells); crop id and image hash; extractor identity; OCR cache key. One JSON store per document, written by rename. | `extraction/regions.rs` (new) |
+| **Page analyser** | PyMuPDF only, through the P04 page rasteriser (`render_pages.py`): `--layout` (blocks, embedded tables with cell boxes, image coverage), `--crop` (exactly the box, clamped, 72–400 dpi or stored pixels), `--skew` (projection profile; "unmeasured" when too few dark pixels), `--probe-image`. Bounded at 45 s a call. | `sidecars/document_sidecar/render_pages.py`, `extraction/sidecar.rs` (new) |
+| **Local OCR** | Unlimited-OCR through the unchanged `stream_ocr` on loopback, the card reserved through the shared `ModelScheduler`; ≤ 4 units a call, none started with under 8 s left, a unit cut by a stop or the deadline kept nowhere. Boxes mapped from the 0–999 grid through the crop onto the page. Checks: repetition (line guard, then period check), decode cap, text with no box, boxes off the grid, empty regions, missing / duplicated / out-of-order pages; skew measured and noted on each box of a skewed page. OCR `<table>` HTML parsed to cells. | `extraction/ocr.rs`, `extraction/tables.rs` (new) |
+| **Cache** | Keyed by document, page, crop box and resolution, crop image hash, weights hash, projector file and size, detent, request fingerprint (sampler and prompt), parser version and coordinate convention; stores the stream's events and re-derives regions through the same checks. | `extraction/ocr.rs` |
+| **Fields** | Deterministic matching in transcribed regions only (table column, key/value row, labelled line); `found` / `conflicting` / `uncertain` / `not-found`, each value with its region, page, box, method and status; never a confidence number. | `extraction/fields.rs` (new) |
+| **Projector binding** | Any filename; verified from both headers (`clip`, `has_vision_encoder`, `projection_dim` = embedding width); `projector-bindings.json`, re-verified (header and size) at registry load; sets `--mmproj`, grants nothing. | `extraction/projector.rs` (new), `registry/mod.rs` |
+| **Vision readiness** | A random-token probe image; ready only if the answer contains the token; recorded with the projector's measured SHA-256; void when files change; a ready model gains the vision role at load. Interpretation only from a ready model, as a `vision-inference` proposal region. | `extraction/vision.rs` (new) |
+| **Service** | Authorisation (owner + conversation through `DocumentStore::get`, bytes re-hashed to the id), bounded ranges, layout, crops, OCR, interpretation, tables, findings, coverage. | `extraction/service.rs` (new) |
+| **Tools** | New `document.layout_map`, `document.render_regions`, `document.ocr_regions`, `document.extract_tables`; completed `media.extract_findings` (fields, question, region ids; attached documents on the agent path, knowledge-base ids by the runner as before), `document.read_pages` (how each page was read; coverage) and `document.search` (pages no search can reach). Every P01 layer: enum, spec, contract (new prerequisites `AttachedDocument`, `LocalOcr`), class, runner refusal, plan, dispatcher, TS catalogue / names / conformance / budget, UI labels; `tool-contract.json` regenerated. | `orchestrator/{tools,contract,runner}.rs`, `agent_runtime/{mod,extraction_tools,planning,tool_policy}.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| **The agent** | `document-extractor` 1.1.0: same name and id; the page tools granted; the analyst's rules in its instructions. Its worker runs the structured pass for attached documents (model loop or not), publishing clean values, fields not found, unreadable regions and coverage as tool observations on one `media.extract_findings` receipt; cut-read values as open questions; interpretations as proposals. Fields after `fields:`, a question after `question:` in the objective. | `agents/document-extractor.md`, `subagents/{worker,worker_analyst}.rs` |
+| **Admin** | `document_analyst_status`, `registry_bind_projector`, `vision_probe_model` (import permission, audited); the Agents page's "What reads pages on this machine" panel; one shared `ModelScheduler` managed for workers, OCR and the probe. | `commands/extraction.rs`, `lib.rs`, `ipc-manifest.json`, `src/services/documentAnalyst.service.ts`, `src/pages/{DocumentAnalystPanel.tsx,Agents.tsx,Agents.module.css}` |
+
+## Contract decisions
+
+1. **Transcription and inference never share a label.** A value is reported
+   only from a transcribed region; a vision model's answer is a proposal region,
+   headed PROPOSAL, published without a receipt.
+2. **The text layer first.** A whole page with an adequate text layer is not
+   sent to OCR; an explicit crop always is.
+3. **Unreadable is a finding.** An empty OCR region, a read that returned
+   nothing and a smudged label are each reported with their box; a label is
+   never supplied.
+4. **No confidence numbers.** Checks are reported as themselves. The child
+   result's required `confidence` field carries the measured page-coverage
+   fraction, and says so.
+5. **Bounds refuse, never trim.** 10 pages, 6 crops, 4 OCR units, 12 fields,
+   2 interpretations.
+6. **A cached read is re-checked.** The cache stores events; regions are
+   derived again through the same checks.
+7. **Binding is not seeing.** A verified projector sets `--mmproj`; only a
+   passing image probe makes a model vision-ready.
+8. **OCR is a service, not an agent** (plan §5.2): the extractor child runs on
+   the model routing gives it; OCR reserves its own card through the shared
+   scheduler, and never through a hosted service — the endpoint is checked to be
+   loopback before any image is sent.
+9. **Order under pressure.** The page tools are listed after every producer and
+   reader and before the P04 artifact family (which stays last, as P04
+   decided).
+
+## Tests
+
+| What the prompt names | Test (`agent_runtime::extraction_tests` unless noted) |
+|---|---|
+| typed PDF | `a_typed_pdf_is_read_from_its_text_layer_with_boxes_where_the_ink_is` — layout regions cover the measured ink; the embedded table cell by cell with cell boxes; fields found with method `embedded text layer`; a field absent is `NOT FOUND`; OCR refused for the page and never called; `document.read_pages` names the method and coverage |
+| scan | `a_scan_is_read_by_local_ocr_with_boxes_mapped_back_onto_the_page_and_cached` — two pages OCR-read; every box within 1 pt of the ink; one request per page; the second call from the cache with no request |
+| page/crop citation | `a_region_crop_is_read_and_its_boxes_land_on_the_page_not_on_the_crop` — a crop away from the origin; the region within 1 pt of the ink and the crop exactly the box asked |
+| skewed page | `a_skewed_page_is_measured_and_its_boxes_say_so` — drawn at 4°, measured within 1° (4.25°); noted on every region |
+| handwriting | `handwriting_is_located_in_image_pixels_and_a_scribble_is_unreadable_not_guessed` — values in image pixels within 2 px; the scribble unreadable at its box, empty |
+| long repeated output | `a_long_repeated_output_is_cut_and_the_page_is_reported_incomplete` (the observed caption loop through the socket); `extraction::ocr::tests::a_long_repeated_output_of_region_lines_…`, `…a_phrase_repeated_along_one_line_…`, `…a_register_whose_rows_differ_is_not_a_loop` |
+| table | `an_ocr_table_is_returned_cell_by_cell_and_two_readings_are_both_reported` — unread scan not reported as table-less; cells after OCR; two readings `CONFLICTING`, both reported |
+| photo | `a_photo_is_transcribed_and_its_interpretation_is_a_labelled_proposal`; `with_no_vision_ready_model_interpretation_is_refused_by_name_and_nothing_is_guessed` |
+| P&ID with an unreadable label | `a_pid_with_a_smudged_label_reports_it_unreadable_at_its_box` — within 2 px of the smudge; no transcription contains the smudged tag |
+| authorisation, version, bounds | `a_document_from_another_owner_or_thread_is_not_there_and_changed_bytes_are_refused` |
+| **a real parent task, committed graph changes** | `extraction_from_a_parent_task_commits_observations_and_proposals_to_the_graph` — `task.plan_update` → two `agent.delegate` jobs → the production document-extractor; graph revision 2 → 11; the tag admitted as a tool observation citing `page 1 region rg-… [box] pdf-points`, the region within 1 pt of the ink; page 2's empty read in the coverage item; the P&ID's smudged tag admitted as unreadable; the interpretation `Proposed`, not admitted |
+| identity and saved settings | `agents::store::tests::the_document_extractor_upgrade_keeps_its_identity_and_its_settings` — the shipped 1.0.0 profile, configured, then 1.1.0: same id, version + 1, name, colour, sharing choice and model binding kept, page tools granted |
+| projector and readiness | `extraction::projector::tests::*` (any filename binds when headers match; width mismatch refused with both numbers; text model or audio projector refused; a swapped file not applied), `extraction::vision::tests::*` (a projector alone is not ready; only a passing probe on current files grants vision; the token check) |
+| sidecar | `sidecars/document_sidecar/tests/test_render_pages.py::AnalysisModeTests` (7) |
+| target machine | `tests/extraction_live.rs` — three `#[ignore]`d gates; **not run here** |
+
+**Seen failing** (`log_mutation.txt`): coordinate mapping without the crop
+offset (caught by the region-crop test and a unit test — the whole-page e2e
+test could not see it, which is why the region-crop test exists), loop
+detection off, a proposal given a receipt, a typed page sent to OCR, an empty
+region dropped, the cache never hitting, another conversation's document
+readable — each caught. The worker's use of `detent_for_model` is caught only
+by the helper's unit test: the path runs only when routing picks a certified OCR
+model, which nothing in this build provides.
+
+## Measured
+
+**P06-OBS-1 — the catalogue at 52 tools.** 4,990 estimated tokens at
+`minimal` (5,619 at `schemaOnly`): 95.96 per tool against the 96 Rust reserves
+(`TOOL_FLOOR_TOKENS_PER_TOOL`). The page tools' schemas were trimmed to get
+under it (`regionIds` folded into `regions`, `dpi` dropped from OCR, list bounds
+enforced in Rust). At 8k with everything permitted the fitter drops the ten
+artifact tools and the four page tools and keeps every orchestrator tool,
+producer and reader. The grammar preamble for all 52 tools is 1,229 bytes; its
+test bound moved from 1,200 to 1,300 with the measurement recorded. Role-scoped
+loading (P03) remains the remedy.
+
+**Skew:** the fixture page drawn at 4.0° measures 4.25° (projection profile,
+quarter-degree steps).
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2877 passed, 2 failed**, 3 ignored — the two Windows-path tests that fail at `20061fc`. An earlier run under the same load also failed `ai_engine::scheduler::queueing_tests::submissions_are_ordered_into_one_queue` (finding 10: a race in the test, not P06 code; 5/5 alone). `log_lib_full.txt` |
+| focused suites (`log_focused_rust.txt`) | extraction 49, agents::store 20, subagents 105, orchestrator contract 5 / tools 28 / grammar 16, the catalogue test, gguf_meta 34, registry 109, delegation 15, planning 25, tool_policy 6 |
+| `npm run test:integration` | **65 passed**, 2 ignored (as at P05) |
+| `tests/extraction_live.rs` | 3 ignored — the target gates; **not coverage** |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; 131 files, **2368** tests |
+| `npx tsc --noEmit`, `npm run test:ui`, `npm run build` | pass; 43 files, 618 tests |
+| `runtime:build`, `check:bundle`, `check:bundle:self`, `check:offline` | pass |
+| `check:ipc`, `check:reachable`, `check:egress`, `check:no-lora`, `check:deployment`, `check:targets`, `check:whitespace` | pass — **180** commands (+3), 198 modules |
+| sidecar | `test_render_pages` 11/11; 13 errors elsewhere in the folder, all `pypdf` not installed in this container. `test_pid_engine`'s setup opens three **tracked** fixture PDFs for writing before building them, so the failure left them empty; they were restored from git before committing, and the hazard is queued separately |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (P04's CRLF fixture hashes), 31 blocked; `scan-01`–`03` and `fail-03` now blocked on the P06 target gate by name |
+| Agents page | panel rendered in Chromium with a stubbed `invoke` (`agents-page-analyst-panel.png`). gstack (`/design-review`, `/qa`) is not installed here and was not installed. |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **Unlimited-OCR reading real pages** | Not run: no weights, projector or `llama-server` here. Every OCR answer in the tests is canned; nothing here says how well the installed model reads, or whether the third-party architecture rewrite behaves on long documents — a successful load proves only a load. | On the target: `set ARJUN_APP_DATA=…\com.arjun.workbench`, then `cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1` (field extraction and citation location scored separately; the pack's three scans; evidence JSON into `evidence/agent-system/P06/`) |
+| **Gemma 4 E4B / Qwen3.5 9B vision** | Both are text-only rows on the target (P00): no projector, so no interpretation model exists there, and the analyst says so rather than guessing. | Bind a verified projector (`registry_bind_projector`, Agents page), restart, then probe (`vision_probe_model` or the live gate's probe test) |
+| Upstream reference comparison | The pinned upstream Unlimited-OCR implementation was not run here (no weights, no network by policy). | Target, with a reviewed offline copy |
+| `--image-max-tokens` | Still not passed to `llama-server` (P00 finding); the detents differ on the device only by decode cap. Carried in the OCR identity's request fingerprint, not fixed here. | P03 (serving) |
+| Discovery's inferred vision role | `infer_roles` still grants the vision role from a projector or a name token. Interpretation ignores it (it needs a probe record); the router may not. | P14 (model administration) |
+| Scan pages rendered at attach time | `commands/ocr.rs` still reads chat attachments the pre-P06 way (whole pages, text only); the analyst's regions are built on demand from the stored original. The two agree on page text; only the analyst keeps boxes. | Later cutover |
+| Parent-lease suspension | P03 not built; OCR and the coordinator's model are serialised by the scheduler and admission, not by a suspended lease. | P03 |
+| Windows target, installed app | Not run there; not rebuilt or redeployed. | P16 |
+
+## P06 close-out
+
+- **Implemented** — evidence regions and their store; layout, crops, skew and
+  tables from PyMuPDF; local Unlimited-OCR over bounded crops with loop,
+  truncation, malformed-span, empty-region and batch checks and a cache keyed by
+  source, crop, settings and OCR version; deterministic field matching; verified
+  projector binding by any filename; vision readiness only from an image probe;
+  proposals kept apart from transcriptions; the extractor's structured pass and
+  its P02 publication.
+- **Wired** — four new tools and three completed ones through every P01 layer;
+  the extractor 1.1.0 with its identity and settings kept; three admin commands
+  and the Agents page panel; the registry applying bindings and readiness at
+  load; one shared scheduler.
+- **Tested** — the eight document kinds the prompt names, citation correctness
+  against measured ink, coverage and honest uncertainty, a real parent task with
+  committed graph changes, the identity migration; mutation-checked.
+- **Unverified or blocked** — every real-model read and probe (the target gate).
+- **Remaining** — nothing else in P06's portable scope.
+
+**Exact next step:** run the P06 target gate on the target machine
+(`tests/extraction_live.rs`, command above) and record the scores; then P03 —
+context assembly, model scheduling and durable handoff (role-scoped tool loading
+for P06-OBS-1, `--image-max-tokens`, parent-lease suspension).

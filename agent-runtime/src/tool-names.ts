@@ -94,6 +94,11 @@ export const CANONICAL_TOOL_NAMES = [
   "agent.status",
   "agent.cancel",
   "task.request_review",
+  // P06's Document & Vision Analyst page tools.
+  "document.layout_map",
+  "document.render_regions",
+  "document.ocr_regions",
+  "document.extract_tables",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];

@@ -196,7 +196,14 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::ArtifactDiff
         | ToolName::ArtifactResolveEvidence
         // Reads the run's job table.
-        | ToolName::AgentStatus => ToolClass::ReadOnly,
+        | ToolName::AgentStatus
+        // P06's page tools read an attached document. What they keep --
+        // regions, crops, OCR reads -- is derived from immutable bytes, stored
+        // by content address in ARJUN's own store, and reaches nothing.
+        | ToolName::DocumentLayoutMap
+        | ToolName::DocumentRenderRegions
+        | ToolName::DocumentOcrRegions
+        | ToolName::DocumentExtractTables => ToolClass::ReadOnly,
         // Reversible: a notebook created by mistake can be deleted, a
         // rename can be renamed back, and a source taken out can be put
         // back - the document itself is never touched by any of them.

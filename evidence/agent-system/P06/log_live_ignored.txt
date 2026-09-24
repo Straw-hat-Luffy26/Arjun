@@ -1,0 +1,5 @@
+     Running tests/extraction_live.rs (target/debug/deps/extraction_live-f9ca3b506c7dd7c0)
+test every_model_with_a_projector_is_probed_with_an_image_on_this_machine ... ignored, target-machine gate: probes every model with an image projector on this machine
+test local_unlimited_ocr_reads_the_baseline_pack_scans_on_this_machine ... ignored, target-machine gate: needs the installed Unlimited-OCR weights, projector and llama-server
+test local_unlimited_ocr_reads_the_labelled_pages_on_this_machine ... ignored, target-machine gate: needs the installed Unlimited-OCR weights, projector and llama-server
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s

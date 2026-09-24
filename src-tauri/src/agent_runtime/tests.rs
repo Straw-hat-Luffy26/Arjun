@@ -131,6 +131,10 @@ pub(super) fn deps_with(
             crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
         ),
         jobs: Arc::default(),
+        extraction: Arc::new(crate::extraction::service::ExtractionService::without_models(
+            &dir.path().join("documents"),
+            "no OCR or vision model in this test",
+        )),
     });
     (deps, dir)
 }
@@ -794,7 +798,11 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "artifact.verify_docx",
             "calculation.evaluate_with_units",
             "capability.search",
+            "document.extract_tables",
+            "document.layout_map",
+            "document.ocr_regions",
             "document.read_pages",
+            "document.render_regions",
             "document.search",
             "knowledge.build_graph",
             "knowledge.load_evidence_region",

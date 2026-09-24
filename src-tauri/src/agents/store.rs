@@ -963,6 +963,80 @@ mod tests {
         );
     }
 
+    /// P06 extends the shipped document extractor into the Document & Vision
+    /// Analyst. The upgrade is the real one: the 1.0.0 profile as it shipped
+    /// (kept verbatim under `testdata/`), configured by a deployment, then the
+    /// 1.1.0 profile in `agents/`. Same agent, next version, the deployment's
+    /// settings kept, the new tools granted.
+    #[test]
+    fn the_document_extractor_upgrade_keeps_its_identity_and_its_settings() {
+        use crate::orchestrator::tools::ToolName;
+        let sha = |text: &str| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes()));
+        let old_text = include_str!("testdata/document-extractor-1.0.0.md");
+        let new_text = include_str!("../../../agents/document-extractor.md");
+        let old = crate::subagents::profile::compile(old_text, "document-extractor", &sha(old_text))
+            .expect("1.0.0 compiles");
+        let new = crate::subagents::profile::compile(new_text, "document-extractor", &sha(new_text))
+            .expect("1.1.0 compiles");
+        assert_eq!(old.name, new.name, "the upgrade renamed the agent");
+
+        let (registry, _dir) = registry();
+        let imported = registry.import_bundled(&old).expect("imports 1.0.0");
+        let mut configured = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+        configured.display_name = "Drawing reader".into();
+        configured.color = AGENT_PALETTE[3].into();
+        configured.memory.shared_with_task = false;
+        registry
+            .update(&admin(), &imported.agent_id, imported.definition_version, configured)
+            .expect("configured");
+        let version = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads")
+            .definition_version;
+        registry
+            .rebind_model(
+                &admin(),
+                &imported.agent_id,
+                version,
+                ModelBinding {
+                    default_model_id: Some("unlimited-ocr-q6-k".into()),
+                    fallback_model_ids: vec!["unlimited-ocr-q4-k-m".into()],
+                    ..ModelBinding::default()
+                },
+                "tr-p06",
+            )
+            .expect("bound");
+        let before = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+
+        let upgraded = registry.import_bundled(&new).expect("imports 1.1.0");
+        assert_eq!(upgraded.agent_id, imported.agent_id, "a second agent was created");
+        assert_eq!(upgraded.definition_version, before.definition_version + 1);
+        let after = registry
+            .get(&upgraded.agent_id, Visibility::Administrator)
+            .expect("reads");
+        assert_eq!(after.display_name, "Drawing reader");
+        assert_eq!(after.color, AGENT_PALETTE[3]);
+        assert!(!after.memory.shared_with_task, "a deployment's sharing choice was reset");
+        assert_eq!(after.models.default_model_id.as_deref(), Some("unlimited-ocr-q6-k"));
+        assert_eq!(after.models.fallback_model_ids, vec!["unlimited-ocr-q4-k-m".to_string()]);
+        for tool in [
+            ToolName::MediaExtractFindings,
+            ToolName::DocumentLayoutMap,
+            ToolName::DocumentOcrRegions,
+            ToolName::DocumentExtractTables,
+            ToolName::DocumentRenderRegions,
+            ToolName::ReadAttachedPages,
+        ] {
+            assert!(after.allowed_tools.contains(&tool), "{} was not granted", tool.as_str());
+        }
+        assert!(after.denied_tools.contains(&ToolName::WriteScopedFile), "the writer denial was lost");
+        assert!(after.instructions.contains("Document & Vision Analyst"));
+    }
+
     #[test]
     fn a_registry_survives_a_restart() {
         let dir = tempfile::tempdir().expect("temp dir");

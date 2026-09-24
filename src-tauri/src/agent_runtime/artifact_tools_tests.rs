@@ -72,6 +72,7 @@ fn rebuilt(
         run_to_conversation: base.run_to_conversation.clone(),
         notebooks: base.notebooks.clone(),
         jobs: Arc::default(),
+        extraction: base.extraction.clone(),
     })
 }
 

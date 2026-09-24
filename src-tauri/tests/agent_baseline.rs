@@ -200,6 +200,10 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             sarathi_lib::knowledge::NotebookStore::open(dir.path()).expect("notebook store opens"),
         ),
         jobs: Arc::default(),
+        extraction: Arc::new(sarathi_lib::extraction::service::ExtractionService::without_models(
+            &dir.path().join("documents"),
+            "no OCR or vision model in this test",
+        )),
     };
 
     (Arc::new(deps), dir)
