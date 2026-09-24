@@ -484,21 +484,34 @@ pub fn write_workbook(
 
 /// Re-opens a produced workbook and reports what is in it.
 pub fn check_workbook(path: &Path) -> WorkbookCheck {
-    let sheet = match read_part(path, "xl/worksheets/sheet1.xml") {
+    check_workbook_with(&path.display().to_string(), |part| {
+        read_part(path, part).map_err(|error| error.to_string())
+    })
+}
+
+/// The same check over bytes already in memory, for a stored version that has
+/// no file on disk. Parts are read through [`super::package::read_part`], so
+/// the package limits apply.
+pub fn check_workbook_bytes(bytes: &[u8]) -> WorkbookCheck {
+    check_workbook_with("the workbook", |part| super::package::read_part(bytes, part))
+}
+
+fn check_workbook_with(name: &str, read: impl Fn(&str) -> Result<String, String>) -> WorkbookCheck {
+    let sheet = match read("xl/worksheets/sheet1.xml") {
         Ok(sheet) => sheet,
         Err(error) => {
             return WorkbookCheck {
                 opens: false,
                 calculations: 0,
                 live_formulas: 0,
-                problems: vec![format!("{}: {error}", path.display())],
+                problems: vec![format!("{name}: {error}")],
             }
         }
     };
 
     let mut problems = Vec::new();
     for required in ["xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"] {
-        if read_part(path, required).is_err() {
+        if read(required).is_err() {
             problems.push(format!("the workbook is missing {required}"));
         }
     }

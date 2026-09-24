@@ -90,7 +90,7 @@
           "name": "content"
         },
         {
-          "kind": "object",
+          "kind": "list",
           "name": "sections"
         },
         {
@@ -179,7 +179,7 @@
       "network": "none",
       "optional": [
         {
-          "kind": "object",
+          "kind": "list",
           "name": "sheets"
         },
         {
@@ -322,7 +322,12 @@
       "maxResponseBytes": 4096,
       "name": "artifact.create_pdf",
       "network": "none",
-      "optional": [],
+      "optional": [
+        {
+          "kind": "text",
+          "name": "classification"
+        }
+      ],
       "output": "artifact",
       "permission": "generateArtifact",
       "prerequisites": [],
@@ -331,10 +336,6 @@
         {
           "kind": "text",
           "name": "title"
-        },
-        {
-          "kind": "text",
-          "name": "classification"
         },
         {
           "kind": "text",
@@ -361,7 +362,12 @@
       "maxResponseBytes": 32768,
       "name": "artifact.create_table",
       "network": "none",
-      "optional": [],
+      "optional": [
+        {
+          "kind": "text",
+          "name": "classification"
+        }
+      ],
       "output": "artifact",
       "permission": "generateArtifact",
       "prerequisites": [],
@@ -378,10 +384,96 @@
         {
           "kind": "text",
           "name": "rows"
+        }
+      ],
+      "retry": {
+        "maxRetries": 0,
+        "reconciliation": "inspectArtifact",
+        "safeToRetry": false
+      },
+      "route": "agentPath",
+      "sideEffecting": true,
+      "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::diff",
+      "maxResponseBytes": 24576,
+      "name": "artifact.diff",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "fromVersion"
         },
         {
           "kind": "text",
-          "name": "classification"
+          "name": "toVersion"
+        },
+        {
+          "kind": "text",
+          "name": "against"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWaitWithIntent",
+      "effect": "side_effecting",
+      "handler": "agent_runtime::artifact_tools::edit_version",
+      "maxResponseBytes": 8192,
+      "name": "artifact.edit",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        }
+      ],
+      "output": "artifact",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        },
+        {
+          "kind": "list",
+          "name": "edits"
         }
       ],
       "retry": {
@@ -427,6 +519,74 @@
       "approvalClass": "automatic",
       "cancellation": "abandonWait",
       "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::list_templates",
+      "maxResponseBytes": 8192,
+      "name": "artifact.list_templates",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "format"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 5
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::manifest",
+      "maxResponseBytes": 24576,
+      "name": "artifact.manifest",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
       "handler": "agent_runtime::artifact_read",
       "maxResponseBytes": 16384,
       "name": "artifact.read",
@@ -455,6 +615,284 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::read_region",
+      "maxResponseBytes": 24576,
+      "name": "artifact.read_region",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        },
+        {
+          "kind": "text",
+          "name": "region"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::read_version",
+      "maxResponseBytes": 24576,
+      "name": "artifact.read_version",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        },
+        {
+          "kind": "integer",
+          "name": "fromUnit"
+        },
+        {
+          "kind": "integer",
+          "name": "maxUnits"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "personBeforeEffect",
+      "cancellation": "abandonWaitWithIntent",
+      "effect": "side_effecting",
+      "handler": "agent_runtime::artifact_tools::register_version",
+      "maxResponseBytes": 4096,
+      "name": "artifact.register_version",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "effectKey"
+        }
+      ],
+      "output": "text",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        },
+        {
+          "kind": "text",
+          "name": "stage"
+        }
+      ],
+      "retry": {
+        "maxRetries": 0,
+        "reconciliation": "inspectArtifact",
+        "safeToRetry": false
+      },
+      "route": "agentPath",
+      "sideEffecting": true,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::render_version",
+      "maxResponseBytes": 16384,
+      "name": "artifact.render",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        },
+        {
+          "kind": "integer",
+          "name": "fromPage"
+        },
+        {
+          "kind": "integer",
+          "name": "toPage"
+        }
+      ],
+      "output": "text",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::resolve_evidence",
+      "maxResponseBytes": 16384,
+      "name": "artifact.resolve_evidence",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::artifact_tools::validate_version",
+      "maxResponseBytes": 16384,
+      "name": "artifact.validate",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "version"
+        },
+        {
+          "kind": "text",
+          "name": "render"
+        },
+        {
+          "kind": "integer",
+          "name": "fromPage"
+        },
+        {
+          "kind": "integer",
+          "name": "toPage"
+        }
+      ],
+      "output": "text",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
     },
     {
       "aliases": [

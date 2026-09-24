@@ -298,7 +298,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       "If it refuses, it says what was missing; it will not write a blank page.",
     parameters: closed({
       title: Type.String({ description: "The document title.", minLength: 1 }),
-      classification: Type.String({ description: "Banner on every page, e.g. OFFICIAL." }),
+      classification: Type.Optional(
+        Type.String({
+          description:
+            "Ignored: the banner is taken from the evidence this task retrieved, not from here.",
+        }),
+      ),
       body: Type.String({
         description:
           "The content. Start a line with # for a heading, - for a bullet, or use | to " +
@@ -327,7 +332,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       title: Type.String({ description: "What the table shows.", minLength: 1 }),
       header: Type.String({ description: "Column names, separated by |." }),
       rows: Type.String({ description: "One row per line, cells separated by |." }),
-      classification: Type.String({ description: "e.g. OFFICIAL. May be empty." }),
+      classification: Type.Optional(
+        Type.String({
+          description:
+            "Ignored: the label is taken from the evidence this task retrieved, not from here.",
+        }),
+      ),
     }),
   },
   {
@@ -744,10 +754,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Check a produced file",
     readOnly: true,
     description:
-      "Re-opens a file this task produced and reports what is actually inside it — the sections " +
-      "that are really there, not the ones the write call claimed. " +
-      "Use it after producing a document or workbook and before telling anybody it is ready. " +
-      "Do not use it on a file this task did not create; it exists to check your own output. " +
+      "Re-opens a file this task produced, by path, and reports what is actually inside it — " +
+      "the sections that are really there, not the ones the write call claimed. " +
+      "Use it for a quick reopen of your own output in this task's working directory. " +
+      "Do not use it as acceptance: it does not render the file, bind citations or recheck " +
+      "sources, and it is not a validator for every file type — artifact.validate is. " +
       "Effects: none. It only reads, and needs nobody's approval. " +
       "Limits: this task's working directory only. " +
       "If it reports a section missing: say so and fix it. Do not describe the document as ready.",
@@ -1059,6 +1070,242 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         description: "Which language runtime to use.",
       }),
       source: Type.String({ description: "The complete program.", minLength: 1 }),
+    }),
+  },
+  // ── P04: the shared artifact, evidence and validation tools ────────────
+  //
+  // At the end on purpose: with no plan-ordered list to follow, the budget
+  // fitter drops from the tail, and these are what a run can best do without.
+  // Rust's plans put them last for the same reason (`planning::derive`).
+  {
+    name: "artifact.manifest",
+    label: "Read an artifact's manifest",
+    readOnly: true,
+    description:
+      "Returns what is recorded about one exact artifact version: id, version, SHA-256, the " +
+      "media type read from its bytes, stage (candidate or final), classification, producer, " +
+      "template, every source it rests on with whether that source is still current, its " +
+      "permission scope, its latest validation and its render handles. " +
+      "Use it before relying on, reviewing or publishing an artifact. " +
+      "Do not use it to read the content — artifact.read_version does that. " +
+      "Effects: none. It only reads, needs nobody's approval, and touches no network. " +
+      "Limits: this conversation's artifacts only, owner-scoped. " +
+      "If it is refused: the id is not one this conversation produced. List with artifact.list.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+    }),
+  },
+
+  {
+    name: "artifact.read_version",
+    label: "Read an artifact version",
+    readOnly: true,
+    description:
+      "Reads one exact version's content as located units — p:12 for a Word paragraph, " +
+      "slide:3/body:2 for a slide line, sheet:Readings!B4 for a cell, page:2, line:40 — each " +
+      "with the citations it makes. " +
+      "Use it to review, cite or edit an artifact; the locators are what artifact.edit and " +
+      "artifact.read_region take. " +
+      "Do not use it to find the organisation's documents — knowledge.search_authorized does. " +
+      "Effects: none. It only reads, needs nobody's approval, and touches no network. " +
+      "Limits: at most 500 units per call; what was not shown is named with the fromUnit to " +
+      "continue from. " +
+      "If it is refused: the id is not one this conversation produced, or the file is not a " +
+      "format it reads.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+      fromUnit: Type.Optional(Type.Integer({ minimum: 1, description: "The first unit to show. Default 1." })),
+      maxUnits: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Default 200." })),
+    }),
+  },
+
+  {
+    name: "artifact.read_region",
+    label: "Read part of an artifact",
+    readOnly: true,
+    description:
+      "Reads one region of an artifact version: a section by heading, a slide or slide range, a " +
+      "sheet or cell range, a page range, or a line range. " +
+      "Use it when only part of a long artifact matters. " +
+      "Do not use it to page through a whole file — artifact.read_version does that. " +
+      "Effects: none. It only reads, needs nobody's approval, and touches no network. " +
+      "Limits: regions are p:5, paragraphs:3-9, section:<heading>, slide:3, slides:2-4, " +
+      "sheet:<name>, sheet:<name>!A1:C10, page:2, pages:1-3, line:5, lines:10-40. " +
+      "If it is refused: the region does not apply to that format or does not exist; the " +
+      "message names what does.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      region: Type.String({ minLength: 3, description: 'For example "section:Findings" or "sheet:Readings!A1:C10".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+    }),
+  },
+
+  {
+    name: "artifact.list_templates",
+    label: "List templates",
+    readOnly: true,
+    description:
+      "Lists the templates and composition structures a deliverable can be produced from, each " +
+      "with its version, required and optional fields, the tool that uses it and the hash of " +
+      "its definition. " +
+      "Use it before producing a Word, PowerPoint or Excel deliverable, to know what the " +
+      "template will require. " +
+      "Do not use it to find earlier outputs — artifact.list does that. " +
+      "Effects: none. It only reads. " +
+      "Limits: the templates this build ships; narrow with format docx, pptx or xlsx. " +
+      "If it lists nothing for a format, say that format has no template here.",
+    parameters: closed({
+      format: Type.Optional(Type.String({ description: "docx, pptx or xlsx." })),
+    }),
+  },
+
+  {
+    name: "artifact.validate",
+    label: "Validate an artifact version",
+    readOnly: true,
+    description:
+      "Checks one exact artifact version rung by rung — file created, format reopened from its " +
+      "bytes (not its name), content checked against its template and evidence bindings, render " +
+      "checked with the pinned local renderer, and accepted only when all of those pass and " +
+      "every source it rests on is still current. " +
+      "Use it on every deliverable before calling it ready, and before publishing it. " +
+      "Do not use it to change anything — it only reports. " +
+      "Effects: records the validation, and any render, against those exact bytes in this " +
+      "machine's own store. Nothing leaves the machine; no macro runs; nothing is fetched. " +
+      "Limits: renders at most 50 pages per call; a renderer missing on this machine is " +
+      "reported as unavailable, never as passed. " +
+      "If it reports a rung failed or unavailable: say which and why. Do not describe the file " +
+      "as ready.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+      render: Type.Optional(Type.String({ description: '"no" to skip the render rung. Default: render.' })),
+      fromPage: Type.Optional(Type.Integer({ minimum: 1, description: "First page to render. Default 1." })),
+      toPage: Type.Optional(Type.Integer({ minimum: 1, description: "Last page to render. Default fromPage + 9." })),
+    }),
+  },
+
+  {
+    name: "artifact.render",
+    label: "Render an artifact's pages",
+    readOnly: true,
+    description:
+      "Lays one artifact version out with the pinned local renderer and returns a handle, size, " +
+      "text count and blank flag for each page or slide. " +
+      "Use it to look at pages during review, or to check a deck has one page per slide. " +
+      "Do not use it as acceptance — artifact.validate is the full check. " +
+      "Effects: writes page images into this machine's render cache and records the render. " +
+      "A file with macros, external links or remote field codes is refused before any renderer " +
+      "starts. Nothing is fetched. " +
+      "Limits: at most 50 pages per call; plain text has no pages. " +
+      "If it says unavailable: the renderer is not installed here. Say so; do not claim the " +
+      "pages were checked.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+      fromPage: Type.Optional(Type.Integer({ minimum: 1, description: "First page. Default 1." })),
+      toPage: Type.Optional(Type.Integer({ minimum: 1, description: "Last page. Default fromPage + 9." })),
+    }),
+  },
+
+  {
+    name: "artifact.diff",
+    label: "Compare two artifact versions",
+    readOnly: true,
+    description:
+      "Lists what changed between two versions, unit by unit: changed, added and removed " +
+      "paragraphs, slide lines or cells, with their locators. " +
+      "Use it to review a revision, or to confirm an edit changed only what it should. " +
+      "Do not use it to read a whole version — artifact.read_version does that. " +
+      "Effects: none. It only reads. " +
+      "Limits: by default compares a version with the one before it; long lists are cut with a " +
+      "count of what was not shown. " +
+      "If it is refused: the artifact has one version only, or a version named does not exist.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The artifact id, e.g. "art-7".' }),
+      fromVersion: Type.Optional(Type.String({ description: "The earlier version. Default: the one before toVersion." })),
+      toVersion: Type.Optional(Type.String({ description: "The later version. Default: the newest." })),
+      against: Type.Optional(Type.String({ description: 'Another artifact version to compare with instead, "art-9@2".' })),
+    }),
+  },
+
+  {
+    name: "artifact.resolve_evidence",
+    label: "Resolve an artifact's citations",
+    readOnly: true,
+    description:
+      "Lists every citation in an artifact version — [E3], [A:art-1@2], [M:item@4], [S:sha@p4] — " +
+      "with the source it was bound to when the version was produced, and whether that source " +
+      "is still current and readable. " +
+      "Use it when reviewing claims, and after a source has been corrected or withdrawn. " +
+      "Do not use it to search for new evidence — the knowledge tools do that. " +
+      "Effects: none. It only reads. " +
+      "Limits: a version captured from a message has no binding, and says so. " +
+      "If it reports a citation unbound or stale: say so; the artifact cannot be published " +
+      "until a new version rests on current evidence.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The id, with its version: "art-7@4".' }),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+    }),
+  },
+
+  {
+    name: "artifact.register_version",
+    label: "Register or publish a version",
+    readOnly: false,
+    description:
+      "Publishes one exact artifact version as final, or marks a captured version as a " +
+      "candidate. Every produced file is already a candidate. " +
+      "Use it with stage \"final\" once artifact.validate has accepted that exact version. " +
+      "Do not use it to approve on a person's behalf: the file keeps its DRAFT marking until " +
+      "someone signs it. " +
+      "Effects: changes the version's stage in this machine's store, after rechecking every " +
+      "source it rests on; the bytes never change. A person must approve it before it happens, " +
+      "so expect a pause. With an effectKey, repeating the call publishes nothing new. " +
+      "Limits: only an accepted validation of these exact bytes publishes. " +
+      "If it refuses: it names what is stale or unvalidated. Do not retry the same version; " +
+      "produce and validate a new one.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The exact version: "art-7@4".' }),
+      stage: Type.Union([Type.Literal("final"), Type.Literal("candidate")], {
+        description: '"final" to publish, "candidate" for a captured version.',
+      }),
+      effectKey: Type.Optional(Type.String({ description: "A key naming this publication, so a repeat is recognised." })),
+    }),
+  },
+
+  {
+    name: "artifact.edit",
+    label: "Edit part of an artifact",
+    readOnly: false,
+    description:
+      "Changes named parts of an artifact version — a paragraph, a slide line, a cell — and " +
+      "keeps every other part of the file byte-for-byte as it was, including parts this " +
+      "product did not write. " +
+      "Use it for a targeted correction: a figure, a word, a cell. " +
+      "Do not use it to restructure a document — produce a new one — and do not use it on a " +
+      "PDF, which is produced again rather than edited. " +
+      "Effects: writes a new candidate version derived from the one named; that version is " +
+      "untouched. " +
+      "Limits: at most 50 edits; the text to find must sit inside one formatting run; formula " +
+      "cells, speaker notes and text boxes are refused. " +
+      "If it refuses: nothing was written. Read the version again and name a single place.",
+    parameters: closed({
+      artifact: Type.String({ minLength: 1, description: 'The exact version being edited: "art-7@4".' }),
+      edits: Type.Array(
+        Type.Object(
+          {
+            locator: Type.String({ minLength: 3, description: 'From artifact.read_version, e.g. "p:12".' }),
+            find: Type.Optional(Type.String({ description: "The exact text to replace inside that unit." })),
+            replace: Type.String({ description: "The new text." }),
+          },
+          { additionalProperties: false },
+        ),
+        { minItems: 1, maxItems: 50 },
+      ),
+      version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
     }),
   },
 ] as const;

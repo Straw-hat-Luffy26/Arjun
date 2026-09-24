@@ -36,8 +36,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::artifacts::{
-    check_deck, check_document, check_workbook, write_deck, write_document, write_workbook,
-    DocumentMetadata, Slide, BRIEFING_SECTIONS,
+    check_deck, check_document, check_workbook, write_workbook, DocumentMetadata, Slide,
+    BRIEFING_SECTIONS,
 };
 use crate::identity::Session;
 use crate::orchestrator::calculation::CalculationRecord;
@@ -334,6 +334,25 @@ pub fn report_for_run(table: &RunArtifacts, run_id: &str) -> Vec<ArtifactReport>
     for_run(table, run_id).iter().map(check).collect()
 }
 
+/// The label a document built on `passages` carries: every non-Internal
+/// classification among them, or `Internal` when there is none.
+pub fn classification_of(passages: &[crate::knowledge::SearchResult]) -> String {
+    let mut labels: Vec<&'static str> = Vec::new();
+    for passage in passages {
+        if passage.classification != crate::policy::Classification::Internal {
+            let label = passage.classification.label();
+            if !labels.contains(&label) {
+                labels.push(label);
+            }
+        }
+    }
+    if labels.is_empty() {
+        "Internal".to_string()
+    } else {
+        labels.join("; ")
+    }
+}
+
 /// Renders a Word document from fields the model supplied.
 pub fn create_docx(
     call: &CallParams,
@@ -387,7 +406,7 @@ pub fn create_docx_with_evidence(
     // none of which the approval-note template can express — and it goes
     // through the same validate / repair / render / re-open loop.
     if tool_call.arguments.get("sections").is_some() {
-        return create_docx_from_sections(call, path, tool_call);
+        return create_docx_from_sections(call, path, tool_call, &classification_of(passages));
     }
 
     let template = tool_call.text("template").ok_or_else(|| {
@@ -415,7 +434,8 @@ pub fn create_docx_with_evidence(
         // The model that produced the content, so a reader knows what wrote it.
         // Recorded per run by the caller; unknown here rather than guessed.
         model: call.model.clone().unwrap_or_else(|| "unrecorded".to_string()),
-        classification: "Internal".to_string(),
+        // From the evidence behind it, never from the model (P04).
+        classification: classification_of(passages),
         // Overwritten per attempt by `produce`, which settles the standing from
         // the verifier before it stamps the page.
         is_draft: true,
@@ -543,6 +563,7 @@ fn create_xlsx_from_sheets(
     path: &Path,
     sheets: serde_json::Value,
     tool_call: Option<&ToolCall>,
+    classification: &str,
 ) -> Result<String, String> {
     use crate::artifacts::doc_model::{Sheet, Workbook};
 
@@ -558,11 +579,7 @@ fn create_xlsx_from_sheets(
             .map(str::to_string)
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(|| "Workbook".to_string()),
-        classification: tool_call
-            .and_then(|call| call.text("classification"))
-            .map(str::to_string)
-            .filter(|c| !c.trim().is_empty())
-            .unwrap_or_else(|| "Internal".to_string()),
+        classification: classification.to_string(),
         sheets,
     };
 
@@ -623,6 +640,7 @@ fn create_docx_from_sections(
     call: &CallParams,
     path: &Path,
     tool_call: &ToolCall,
+    classification: &str,
 ) -> Result<String, String> {
     use crate::artifacts::doc_model::{Document, Properties, Section};
 
@@ -645,11 +663,9 @@ fn create_docx_from_sections(
 
     let mut document = Document {
         title,
-        classification: tool_call
-            .text("classification")
-            .map(str::to_string)
-            .filter(|c| !c.trim().is_empty())
-            .unwrap_or_else(|| "Internal".to_string()),
+        // The run's, not the call's: a `classification` argument is accepted
+        // and not used (P04).
+        classification: classification.to_string(),
         sections,
         properties: Properties::default(),
     };
@@ -758,6 +774,16 @@ pub fn create_pptx(
     resolved_path: Option<&Path>,
     tool_call: &ToolCall,
 ) -> Result<String, String> {
+    create_pptx_classified(call, resolved_path, tool_call, "Internal")
+}
+
+/// [`create_pptx`], labelled with the classification derived from the run.
+pub fn create_pptx_classified(
+    call: &CallParams,
+    resolved_path: Option<&Path>,
+    tool_call: &ToolCall,
+    classification: &str,
+) -> Result<String, String> {
     let path = resolved_path
         .ok_or_else(|| "No path was resolved for the deck, so nothing was written.".to_string())?;
 
@@ -848,7 +874,7 @@ pub fn create_pptx(
     // and a footnote saying three were dropped.
     let mut deck = crate::artifacts::doc_model::Deck {
         title: title.to_string(),
-        classification: "Internal".to_string(),
+        classification: classification.to_string(),
         slides: sections
             .iter()
             .map(|slide| crate::artifacts::doc_model::SlideModel {
@@ -898,13 +924,25 @@ pub fn create_pptx(
     ))
 }
 
-/// Writes the run's calculations into a workbook Excel can recompute.
+/// Writes the run's calculations into a workbook Excel can recompute,
+/// labelled `Internal`. The agent path uses [`create_xlsx_classified`].
 pub fn create_xlsx(
     resolved_path: Option<&Path>,
     calculations: &Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>>,
     run_id: &str,
     // `None` from callers that only ever want the calculation workbook.
     tool_call: Option<&ToolCall>,
+) -> Result<String, String> {
+    create_xlsx_classified(resolved_path, calculations, run_id, tool_call, "Internal")
+}
+
+/// [`create_xlsx`], labelled with the classification derived from the run.
+pub fn create_xlsx_classified(
+    resolved_path: Option<&Path>,
+    calculations: &Arc<Mutex<HashMap<String, Vec<CalculationRecord>>>>,
+    run_id: &str,
+    tool_call: Option<&ToolCall>,
+    classification: &str,
 ) -> Result<String, String> {
     let path = resolved_path.ok_or_else(|| {
         "No path was resolved for the workbook, so nothing was written.".to_string()
@@ -918,7 +956,7 @@ pub fn create_xlsx(
     // `sheets`, it is a workbook of readings, a schedule or a bill of
     // quantities — none of which the calculation workbook can express.
     if let Some(sheets) = tool_call.and_then(|call| call.arguments.get("sheets")).cloned() {
-        return create_xlsx_from_sheets(path, sheets, tool_call);
+        return create_xlsx_from_sheets(path, sheets, tool_call, classification);
     }
 
     let records = calculations
@@ -940,7 +978,7 @@ pub fn create_xlsx(
         );
     }
 
-    write_workbook(path, &records, "Internal")?;
+    write_workbook(path, &records, classification)?;
 
     let check = check_workbook(path);
     if !check.problems.is_empty() {

@@ -1,0 +1,13 @@
+test artifacts::edit::tests::a_targeted_word_edit_changes_one_node_and_copies_every_other_part_raw ... FAILED
+test artifacts::conversation_store::tests::a_repeated_effect_key_does_not_publish_a_duplicate_even_after_a_restart ... FAILED
+test agent_runtime::artifact_tools_tests::the_same_effect_key_publishes_once_across_runs ... ok
+test agent_runtime::artifact_tools_tests::a_correction_to_what_a_note_cites_makes_the_note_stale_and_unpublishable ... FAILED
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 2800 filtered out; finished in 0.61s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2800 filtered out; finished in 0.61s
+test agent_runtime::artifact_tools_tests::the_same_effect_key_publishes_once_across_runs ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2803 filtered out; finished in 0.30s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2794 filtered out; finished in 3.42s
+test artifacts::conversation_store::tests::a_repeated_effect_key_does_not_publish_a_duplicate_even_after_a_restart ... FAILED
+test agent_runtime::artifact_tools_tests::the_same_effect_key_publishes_once_across_runs ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 2802 filtered out; finished in 0.44s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 2778 filtered out; finished in 3.54s

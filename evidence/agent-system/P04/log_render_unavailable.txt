@@ -1,0 +1,10 @@
+RENDER-INVENTORY {"office":{"name":"LibreOffice","available":false,"qualified":false,"qualifiedSeries":["24.2","24.8","25.2","25.8"],"unavailableBecause":"no LibreOffice answered (tried soffice: it could not be started: No such file or directory (os error 2))","licence":"MPL-2.0 (LibreOffice)","provisioning":"External. Install LibreOffice from the offline deployment pack, or set ARJUN_SOFFICE to i
+RENDER-OUTCOME Unavailable no LibreOffice answered (tried soffice: it could not be started: No such file or directory (os error 2)) []
+P04-VALIDATION Validation 1 of art-file-12b3a63243e8c7c5@1 (sha-256 8feb113bc456, Word document (OOXML)):
+- file created: passed — 2233 bytes, sha-256 8feb113bc456 [artifact-store@arjun-0.2.0]
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses [format-reader@arjun-0.2.0]
+- content checked: passed — 18 unit(s) of content, 1 citation(s) each bound to evidence, and everything the document_model template promises [content-checks@arjun-0.2.0]
+- render checked: unavailable — no LibreOffice answered (tried soffice: it could not be started: No such file or directory (os error 2)) [renderer]
+- accepted: unavailable — not accepted: a check it needs cannot run on this machine [acceptance@arjun-0.2.0]
+    · render checked is unavailable here: no LibreOffice answered (tried soffice: it could not be started: No such file or directory (os error 2))
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2802 filtered out; finished in 0.54s

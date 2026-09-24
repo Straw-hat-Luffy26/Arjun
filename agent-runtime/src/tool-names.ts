@@ -77,6 +77,17 @@ export const CANONICAL_TOOL_NAMES = [
   // no model was ever offered the cross-turn artifact channel.
   "artifact.list",
   "artifact.read",
+  // P04's shared artifact, evidence and validation tools.
+  "artifact.manifest",
+  "artifact.read_version",
+  "artifact.read_region",
+  "artifact.list_templates",
+  "artifact.validate",
+  "artifact.render",
+  "artifact.diff",
+  "artifact.resolve_evidence",
+  "artifact.register_version",
+  "artifact.edit",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -167,6 +178,8 @@ const ARTIFACT_PRODUCING: ReadonlySet<CanonicalToolName> = new Set([
   // `create_chart` is here for the resumption rule rather than for a file: see
   // the note in `SIDE_EFFECTING` below.
   "artifact.create_chart",
+  // A targeted edit writes a new version of the file it names.
+  "artifact.edit",
 ]);
 
 /**
@@ -197,6 +210,10 @@ const SIDE_EFFECTING: ReadonlySet<CanonicalToolName> = new Set([
   // can record for it is `targetOf`'s question, and it names no target for a
   // call without a path.)
   "notebook.delete",
+  // Publishing a version and writing an edited one. Rust writes an intent
+  // before each, and a resumption must repeat neither.
+  "artifact.register_version",
+  "artifact.edit",
 ]);
 
 /** Whether this tool returns numbered evidence. Accepts either spelling. */

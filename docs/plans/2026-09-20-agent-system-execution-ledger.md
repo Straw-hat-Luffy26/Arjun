@@ -32,7 +32,9 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P00 | Baseline, inventory, executable acceptance fixtures | **Complete** — see below |
 | P01 | Agent definitions, jobs, tool/result contracts | **Complete** (portable code and deterministic tests; no native gate) — see below |
 | P02 | Shared memory correctness and authority | **Complete for the graph, receipts, versions, outbox, sharing and the sixth legacy store**; cutover of the other five legacy writers and graph-backed agent recall remain open — see below |
-| P03–P16 | — | Not started |
+| P03 | Context compiler, GPU scheduling and continuation | Not started |
+| P04 | Shared artifact, evidence and validation tools | **Complete for portable code, the production path and a real render on a Linux machine**; the render/acceptance gate on the Windows target stays open until LibreOffice is provisioned there — see below |
+| P05–P16 | — | Not started |
 
 ---
 
@@ -614,3 +616,167 @@ baseline harness. P02 changed no TypeScript and no network path.
 (the `FrozenScope` built near line 814), which now reads at its frozen cursor;
 the served window (P00-OBS-2, `window: 0`) and the 9 039-token tool-schema floor
 (P01-OBS-1) are what the context budget has to be built against.
+
+---
+
+# P04 — Shared artifact, evidence and validation tools
+
+Worked on 2026-09-24 on branch `claude/hopeful-brahmagupta-1eol9d` from HEAD
+`20061fc`, in a **Linux cloud container** — not the Windows host P00–P02 ran on,
+and not the target machine. P03 is not started; P04 needs only P01 and P02.
+Raw output: `evidence/agent-system/P04/` (index in its `README.md`).
+
+## Found before, or while, building it
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | The canonical names were `artifact.list`, `artifact.read`, `artifact.create_{approval_note,calculation_workbook,briefing_deck,chart,diagram,pdf,table}` and the DOCX-named `artifact.verify_docx` (alias `validate_artifact`), which reopened *every* kind the run produced while its name and description promised a Word check and implied readiness. | `orchestrator/tools.rs`, `agent_runtime/mod.rs` `validate` | Kept, alias and all. Its description and its answer now say it is a reopen check and that `artifact.validate` is acceptance. |
+| 2 | **Every composed document and workbook was refused at the gateway**: `sections` and `sheets` were declared `Object`, the handlers deserialise lists. Found by driving `artifact.create_approval_note` with `sections` through `authorize` → `execute`; the direct-helper tests had always passed. | `orchestrator/tools.rs` | Declared `List`. The TypeScript catalogue still does not *offer* `sections`/`sheets` to a model — see "Remaining". |
+| 3 | **Cross-tenant id collision**: the default artifact id was derived from the content hash alone, so a second account recording identical bytes hit the primary key — and the error told it somebody held those bytes. | `artifacts/conversation_store.rs` `record` | Derived from owner + content. |
+| 4 | The classification label on `artifact.create_pdf`/`create_table` (and the composed Word/Excel paths) came from the model's arguments — contract map §7, owner P04. | `agent_runtime/{mod,artifacts}.rs` | Derived from the classifications of the passages the run retrieved; the argument is accepted for old callers and ignored. |
+| 5 | Nothing checked a stored blob against its recorded hash: "immutable" was assumed. | `conversation_store.rs` `read` | Every read re-hashes; an altered blob is refused, not served. |
+| 6 | The built-in PDF reader returned one text blob, so no page could be addressed. | `artifacts/pdf_validate.rs` | `page_texts`, one per page. |
+| 7 | The run's memory graph (the one `context.refresh` and now the artifact links use) was opened **without** the event log as its receipt ledger, so nothing linked on a receipt could ever be admitted in the app — only in the subagents' graph. | `commands/agent.rs` | `with_receipts(state.events)`, as `lib.rs` does for the subagents. |
+| 8 | `render_pages.py`'s first blank-page test used `len(pixmap.color_count())`; PyMuPDF returns an integer there, so the fallback reported every page "not blank". Caught by its own sidecar test before it shipped. | `sidecars/document_sidecar/render_pages.py` | `is_unicolor`, with a fallback that handles both return shapes. |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| Format from bytes, safe to open | `%PDF-`, OOXML main content type, `<svg` root, UTF-8 text, legacy CFB; wrong-type = claimed ≠ detected. ZIP limits: archive size, entry count, per-entry and total decompressed size, compression ratio; zip-slip names (absolute, `..`, backslash, drive, NUL) and duplicates refuse the whole package. Macros, external relationships that would be fetched (image, OLE, template, frame, external link — a hyperlink is listed, not refused) and remote Word fields (`INCLUDEPICTURE`, `INCLUDETEXT`, `LINK`, `DDE`, `DDEAUTO`, `IMPORT`) are found and block rendering. | `artifacts/package.rs` (new) |
+| XML | A pull scanner with byte spans; refuses `<!DOCTYPE` (entity expansion) and any malformed tag. No new crate. | `artifacts/xml_events.rs` (new) |
+| **One content/evidence contract** | `ContentModel` of located units — `p:12`, `slide:3/title`, `slide:3/body:2`, `slide:3/notes`, `sheet:Readings!B4` (with formula), `page:2`, `line:40` — each with the citations in it: `[E3]` (run evidence), `[A:art@v]`, `[M:item@rev]`, `[S:sha@loc]`. One region grammar, bounded rendering with named omissions, and a unit-level diff. Word, PowerPoint, Excel, PDF and text all read into it. | `artifacts/content.rs` (new) |
+| Templates | Every template and composition structure with id, version, required/optional fields and the SHA-256 of its canonical definition; `used_by(tool, args)`. | `artifacts/templates.rs` (new) |
+| **The ladder** | `fileCreated` (bytes exist and hash to the record) → `formatReopened` (from the bytes; container safe; parses; no macros) → `contentChecked` (says something; no placeholder; template's promises kept; every citation bound; no formula error) → `renderChecked` (real layout engine; no blank page; deck pages = slides) → `accepted` (all of those, and every dependency current). Each rung is `passed`, `failed`, **`unavailable`**, `notApplicable` or `notRun`, with the validator and version that decided it. Accepted is never a person's approval. | `artifacts/validation.rs` (new) |
+| **Renderers** | Two pinned local adapters. **LibreOffice** (headless, per-render throwaway profile with macro execution disabled and security at its highest, staged copy of the stored bytes, killed at 120 s) lays Office files and SVG out to PDF. **PyMuPDF** via the bundled `render_pages.py` rasterises PDF pages to PNG with text and a blank flag. Qualified series recorded; any other version is *unavailable*, with the version found. Registered in `deployment::DEPENDENCIES` (`office-renderer` external, `page-rasteriser` bundled), so the deployment gate covers them. | `artifacts/render.rs` (new), `sidecars/document_sidecar/render_pages.py` (new), `deployment/mod.rs` |
+| **Registry** | Additive schema on `conversation_artifacts`: stage (`recorded`/`candidate`/`final`, forward only), classification, template id/version/hash, project, published-at, graph node; new tables for dependencies (per version, with the marker that names each), effect keys (owner-scoped, first registration stands), validations and renders (each tied to the SHA-256 checked). `final` is reachable only through `promote` against an accepted validation of the same bytes. | `artifacts/conversation_store.rs` |
+| **Targeted edits** | Every ZIP entry but the edited part is copied raw; inside it the one text node is spliced by byte range. Refused before anything is written: not found, ambiguous, text split across runs, formula cell, text box, notes, PDF — or a read-back diff showing any unit changed beyond the ones named. | `artifacts/edit.rs` (new) |
+| **Ten tools**, end to end | `artifact.manifest`, `read_version`, `read_region`, `list_templates`, `validate`, `render`, `diff`, `resolve_evidence`, `register_version`, `edit`: `ToolName` + spec + contract (route, prerequisites `ConversationArtifacts`/`PageRenderer`, output) + `class_of`/`is_side_effecting` + runner refusal + agent-path arms + TS catalogue (closed schemas, six-clause descriptions) + `tool-names.ts` + conformance lists + UI labels; `tool-contract.json` regenerated. `validate`/`render` run on the blocking pool. | `orchestrator/{tools,contract,runner,grammar}.rs`, `agent_runtime/{mod,artifact_tools,tool_policy,planning}.rs`, `events/idempotency.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| Production registration | A file a create tool writes is registered as a **candidate** with its template, the run's classification, and every citation bound to what the *run* retrieved/recalled/read — passages by document hash and page, memory items at the revision visible now, artifact versions — plus the calculations behind a calculation workbook; under the call's effect key. | `agent_runtime/{mod,artifact_tools}.rs` |
+| **Receipts and graph links** | After the call's own `tool_succeeded` event is written, the version becomes an `ArtifactRef` node on that receipt (admitted when the ledger resolves it), `depends_on` its memory dependencies, `DerivedFrom` them and its base version, `Cites` artifact dependencies. A correction to a cited fact therefore reaches the artifact through P02's own staleness propagation. | `agent_runtime/artifact_tools.rs` `link_to_graph` |
+| Recheck before publishing | `register_version stage=final` rechecks every dependency *now* — document still current and cleared for this reader, attachment readable, memory item unmoved and standing, artifact bytes unchanged, calculation re-evaluates the same, template definition unchanged, graph node not stale — then requires an accepted validation of these bytes, then **a person's approval** (it is `PersonBeforeEffect`). | `artifact_tools.rs` `recheck`, `register_version` |
+
+No IPC command was added: these are model-facing tools on the existing
+runtime RPC. `check:ipc` stays at 176.
+
+## Contract decisions
+
+1. **The format is what the bytes say.** Extension and media type are *claims*,
+   compared with the bytes; disagreement fails the reopen rung.
+2. **Unavailable is a state.** A missing or unqualified renderer produces
+   `renderChecked: unavailable` and `accepted: unavailable` — never a skipped rung
+   that reads as green, and never a publication.
+3. **Accepted is the machine's last word, not a person's.** Publishing needs an
+   accepted validation *and* a person; the DRAFT marking stays in the bytes.
+4. **One key, one effect, first one stands.** A retry that re-rendered different
+   bytes under the same effect key returns the first registration with
+   `content_differed`, and publishes nothing. The per-run effect ledger
+   (`events::idempotency`) absorbs a same-run replay before the registry is
+   asked; the registry key is what holds across runs and restarts.
+5. **A citation means what it meant when written.** `[E3]` is bound to a passage
+   by the run that wrote it, at registration, and an edit carries that binding
+   rather than re-guessing it in a run whose evidence table is different.
+6. **Nothing takes a path.** Every tool reads the owner-scoped store, checks the
+   run's conversation, and answers "absent" and "somebody else's" with the same
+   words.
+7. **Last in the plan, first dropped.** The family is permitted only for work on
+   a deliverable (`planning::derive`: deliverable words or review/edit/publish
+   words) and listed last, so a small window drops these before any producer,
+   the sandbox or retrieval.
+
+## Tests
+
+| Property the plan names | Test |
+|---|---|
+| exact bytes survive another run, another model and a restart | `agent_runtime::artifact_tools_tests::a_produced_note_survives_another_run_another_model_and_a_restart` (bytes on disk = stored hash; read by a later run under another model; reopened store returns the same bytes and bindings), `artifacts::conversation_store::tests::a_blob_altered_on_disk_is_refused_rather_than_served` |
+| scoped reads refuse other users' artifacts | `…::another_person_cannot_reach_an_artifact_through_any_of_the_tools` — nine tools, in Bob's conversation and in Alice's conversation id, all answered with the not-found wording and no content |
+| corrupted and wrong-type files fail | `…::a_corrupted_or_mistyped_file_fails_validation_and_is_never_published`, `artifacts::validation::tests::{a_pdf_named_docx_is_a_wrong_type_failure, a_corrupted_package_fails_to_reopen_and_nothing_above_it_runs}`, `artifacts::package::tests::*` (zip-slip, bomb, macros, external fetches, remote fields), `artifacts::xml_events::tests::a_doctype_is_refused_rather_than_expanded` |
+| changed evidence marks output stale | `…::a_correction_to_what_a_note_cites_makes_the_note_stale_and_unpublishable` — the graph node goes `stale` by P02's propagation; manifest, resolve_evidence and validate say why; publication is refused naming it |
+| targeted edits preserve unrelated content | `…::an_edit_through_the_tool_changes_one_unit_and_copies_every_other_part` (raw ZIP entries byte-identical, diff names one change, binding and template carried, a superseded base refused), `artifacts::edit::tests::*` (including a part this product never writes surviving) |
+| the same effect key does not publish twice | `…::the_same_effect_key_publishes_once_across_runs` (different bytes, same key, two runs: one version, one graph node), `artifacts::conversation_store::tests::a_repeated_effect_key_does_not_publish_a_duplicate_even_after_a_restart` |
+| a real render, acceptance and publication | `…::a_sound_note_is_rendered_accepted_and_published_or_reported_unavailable` — here: LibreOffice 24.2.7.2 + PyMuPDF 1.28.2 render, accept, publish (with approval), a same-run replay and a cross-run repeat publish nothing; with LibreOffice hidden: unavailable and refused (`log_render_unavailable.txt`) |
+| the model-facing path | `tests/agent_runtime.rs::a_model_reads_an_artifact_manifest_through_the_real_runtime` — the real Node bundle offers `artifact.manifest`, a fixture model calls it, and the manifest (with the artifact's hash) reaches the model's next request |
+| template conformance on the offered form | `…::an_approval_note_from_the_template_is_checked_against_its_template` |
+| plan gating | `…::the_artifact_family_is_offered_for_deliverable_work_only_and_last` |
+
+**Seen failing.** With the publish-time recheck disabled, the raw copy of
+untouched parts disabled (one foreign part dropped), and the effect key removed,
+`a_correction_to_what_a_note_cites…`, `a_targeted_word_edit_changes_one_node…`,
+`a_repeated_effect_key…` and `the_same_effect_key_publishes_once…` all failed;
+restored, all pass (`log_mutation.txt`). The first mutation of the effect key
+(only the lookup) did **not** fail the tool-level test: the effects table's
+primary key refused the duplicate insert and rolled the version back — a second
+line of defence, recorded rather than removed. The tool-level test was also
+tightened so the retry renders different bytes; before that, content addressing
+alone would have hidden a broken key.
+
+## Measured
+
+**P04-OBS-1 — the whole catalogue no longer fits an 8k window.** 43 tools; at
+the smallest compression stage the catalogue is **3,902** estimated tokens
+against an 8k tool budget of about **3,690** (`tool-budget.ts`'s estimator). The
+ten P04 tools cost about 1,090 of that. No plan offers the whole catalogue: the
+family is plan-gated and listed last, and `tool-budget.test.ts` now pins that
+when the whole catalogue meets an 8k window, only P04 tools are dropped, from the
+tail, and reported. P00-OBS-1 and P01-OBS-1 stand; role-scoped loading (P03) is
+the remedy, not this.
+
+**P04-OBS-2 — a real render of this product's own files.** A produced two-slide
+deck lays out to exactly two non-blank pages; a produced note to one page with
+745 characters of text; LibreOffice 24.2.7.2 + PyMuPDF 1.28.2 on this Linux
+machine. No timing was recorded as a benchmark.
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2799 passed, 2 failed**, 3 ignored. Both failures (`agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring`, `skills::containment::tests::an_absolute_path_is_refused_before_it_is_joined`) assert Windows path semantics (`..\..\`, `C:`) and **fail identically at HEAD `20061fc`** in a clean worktree on this machine — not P04. |
+| focused P04 suites (`log_focused_rust.txt`) | 385 passed, 1 ignored |
+| `npm run test:integration` | 64 passed, 1 ignored (11 targets) |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; 131 files, **2332** tests |
+| `npx tsc --noEmit -p tsconfig.json`, `npm run test:ui` | pass; 43 files, 618 tests |
+| `npm run build`, `check:bundle`, `check:bundle:self`, `check:offline` | pass |
+| `check-ipc`, `check-reachable`, `check-egress`, `check-no-lora`, `check-deployment` | pass — 176 commands, 196 modules, one chokepoint, 613 files, both renderers covered |
+| `python -m unittest …/test_render_pages.py` | 4 passed |
+| `npm run test:sidecar:document` | 116 ran, **13 errors**: `pypdf` is not installed in this container (the four new tests pass inside the run). Environment, not code. |
+| `node scripts/fixture-manifest.mjs --check`, baseline `fixture-01/02` | **fail on this Linux checkout, and would at HEAD**: the manifest was generated on Windows, where these text files check out with CRLF; their committed hashes match the files only with CRLF line endings (verified). Not regenerated here — doing so would break the check on the Windows host. |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (the two above), 31 blocked. `art-evidence-03-artifact-hash-recorded` now names **P09**: P04 built and tested the hash the case grades; the agent whose result carries a produced file is the Document Author. |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **Render and acceptance on the Windows target** | P00's inventory found no `soffice` there. Until LibreOffice is provisioned, every Office deliverable validates to `renderChecked: unavailable`, `accepted: unavailable`, and cannot be published. That is the honest reading, not a defect. | Install LibreOffice 24.2 or 24.8 (MPL-2.0) from the offline pack; set `ARJUN_SOFFICE=C:\Program Files\LibreOffice\program\soffice.com`; then `cargo test --manifest-path src-tauri/Cargo.toml --lib -- artifacts::render agent_runtime::artifact_tools_tests --nocapture` |
+| PyMuPDF on the target | 1.28.0 per P00's inventory — inside the qualified series; not exercised by this phase there. | the same command |
+| Composed documents/workbooks offered to a model | The gateway accepts `sections`/`sheets` now; the TypeScript catalogue does not offer them, so a model can only reach the approval-note template and the calculation workbook. | P09 / P13 |
+| OS-level network isolation of LibreOffice | Not enforced. The guarantee is refusal before start (no fetchable reference, no remote field, no macro) plus the profile's macro settings. | P16 observed-egress checks |
+| Render cache retention | Page images accumulate under `<app data>/artifacts/renders/`; no retention policy. | P14 |
+| Editing speaker notes, text boxes, formula cells, text across runs | Refused, by design, before anything is written. | P12 / P13 if needed |
+| Recalculation | A workbook's formula values are the cached ones; nothing here recalculates. | P13 |
+| A foreign PDF's page text | The built-in reader parses this product's own PDFs; another writer's is reopened only by the rasteriser during render, and its reopen rung reports `unavailable` without it. | — |
+| The installed app | Not rebuilt or redeployed. | — |
+
+## P04 close-out
+
+- **Implemented** — safe format detection and package limits; one content and
+  evidence contract for Word, PowerPoint, Excel, PDF and text; versioned, hashed
+  templates; a five-rung validation ladder with an honest `unavailable`; two
+  pinned local render adapters; candidate/final registration with effect keys,
+  per-version dependency bindings, validations and renders; byte-preserving
+  targeted edits; ten tools; classification derived from the run; graph links on
+  real receipts; a publish-time recheck.
+- **Wired** — Rust catalogue, contract, policy, idempotency, plan, runner and
+  agent-path dispatcher; the TypeScript catalogue, names, conformance and budget;
+  UI labels; the deployment table; the run graph's receipt ledger in
+  `commands/agent.rs`.
+- **Tested** — the table above, on the production `authorize` → `execute` path
+  and across the real Node process boundary; a real render here; mutation-checked.
+- **Unverified or blocked** — the render/acceptance gate on the target machine;
+  composed authoring forms offered to a model.
+- **Remaining** — nothing else in P04's scope.
+
+**Exact next step:** P03 — context assembly, model scheduling and durable
+handoff (still not started; P05 and P06 need it). Begin at `agent_runtime/mod.rs`
+`context.refresh` and the 8k tool-budget pressure recorded as P04-OBS-1: role-
+scoped tool loading is what lets the artifact family, the producers and the
+sandbox share a small window.

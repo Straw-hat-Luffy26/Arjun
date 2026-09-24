@@ -203,6 +203,34 @@ pub const DEPENDENCIES: &[Dependency] = &[
         remedy: "Reinstall ARJUN; the attachment extractor ships inside the installer.",
     },
     Dependency {
+        id: "page-rasteriser",
+        label: "Page rasteriser",
+        needed_for: "showing a produced document's pages for visual review",
+        packaging: Packaging::Bundled,
+        // A Feature: without it a produced file is still reopened and its
+        // content checked; its pages are reported as not rendered, never as
+        // rendered.
+        criticality: Criticality::Feature,
+        env_override: Some("ARJUN_PAGE_RASTERISER"),
+        bundle_path: Some("sidecars/document_sidecar/render_pages.py"),
+        program: None,
+        remedy: "Reinstall ARJUN; the page rasteriser ships inside the installer.",
+    },
+    Dependency {
+        id: "office-renderer",
+        label: "LibreOffice",
+        needed_for: "laying out produced Word, PowerPoint and Excel files into pages for review",
+        packaging: Packaging::External,
+        // A Feature: the render rung of artifact validation reports
+        // "unavailable" without it, and nothing else depends on it.
+        criticality: Criticality::Feature,
+        env_override: Some("ARJUN_SOFFICE"),
+        bundle_path: None,
+        program: Some("soffice"),
+        remedy: "Install LibreOffice 24.2 or later (MPL-2.0) from the offline deployment pack, \
+                 or set ARJUN_SOFFICE to its soffice executable (soffice.com on Windows).",
+    },
+    Dependency {
         id: "graph-sidecar",
         label: "Knowledge graph sidecar",
         needed_for: "naming the relations between things a document mentions",

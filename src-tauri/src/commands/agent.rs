@@ -818,7 +818,10 @@ fn runtime(
         .ok()
         .and_then(|dir| {
             match crate::knowledge::graph::runtime_store::MemoryGraph::open(&dir) {
-                Ok(graph) => Some(Arc::new(graph)),
+                // The run's own event log is where its tool receipts are, so it is
+                // what an artifact linked into the graph on a receipt (P04) is
+                // checked against. Without it every such link stays a proposal.
+                Ok(graph) => Some(Arc::new(graph.with_receipts(state.events.clone()))),
                 Err(error) => {
                     log::error!(
                         "[context] the runtime memory graph could not be opened, so this session                          cannot compile graph context: {error}"

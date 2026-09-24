@@ -73,6 +73,16 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   // added to Rust. The published contract below is what found them.
   "artifact.list",
   "artifact.read",
+  "artifact.manifest",
+  "artifact.read_version",
+  "artifact.read_region",
+  "artifact.list_templates",
+  "artifact.validate",
+  "artifact.render",
+  "artifact.diff",
+  "artifact.resolve_evidence",
+  "artifact.register_version",
+  "artifact.edit",
 ]);
 
 /**
@@ -160,6 +170,16 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["notebook.remove_source", false],
   ["artifact.list", true],
   ["artifact.read", true],
+  ["artifact.manifest", true],
+  ["artifact.read_version", true],
+  ["artifact.read_region", true],
+  ["artifact.list_templates", true],
+  ["artifact.validate", true],
+  ["artifact.render", true],
+  ["artifact.diff", true],
+  ["artifact.resolve_evidence", true],
+  ["artifact.register_version", false],
+  ["artifact.edit", false],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

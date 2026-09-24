@@ -1244,11 +1244,22 @@ impl ToolRunner for LocalToolRunner<'_> {
             // conversation, and this runner is rebuilt per call and holds
             // neither. Answering here would mean answering a question about who
             // may read an artifact with no idea who is asking.
-            ToolName::ArtifactList | ToolName::ArtifactRead => Err(
-                "artifact.list and artifact.read are answered on the agent path, which \
-                 knows the signed-in owner and the conversation."
-                    .to_string(),
-            ),
+            ToolName::ArtifactList
+            | ToolName::ArtifactRead
+            | ToolName::ArtifactManifest
+            | ToolName::ArtifactReadVersion
+            | ToolName::ArtifactReadRegion
+            | ToolName::ArtifactListTemplates
+            | ToolName::ArtifactValidate
+            | ToolName::ArtifactRender
+            | ToolName::ArtifactDiff
+            | ToolName::ArtifactResolveEvidence
+            | ToolName::ArtifactRegisterVersion
+            | ToolName::ArtifactEdit => Err(format!(
+                "{} is answered on the agent path, which knows the signed-in owner and the \
+                 conversation.",
+                tool.as_str()
+            )),
             ToolName::SearchDocuments => self.search(call),
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),

@@ -31,6 +31,7 @@
 
 pub mod approval;
 pub mod artifacts;
+mod artifact_tools;
 pub mod audit_health;
 pub mod cancellation;
 pub mod chat_memory_bus;
@@ -989,7 +990,11 @@ fn tool_catalogue(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireE
             | Prerequisite::ModelRegistry
             | Prerequisite::ContainerSandbox
             | Prerequisite::MultimodalIndex
-            | Prerequisite::RunCalculations => true,
+            | Prerequisite::RunCalculations
+            // Both handler-checked: a missing renderer is reported as an
+            // unavailable rung, and a run with no conversation is told so.
+            | Prerequisite::PageRenderer
+            | Prerequisite::ConversationArtifacts => true,
         }
     };
 
@@ -1291,6 +1296,7 @@ fn bound_skill_body(body: &str) -> (String, bool) {
 }
 
 /// Fields both tool methods need off the wire.
+#[derive(Clone)]
 pub struct CallParams {
     pub run_id: String,
     pub tool_call_id: String,
@@ -2098,6 +2104,10 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // the tool's own reply unkept. The file was there the whole time; nothing
     // had written down where.
     let mut written: Option<std::path::PathBuf> = None;
+    // A version this call registered, linked into the memory graph once the
+    // call's own receipt exists -- which is after the handler returns.
+    let mut registered: Option<artifact_tools::Registered> = None;
+    let effect_key: Option<String> = effect.as_ref().map(|(key, _)| key.clone());
     // The chunks a retrieval call returned, so each passage the run holds can
     // be traced to the one call -- and the one durable event -- behind it.
     let mut evidence_chunks: Vec<String> = Vec::new();
@@ -2128,16 +2138,21 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
                 &calculations,
             )
         }
+        // The classification label comes from the evidence the run retrieved,
+        // never from the model's arguments (P04; contract map §7).
         ToolName::CreateXlsx => {
-            artifacts::create_xlsx(
+            let (label, _) = artifact_tools::run_classification(deps, &call.run_id);
+            artifacts::create_xlsx_classified(
                 resolved_path.as_deref(),
                 &deps.calculations,
                 &call.run_id,
                 Some(&tool_call),
+                &label,
             )
         }
         ToolName::CreatePptx => {
-            artifacts::create_pptx(&call, resolved_path.as_deref(), &tool_call)
+            let (label, _) = artifact_tools::run_classification(deps, &call.run_id);
+            artifacts::create_pptx_classified(&call, resolved_path.as_deref(), &tool_call, &label)
         }
         // Recorded as the run's evidence on the way past, and numbered once
         // across the whole run so a citation means one passage. See
@@ -2227,6 +2242,40 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         ToolName::ArtifactRead => artifact_read(deps, &call, &session, &tool_call),
         ToolName::NotebookAddSource => notebook_add_source(deps, &call, &session, &tool_call),
         ToolName::NotebookRemoveSource => notebook_remove_source(deps, &session, &tool_call),
+        ToolName::ArtifactManifest => artifact_tools::manifest(deps, &call, &session, &tool_call),
+        ToolName::ArtifactReadVersion => artifact_tools::read_version(deps, &call, &session, &tool_call),
+        ToolName::ArtifactReadRegion => artifact_tools::read_region(deps, &call, &session, &tool_call),
+        ToolName::ArtifactListTemplates => artifact_tools::list_templates(&tool_call),
+        ToolName::ArtifactDiff => artifact_tools::diff(deps, &call, &session, &tool_call),
+        ToolName::ArtifactResolveEvidence => {
+            artifact_tools::resolve_evidence(deps, &call, &session, &tool_call)
+        }
+        // Rendering starts external programs and waits on them, so it runs on
+        // the blocking pool rather than on the thread serving other calls.
+        ToolName::ArtifactValidate | ToolName::ArtifactRender => {
+            let (deps, call, session, tool_call) =
+                (deps.clone(), call.clone(), session.clone(), tool_call.clone());
+            tokio::task::spawn_blocking(move || {
+                if tool == ToolName::ArtifactValidate {
+                    artifact_tools::validate_version(&deps, &call, &session, &tool_call)
+                } else {
+                    artifact_tools::render_version(&deps, &call, &session, &tool_call)
+                }
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("the check stopped unexpectedly: {error}")))
+        }
+        ToolName::ArtifactRegisterVersion => {
+            artifact_tools::register_version(deps, &call, &session, &tool_call, &mut registered)
+        }
+        ToolName::ArtifactEdit => artifact_tools::edit_version(
+            deps,
+            &call,
+            &session,
+            &tool_call,
+            effect_key.as_deref(),
+            &mut registered,
+        ),
         ToolName::CreateChart => create_chart(deps, &call, &tool_call),
         ToolName::CreateDiagram => create_diagram(deps, &call, &tool_call, &mut written),
         ToolName::CreatePdf => create_pdf(deps, &call, &tool_call, &mut written),
@@ -2351,19 +2400,37 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         // The gateway's path when there was an argument to resolve, otherwise
         // the one the producer wrote down itself. Neither is a guess: both name
         // a file this process has just written.
-        remember_if_produced(
+        if let Some(produced) = remember_if_produced(
             deps,
             &call.run_id,
             tool,
             resolved_path.as_deref().or(written.as_deref()),
             &session,
             &tool_call,
-        );
+            effect_key.as_deref(),
+        ) {
+            registered = Some(produced);
+        }
     }
     // The durable event first, so the in-memory record can carry the receipt
     // it was written as -- a child's findings name *this* event, not the first
     // call, the parent run or whichever event happened to be last.
     let recorded = remember_outcome(deps, &call, tool, resolved_path.as_deref(), &outcome);
+    // The version this call registered goes into the memory graph on this
+    // call's receipt, resting on the memory items it cites -- so a correction
+    // to one of them reaches the artifact through the graph's own staleness.
+    if let (Ok(_), Some(done)) = (&outcome, registered.take()) {
+        artifact_tools::link_to_graph(
+            deps,
+            &session,
+            &call.run_id,
+            tool,
+            &done.record,
+            &done.dependencies,
+            done.base.as_ref(),
+            recorded.clone(),
+        );
+    }
     record_call(
         deps,
         &call.run_id,
@@ -2431,7 +2498,15 @@ async fn validate(
 
     let report = artifacts::check(&produced);
     if report.sound {
-        Ok(format!("{}: {}", report.name, report.detail))
+        // Said, because the name promises more than this does: a reopen and
+        // a template check, for every kind this run produced -- not a render,
+        // not a citation check, not a recheck of sources, and not acceptance.
+        // `artifact.validate` is that ladder (P04).
+        Ok(format!(
+            "{}: {} This is a reopen check only; artifact.validate renders it, binds its \
+             citations, rechecks its sources and decides acceptance.",
+            report.name, report.detail
+        ))
     } else {
         Err(format!(
             "{} did not pass its check: {}. Correct it and produce it again.",
@@ -2454,7 +2529,8 @@ fn remember_if_produced(
     resolved_path: Option<&Path>,
     session: &Session,
     tool_call: &ToolCall,
-) {
+    effect_key: Option<&str>,
+) -> Option<artifact_tools::Registered> {
     let kind = match tool {
         ToolName::CreateDocx => artifacts::Kind::Document,
         ToolName::CreateXlsx => artifacts::Kind::Workbook,
@@ -2471,9 +2547,9 @@ fn remember_if_produced(
         // comes back in the tool result and is drawn in the message, so there
         // is nothing on disk to re-open and nothing to record. A `Chart` kind
         // would be a variant nothing could ever produce.
-        _ => return,
+        _ => return None,
     };
-    let Some(path) = resolved_path else { return };
+    let path = resolved_path?;
 
     let template = if tool == ToolName::CreateDocx {
         tool_call.text("template").map(str::to_string)
@@ -2482,8 +2558,10 @@ fn remember_if_produced(
     };
     let root = deps.root_for(run_id);
     let produced = artifacts::produced_from(path, root.as_deref(), kind, template);
-    register_conversation_artifact(deps, run_id, tool, session, &produced, path);
+    let registered =
+        register_conversation_artifact(deps, run_id, tool, session, &produced, path, tool_call, effect_key);
     artifacts::remember(&deps.produced, run_id, produced);
+    registered
 }
 
 /// The largest file this copies into the conversation store.
@@ -2548,6 +2626,7 @@ const MAX_CONVERSATION_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024;
 /// copy is a degraded record, not a failed write, and returning an error here
 /// would tell the model its file did not get written — sending it to write the
 /// file again, which is the one outcome worse than the missing copy.
+#[allow(clippy::too_many_arguments)]
 fn register_conversation_artifact(
     deps: &Arc<RuntimeDeps>,
     run_id: &str,
@@ -2555,14 +2634,14 @@ fn register_conversation_artifact(
     session: &Session,
     produced: &artifacts::Produced,
     path: &Path,
-) {
+    tool_call: &ToolCall,
+    effect_key: Option<&str>,
+) -> Option<artifact_tools::Registered> {
     use crate::artifacts::conversation_store::{NewArtifact, Producer};
 
     // A run outside a conversation has nowhere to put this. The demonstrator
     // and the subagent paths are both legitimately in that position.
-    let Some(conversation_id) = deps.run_to_conversation.lookup(run_id) else {
-        return;
-    };
+    let conversation_id = deps.run_to_conversation.lookup(run_id)?;
 
     // Asked of the metadata, so an oversized file is never read into memory
     // just to discover it is oversized.
@@ -2575,7 +2654,7 @@ fn register_conversation_artifact(
                 metadata.len(),
                 MAX_CONVERSATION_ARTIFACT_BYTES
             );
-            return;
+            return None;
         }
         Ok(_) => {}
         Err(error) => {
@@ -2584,7 +2663,7 @@ fn register_conversation_artifact(
                  taken: {error}",
                 produced.name
             );
-            return;
+            return None;
         }
     }
 
@@ -2596,7 +2675,7 @@ fn register_conversation_artifact(
                  taken: {error}",
                 produced.name
             );
-            return;
+            return None;
         }
     };
 
@@ -2609,7 +2688,21 @@ fn register_conversation_artifact(
 
     let kind = conversation_kind_of(produced.kind, path);
     let language = language_of(path);
-    let recorded = deps.conversation_artifacts.record(NewArtifact {
+    // A produced file is a candidate: its template, the run's classification
+    // and every citation it makes, bound to what the run actually retrieved,
+    // are recorded with it (P04).
+    let meta = artifact_tools::meta_for_produced(
+        deps,
+        run_id,
+        session,
+        &conversation_id,
+        tool,
+        tool_call,
+        &content,
+        effect_key,
+    );
+    let dependencies = meta.dependencies.clone();
+    let recorded = deps.conversation_artifacts.record_version(NewArtifact {
         artifact_id: Some(artifact_id),
         conversation_id,
         owner_user_id: session.user.id.clone(),
@@ -2637,21 +2730,30 @@ fn register_conversation_artifact(
         language,
         render_requires: Vec::new(),
         content,
-    });
+    }, meta);
 
     match recorded {
-        Ok(record) => log::info!(
-            "[artifacts] run={run_id} copied {} ({}, {} bytes) into the conversation from {}",
-            record.reference(),
-            record.kind.as_str(),
-            record.bytes,
-            tool.as_str()
-        ),
-        Err(error) => log::warn!(
-            "[artifacts] run={run_id} {} was written but could not be copied into the \
-             conversation: {error}",
-            produced.name
-        ),
+        Ok(registration) => {
+            let record = registration.record;
+            log::info!(
+                "[artifacts] run={run_id} {} {} ({}, {} bytes, {}) from {}",
+                if registration.duplicate { "already held" } else { "registered" },
+                record.reference(),
+                record.kind.as_str(),
+                record.bytes,
+                record.stage.as_str(),
+                tool.as_str()
+            );
+            Some(artifact_tools::Registered { record, dependencies, base: None })
+        }
+        Err(error) => {
+            log::warn!(
+                "[artifacts] run={run_id} {} was written but could not be copied into the \
+                 conversation: {error}",
+                produced.name
+            );
+            None
+        }
     }
 }
 
@@ -4014,11 +4116,9 @@ fn create_pdf(
         &title,
         parse_document_body(&tool_call.text("body").unwrap_or_default()),
     );
-    let classification = tool_call
-        .text("classification")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    // Derived from the evidence the run retrieved; a `classification`
+    // argument is accepted for old callers and not used (P04).
+    let (classification, _) = artifact_tools::run_classification(deps, &call.run_id);
 
     // Through the content model and its production loop, not straight to disk.
     //
@@ -4191,11 +4291,8 @@ fn create_table(
     }
 
     let (path, name) = artifact_path(deps, call, &title, "xlsx")?;
-    let classification = tool_call
-        .text("classification")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    // Derived from the run, as in `create_pdf`.
+    let (classification, _) = artifact_tools::run_classification(deps, &call.run_id);
     crate::artifacts::xlsx::write_table(&path, &title, &header, &rows, &classification)?;
     // After the write, for the reason given in `create_pdf`.
     *written = Some(path);
@@ -4582,6 +4679,8 @@ pub fn catalogue() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod artifact_carryover_tests;
+#[cfg(test)]
+mod artifact_tools_tests;
 
 #[cfg(test)]
 mod conversations_tests;

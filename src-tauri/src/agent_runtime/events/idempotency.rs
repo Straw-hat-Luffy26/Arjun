@@ -89,6 +89,10 @@ pub const fn is_side_effecting(tool: ToolName) -> bool {
             | ToolName::CreateDiagram
             | ToolName::CreatePdf
             | ToolName::CreateTable
+            // Publishing a version and writing an edited one. A resumed run
+            // must neither publish twice nor stack a second edit on the first.
+            | ToolName::ArtifactRegisterVersion
+            | ToolName::ArtifactEdit
     )
 }
 

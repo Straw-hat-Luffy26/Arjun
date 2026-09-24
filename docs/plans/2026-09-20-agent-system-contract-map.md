@@ -4,8 +4,9 @@ Delivered by plan prompt **P01**. The machine-readable authority is
 [`agent-runtime/src/tool-contract.json`](../../agent-runtime/src/tool-contract.json),
 generated from [`src-tauri/src/orchestrator/contract.rs`](../../src-tauri/src/orchestrator/contract.rs)
 and held byte-equal to it by `orchestrator::contract::tests::the_published_contract_is_current`.
-This page is the human reading of that file at the P01 working tree; where the
-two disagree, the JSON is right and this page is stale.
+This page is the human reading of that file at the P01 working tree, extended by
+P04 (ten artifact tools, §2 and §8); where the two disagree, the JSON is right and
+this page is stale.
 
 Regenerate the JSON after changing any tool:
 
@@ -55,11 +56,21 @@ the same, with the pending intent promoted to `unknown` rather than retried;
 | `artifact.create_calculation_workbook` | create_xlsx | path | sheets, title, classification | write / side-effecting | automatic | A → `artifacts::create_xlsx` | workspace@gw, calculations@h | artifact | wait+intent | 120 |
 | `artifact.create_chart` | create_chart | title, kind, categories, series, valueLabel | — | write / side-effecting | automatic | A → `create_chart` | — | artifact | wait+intent | 120 |
 | `artifact.create_diagram` | create_diagram, create_flowchart, artifact.create_flowchart | title, direction, blocks, connections | — | write / side-effecting | automatic | A → `create_diagram` | — | artifact | wait+intent | 120 |
-| `artifact.create_pdf` | create_pdf | title, classification, body | — | write / side-effecting | automatic | A → `create_pdf` | — | artifact | wait+intent | 120 |
-| `artifact.create_table` | create_table | title, header, rows, classification | — | write / side-effecting | automatic | A → `create_table` | — | artifact | wait+intent | 120 |
+| `artifact.create_pdf` | create_pdf | title, body | classification | write / side-effecting | automatic | A → `create_pdf` | — | artifact | wait+intent | 120 |
+| `artifact.create_table` | create_table | title, header, rows | classification | write / side-effecting | automatic | A → `create_table` | — | artifact | wait+intent | 120 |
 | `artifact.list` | — | — | kind | read / read-only | automatic | A → `artifact_list` | — | text | wait | 30 |
 | `artifact.read` | — | artifact | version | read / read-only | automatic | A → `artifact_read` | — | text | wait | 30 |
-| `artifact.verify_docx` | validate_artifact | path | — | read / read-only | automatic | A → `validate` | workspace@gw | text | wait | 60 |
+| `artifact.diff` | — | artifact | fromVersion, toVersion, against | read / read-only | automatic | A → `artifact_tools::diff` | conversation@h | text | wait | 30 |
+| `artifact.edit` | — | artifact, edits | version | write / side-effecting | automatic | A → `artifact_tools::edit_version` | conversation@h | artifact | wait+intent | 120 |
+| `artifact.list_templates` | — | — | format | read / read-only | automatic | A → `artifact_tools::list_templates` | — | text | wait | 5 |
+| `artifact.manifest` | — | artifact | version | read / read-only | automatic | A → `artifact_tools::manifest` | conversation@h | text | wait | 30 |
+| `artifact.read_region` | — | artifact, region | version | read / read-only | automatic | A → `artifact_tools::read_region` | conversation@h | text | wait | 30 |
+| `artifact.read_version` | — | artifact | version, fromUnit, maxUnits | read / read-only | automatic | A → `artifact_tools::read_version` | conversation@h | text | wait | 30 |
+| `artifact.register_version` | — | artifact, stage | effectKey | write / side-effecting | person | A → `artifact_tools::register_version` | conversation@h | text | wait+intent | 30 |
+| `artifact.render` | — | artifact | version, fromPage, toPage | read / read-only | automatic | A → `artifact_tools::render_version` | conversation@h, page renderer@h | text | wait | 120 |
+| `artifact.resolve_evidence` | — | artifact | version | read / read-only | automatic | A → `artifact_tools::resolve_evidence` | conversation@h | text | wait | 30 |
+| `artifact.validate` | — | artifact | version, render, fromPage, toPage | read / read-only | automatic | A → `artifact_tools::validate_version` | conversation@h, page renderer@h | text | wait | 120 |
+| `artifact.verify_docx` (a reopen check, not acceptance — P04) | validate_artifact | path | — | read / read-only | automatic | A → `validate` | workspace@gw | text | wait | 60 |
 | `calculation.evaluate_with_units` | run_calculation | expression | — | read / reversible | automatic | R → `calculate`, then the run's calculation table | — | calculation | wait | 5 |
 | `capability.search` | — | query | — | read / read-only | automatic | A → `capability_search` | — | text | wait | 5 |
 | `document.read_pages` | — | documentSha256, fromPage | toPage | read / read-only | automatic | A → `read_attached_pages` | — | text | wait | 10 |
@@ -173,7 +184,7 @@ model-facing tool calls in this build (P05/P11).
 | Where | What | Owner |
 |---|---|---|
 | `knowledge.search_authorized` on the agent path | `detail: "citations"` is honoured by `LocalToolRunner::search` but not by `retrieval::record`, which the agent path uses — full passages come back. | P07 |
-| `artifact.create_pdf`, `artifact.create_table` (and the optional `classification` on the OOXML writers) | The classification label is taken from the model's arguments; §11.1 requires it be derived from the run. | P04 |
+| `artifact.create_pdf`, `artifact.create_table` (and the optional `classification` on the OOXML writers) | **Closed in P04**: the label is derived from the classifications of the passages the run retrieved; the argument is accepted for old callers and ignored (now optional on all four). | — |
 | `media.extract_findings` | Declares `loopback` and 90 s, but reads text the ingest pipeline already extracted; no OCR runs at call time. | P06 |
 | every tool but delegation and the sandbox | `ToolSpec::timeout` bounds the runtime's *wait*; the Rust handler is not interrupted. | P03 |
 | `model_policy` | The definition's eligible set is recorded (`within_eligible`) and not enforced by routing. | P03 |
@@ -183,4 +194,22 @@ model-facing tool calls in this build (P05/P11).
 | `SubagentManager::recall` | A replayed result is rebuilt with schema `retrieval` whatever the original was. | P02/P05 |
 | idempotency key | Derived from the dispatch key as given, so the same agent named by role key and by `ag-` id yields two keys. | P05 |
 | `artifact.create_flowchart` | Resolved by Rust, unknown to the runtime's alias table. | — |
-| `src/services/toolNames.ts` | The UI label table lacks 12 tools; they display their wire name. | P14 |
+| `src/services/toolNames.ts` | The UI label table lacks 12 tools; they display their wire name. (P04's ten were added with labels.) | P14 |
+| `artifact.create_approval_note` `sections`, `artifact.create_calculation_workbook` `sheets` | The gateway now accepts them as lists (P04 fixed `Object`, which refused every composed call); the TypeScript catalogue still does not offer them, so a model reaches only the templates. | P09 / P13 |
+| `artifact.render`, `artifact.validate` | LibreOffice runs with no OS-level network isolation; the guarantee is refusal before start (no fetchable reference, remote field or macro) plus a macro-disabled throwaway profile. Rendered pages have no retention policy. | P14 / P16 |
+
+## 8. The artifact contract (P04)
+
+Ten tools on the agent path, all resolved through the owner-scoped
+conversation store and checked against the run's own conversation; none takes a
+path. `artifact.register_version` is the only one a person approves.
+
+| Concept | Where | Contract |
+|---|---|---|
+| Format | `artifacts::package` | Read from the bytes; a claim (extension, media type) that disagrees fails the reopen rung. ZIP limits, zip-slip names, macros, fetchable external relationships and remote Word fields are found before anything opens or renders. |
+| Content and evidence | `artifacts::content` | One `ContentModel` of located units (`p:N`, `slide:N/title`, `slide:N/body:K`, `slide:N/notes`, `sheet:Name!A1`, `page:N`, `line:N`) with their citations (`[En]`, `[A:id@v]`, `[M:item@rev]`, `[S:sha@loc]`), one region grammar, one unit diff — for Word, PowerPoint, Excel, PDF and text. |
+| Version | `conversation_store` | Immutable bytes, re-hashed on every read. Stage `recorded` → `candidate` → `final`, forward only; `final` only through an accepted validation of the same SHA-256. Dependencies per version, each with the marker that named it. Effect keys owner-scoped; the first registration stands. |
+| Validation | `artifacts::validation` | `fileCreated` → `formatReopened` → `contentChecked` → `renderChecked` → `accepted`, each `passed`/`failed`/`unavailable`/`notApplicable`/`notRun` with its validator and version. Accepted is not a person's approval. |
+| Render | `artifacts::render` | LibreOffice (office/SVG → PDF) and PyMuPDF (`render_pages.py`, PDF → PNG + text + blank flag), qualified series recorded; anything else is `unavailable`. Handles: `render:<id>/page:<n>`. |
+| Graph | `agent_runtime::artifact_tools::link_to_graph` | An `ArtifactRef` node on the producing call's own receipt, `depends_on` its memory dependencies, so P02's staleness reaches it. |
+| Publication | `register_version stage=final` | Rechecks every dependency and the template now, requires an accepted validation of these bytes, then a person. |

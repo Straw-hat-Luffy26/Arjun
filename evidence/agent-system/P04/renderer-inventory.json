@@ -1,0 +1,31 @@
+{
+    "office": {
+        "name": "LibreOffice",
+        "available": true,
+        "version": "24.2.7.2",
+        "qualified": true,
+        "qualifiedSeries": [
+            "24.2",
+            "24.8",
+            "25.2",
+            "25.8"
+        ],
+        "licence": "MPL-2.0 (LibreOffice)",
+        "provisioning": "External. Install LibreOffice from the offline deployment pack, or set ARJUN_SOFFICE to its soffice executable (soffice.com on Windows)."
+    },
+    "rasteriser": {
+        "name": "PyMuPDF",
+        "available": true,
+        "version": "1.28.2",
+        "qualified": true,
+        "qualifiedSeries": [
+            "1.24",
+            "1.25",
+            "1.26",
+            "1.27",
+            "1.28"
+        ],
+        "licence": "AGPL-3.0 (PyMuPDF), already required by the document sidecar",
+        "provisioning": "Bundled script sidecars/document_sidecar/render_pages.py; PyMuPDF is installed with the document sidecar's Python packages."
+    }
+}

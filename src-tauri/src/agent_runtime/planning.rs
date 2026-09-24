@@ -126,6 +126,35 @@ const DECK_WORDS: &[&str] = &[
     "pitch deck",
 ];
 
+/// Words that mean an existing artifact is being checked, compared, revised or
+/// published — the work the P04 artifact tools exist for.
+///
+/// Phrases where a bare word would mislead: "check" alone is every other
+/// question ("check the pressure"), so it is matched only against something a
+/// file is.
+const ARTIFACT_WORK_WORDS: &[&str] = &[
+    "review the",
+    "validate",
+    "verify the document",
+    "verify the deck",
+    "verify the workbook",
+    "check the document",
+    "check the deck",
+    "check the workbook",
+    "check the note",
+    "render",
+    "diff",
+    "compare version",
+    "compare the version",
+    "revise",
+    "revision",
+    "edit the",
+    "publish",
+    "final version",
+    "citation",
+    "template",
+];
+
 /// Words that mean a sandbox is wanted, and cannot mean anything else here.
 ///
 /// The additions are the vocabulary of building something that runs, chosen
@@ -591,6 +620,7 @@ pub fn derive(prompt: &str) -> DerivedPlan {
     if produces_workbook || calculates {
         permitted.push(ToolName::CreateXlsx);
     }
+
     if writes_code {
         permitted.push(ToolName::ExecuteCode);
     }
@@ -615,6 +645,36 @@ pub fn derive(prompt: &str) -> DerivedPlan {
     // deliverable run unfinished for not promoting something nobody approved.
     if produces_document || produces_deck || mentions(&lower, MEMORY_WORDS) {
         permitted.push(ToolName::MemoryPromoteApproved);
+    }
+
+    // The shared artifact tools (P04): manifest, bounded reads, templates,
+    // validation, rendering, diff, evidence resolution, registration and
+    // targeted edits. Offered where a deliverable is produced or an existing
+    // one is worked on, and not on every turn: ten schemas are a real share of
+    // a small served window (P01-OBS-1), and a turn that answers a question
+    // has no artifact to check.
+    //
+    // Last in the list on purpose. When a window is too small for everything
+    // the plan permits, the runtime drops tools from the tail
+    // (`tool-budget.ts`); these are the ones a run can best do without, so
+    // they go before any producer, the sandbox or promotion.
+    if produces_document
+        || produces_deck
+        || produces_workbook
+        || mentions(&lower, ARTIFACT_WORK_WORDS)
+    {
+        permitted.extend([
+            ToolName::ArtifactManifest,
+            ToolName::ArtifactReadVersion,
+            ToolName::ArtifactReadRegion,
+            ToolName::ArtifactListTemplates,
+            ToolName::ArtifactValidate,
+            ToolName::ArtifactRender,
+            ToolName::ArtifactDiff,
+            ToolName::ArtifactResolveEvidence,
+            ToolName::ArtifactRegisterVersion,
+            ToolName::ArtifactEdit,
+        ]);
     }
 
     // The sovereignty filter, applied once and last.

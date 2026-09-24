@@ -1,0 +1,9 @@
+RENDER-OUTCOME Rendered Laid out to 2 page(s); rasterised 2 of them (pages 1-2). [RendererUsed { name: "LibreOffice", version: "24.2.7.2" }, RendererUsed { name: "PyMuPDF", version: "1.28.2" }]
+P04-VALIDATION Validation 1 of art-file-12b3a63243e8c7c5@1 (sha-256 cea327c5fa4d, Word document (OOXML)):
+- file created: passed — 2232 bytes, sha-256 cea327c5fa4d [artifact-store@arjun-0.2.0]
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses [format-reader@arjun-0.2.0]
+- content checked: passed — 18 unit(s) of content, 1 citation(s) each bound to evidence, and everything the document_model template promises [content-checks@arjun-0.2.0]
+- render checked: passed — Laid out to 1 page(s); rasterised 1 of them (pages 1-1). [LibreOffice@24.2.7.2 + PyMuPDF@1.28.2]
+- accepted: passed — every machine check passed and everything it rests on is current; a person's approval is still separate [acceptance@arjun-0.2.0]
+- render:rnd-9f02151bfaab435488e5601851b7e28b/page:1 — 1240×1754 px, 745 characters of text, image sha-256 8ff2ea61547f
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2802 filtered out; finished in 3.15s

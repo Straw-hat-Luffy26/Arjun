@@ -37,11 +37,13 @@ function catalogue(): BudgetableTool[] {
  *
  * A budget of `1` would also reach the smallest stage, but it reaches it by
  * amputating the catalogue down to one tool — which is a different question
- * from "how small can the whole catalogue be made". 3,000 is comfortably above
- * the answer, so the fitter compresses to `minimal` and drops nothing.
+ * from "how small can the whole catalogue be made". The budget has to sit
+ * between the `minimal` size and the next stage up: measured at P04 (43 tools)
+ * as 3,902 tokens at `minimal` and 4,399 at `schemaOnly`, so 4,000 compresses to
+ * `minimal` and drops nothing. It was 3,000 at 33 tools.
  */
 function minimalCatalogue(): BudgetableTool[] {
-  const fitted = fitToolsToBudget(catalogue(), 3_000);
+  const fitted = fitToolsToBudget(catalogue(), 4_000);
   if (fitted.report.stage !== "minimal" || fitted.report.dropped.length > 0) {
     throw new Error(
       `expected the whole catalogue at the smallest stage, got ${fitted.report.stage} with ` +
@@ -50,6 +52,20 @@ function minimalCatalogue(): BudgetableTool[] {
   }
   return fitted.tools;
 }
+
+/** The ten tools P04 added, which plans list last and the fitter drops first. */
+const P04_ARTIFACT_TOOLS: ReadonlySet<string> = new Set([
+  "artifact.manifest",
+  "artifact.read_version",
+  "artifact.read_region",
+  "artifact.list_templates",
+  "artifact.validate",
+  "artifact.render",
+  "artifact.diff",
+  "artifact.resolve_evidence",
+  "artifact.register_version",
+  "artifact.edit",
+]);
 
 /** Every `properties` key in a schema, at every depth. */
 function propertyNames(schema: unknown, found: string[] = []): string[] {
@@ -75,15 +91,39 @@ describe("the tool catalogue against a small window", () => {
     expect(catalogueTokens(catalogue())).toBeGreaterThan(8_192);
   });
 
-  it("fits the budget an 8k model can afford, with every tool intact", () => {
+  it("fits the budget an 8k model can afford, with every tool before P04 intact", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
-    const fitted = fitToolsToBudget(catalogue(), budget);
+    const core = catalogue().filter((tool) => !P04_ARTIFACT_TOOLS.has(tool.name));
+    const fitted = fitToolsToBudget(core, budget);
 
     expect(fitted.report.tokens).toBeLessThanOrEqual(budget);
     expect(fitted.report.overBudget).toBe(false);
     // Compression before amputation: nothing is dropped at this size.
-    expect(fitted.tools).toHaveLength(TOOL_DEFINITIONS.length);
+    expect(fitted.tools).toHaveLength(core.length);
     expect(fitted.report.dropped).toEqual([]);
+  });
+
+  /**
+   * P04-OBS-1. With the ten shared artifact tools the *whole* catalogue no
+   * longer fits an 8k window even at `minimal` (3,902 tokens against a budget
+   * of about 3,690). No plan offers the whole catalogue: `planning::derive`
+   * permits the artifact family only for work on a deliverable, and lists it
+   * last. So when a plan does permit everything and the window is 8k, what is
+   * dropped must be that family, from the tail, and said — never a producer,
+   * the sandbox or retrieval. Role-scoped loading (plan P03) is the remedy.
+   */
+  it("drops only the P04 artifact family, from the tail, when the whole catalogue meets an 8k window", () => {
+    const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
+    const fitted = fitToolsToBudget(catalogue(), budget);
+
+    expect(fitted.report.overBudget).toBe(false);
+    expect(fitted.report.dropped.length).toBeGreaterThan(0);
+    for (const name of fitted.report.dropped) {
+      expect(P04_ARTIFACT_TOOLS.has(name), `${name} was dropped`).toBe(true);
+    }
+    for (const tool of catalogue().filter((t) => !P04_ARTIFACT_TOOLS.has(t.name))) {
+      expect(fitted.tools.some((kept) => kept.name === tool.name), `${tool.name} kept`).toBe(true);
+    }
   });
 
   it("leaves the whole request inside the window on the case that failed", () => {

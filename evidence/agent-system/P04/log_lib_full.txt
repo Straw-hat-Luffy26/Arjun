@@ -1,0 +1,11 @@
+# cargo test --manifest-path src-tauri/Cargo.toml --lib --no-fail-fast (final, P04 working tree)
+test agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring ... FAILED
+test skills::containment::tests::an_absolute_path_is_refused_before_it_is_joined ... FAILED
+thread 'agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring' (25070) panicked at src/agent_runtime/tests.rs:596:9:
+thread 'skills::containment::tests::an_absolute_path_is_refused_before_it_is_joined' (28269) panicked at src/skills/containment.rs:168:9:
+test result: FAILED. 2799 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 34.54s
+
+# The two failures, run at HEAD 20061fc (before P04) in a clean worktree on this Linux machine:
+test skills::containment::tests::an_absolute_path_is_refused_before_it_is_joined ... FAILED
+test agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 2748 filtered out; finished in 0.26s

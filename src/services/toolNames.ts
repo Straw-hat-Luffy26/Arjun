@@ -47,6 +47,17 @@ export const CANONICAL_TOOL_NAMES = [
   'capability.search',
   'agent.delegate_readonly',
   'sovereignty.get_evidence',
+  // P04's shared artifact tools.
+  'artifact.manifest',
+  'artifact.read_version',
+  'artifact.read_region',
+  'artifact.list_templates',
+  'artifact.validate',
+  'artifact.render',
+  'artifact.diff',
+  'artifact.resolve_evidence',
+  'artifact.register_version',
+  'artifact.edit',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -123,6 +134,16 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'capability.search': 'Looking for a relevant skill',
   'agent.delegate_readonly': 'Asking a sub-task to read something',
   'sovereignty.get_evidence': 'Collecting sovereignty evidence',
+  'artifact.manifest': 'Reading what is recorded about an artifact',
+  'artifact.read_version': 'Reading an artifact version',
+  'artifact.read_region': 'Reading part of an artifact',
+  'artifact.list_templates': 'Listing the templates',
+  'artifact.validate': 'Validating an artifact',
+  'artifact.render': 'Rendering an artifact\'s pages',
+  'artifact.diff': 'Comparing two versions',
+  'artifact.resolve_evidence': 'Checking what the citations rest on',
+  'artifact.register_version': 'Publishing an artifact version',
+  'artifact.edit': 'Editing part of an artifact',
 };
 
 /**

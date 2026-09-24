@@ -90,6 +90,12 @@ pub enum Prerequisite {
     /// At least one calculation already run in this task, for the calculation
     /// workbook form.
     RunCalculations,
+    /// The pinned layout engine and rasteriser (`artifacts::render`). Unmet
+    /// is reported as an unavailable rung, never as a pass.
+    PageRenderer,
+    /// The run is attached to a conversation, whose artifact store the tool
+    /// reads.
+    ConversationArtifacts,
 }
 
 /// Where a prerequisite is checked.
@@ -112,7 +118,9 @@ impl Prerequisite {
             Prerequisite::ModelRegistry
             | Prerequisite::ContainerSandbox
             | Prerequisite::MultimodalIndex
-            | Prerequisite::RunCalculations => CheckedAt::Handler,
+            | Prerequisite::RunCalculations
+            | Prerequisite::PageRenderer
+            | Prerequisite::ConversationArtifacts => CheckedAt::Handler,
         }
     }
 }
@@ -233,6 +241,16 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
         ToolName::CreateDiagram => (AgentPath, "agent_runtime::create_diagram"),
         ToolName::CreatePdf => (AgentPath, "agent_runtime::create_pdf"),
         ToolName::CreateTable => (AgentPath, "agent_runtime::create_table"),
+        ToolName::ArtifactManifest => (AgentPath, "agent_runtime::artifact_tools::manifest"),
+        ToolName::ArtifactReadVersion => (AgentPath, "agent_runtime::artifact_tools::read_version"),
+        ToolName::ArtifactReadRegion => (AgentPath, "agent_runtime::artifact_tools::read_region"),
+        ToolName::ArtifactListTemplates => (AgentPath, "agent_runtime::artifact_tools::list_templates"),
+        ToolName::ArtifactValidate => (AgentPath, "agent_runtime::artifact_tools::validate_version"),
+        ToolName::ArtifactRender => (AgentPath, "agent_runtime::artifact_tools::render_version"),
+        ToolName::ArtifactDiff => (AgentPath, "agent_runtime::artifact_tools::diff"),
+        ToolName::ArtifactResolveEvidence => (AgentPath, "agent_runtime::artifact_tools::resolve_evidence"),
+        ToolName::ArtifactRegisterVersion => (AgentPath, "agent_runtime::artifact_tools::register_version"),
+        ToolName::ArtifactEdit => (AgentPath, "agent_runtime::artifact_tools::edit_version"),
         ToolName::MediaExtractFindings => (Runner, "LocalToolRunner::extract_findings"),
         ToolName::KnowledgeMultimodalRetrieve => (Runner, "LocalToolRunner::multimodal_retrieve"),
         ToolName::ReadScopedFile => (Runner, "LocalToolRunner::read"),
@@ -265,6 +283,14 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         ToolName::AgentDelegateReadonly => &[SubagentWorker, ModelRegistry],
         ToolName::ExecuteCode => &[ContainerSandbox],
         ToolName::KnowledgeMultimodalRetrieve => &[MultimodalIndex],
+        ToolName::ArtifactValidate | ToolName::ArtifactRender => &[ConversationArtifacts, PageRenderer],
+        ToolName::ArtifactManifest
+        | ToolName::ArtifactReadVersion
+        | ToolName::ArtifactReadRegion
+        | ToolName::ArtifactDiff
+        | ToolName::ArtifactResolveEvidence
+        | ToolName::ArtifactRegisterVersion
+        | ToolName::ArtifactEdit => &[ConversationArtifacts],
         // `media.extract_findings` reads text the ingest pipeline already
         // extracted. It calls no OCR engine at request time -- a page nothing
         // read comes back named as unread -- so it has no engine to require.
@@ -291,7 +317,8 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         | ToolName::CreatePdf
         | ToolName::CreateTable
         | ToolName::ArtifactList
-        | ToolName::ArtifactRead => &[],
+        | ToolName::ArtifactRead
+        | ToolName::ArtifactListTemplates => &[],
     }
 }
 
@@ -311,7 +338,8 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::CreateChart
         | ToolName::CreateDiagram
         | ToolName::CreatePdf
-        | ToolName::CreateTable => Artifact,
+        | ToolName::CreateTable
+        | ToolName::ArtifactEdit => Artifact,
         ToolName::ExecuteCode => Execution,
         ToolName::AgentDelegateReadonly => ChildResult,
         ToolName::MemoryRecallAuthorized
@@ -331,7 +359,17 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::NotebookAddSource
         | ToolName::NotebookRemoveSource
         | ToolName::ArtifactList
-        | ToolName::ArtifactRead => Text,
+        | ToolName::ArtifactRead
+        | ToolName::ArtifactManifest
+        | ToolName::ArtifactReadVersion
+        | ToolName::ArtifactReadRegion
+        | ToolName::ArtifactListTemplates
+        | ToolName::ArtifactValidate
+        | ToolName::ArtifactRender
+        | ToolName::ArtifactDiff
+        | ToolName::ArtifactResolveEvidence
+        // Publishing changes a version's stage and writes no file.
+        | ToolName::ArtifactRegisterVersion => Text,
     }
 }
 

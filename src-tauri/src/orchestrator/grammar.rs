@@ -450,11 +450,16 @@ mod tests {
         assert!(grammar.gbnf.contains("notebook.list"), "{}", grammar.gbnf);
     }
 
+    /// The preamble names every tool it is built for, so its length grows with
+    /// the catalogue: about twenty-five bytes per tool. The bound is for the
+    /// whole catalogue (43 tools since P04's artifact tools), which no plan
+    /// offers at once -- a plan permits the artifact family only for work on a
+    /// deliverable.
     #[test]
     fn the_preamble_is_brief() {
         let grammar = build(ToolName::ALL).unwrap();
         assert!(
-            grammar.preamble().len() < 900,
+            grammar.preamble().len() < 1200,
             "the preamble should not crowd out the task itself (it is {})",
             grammar.preamble().len()
         );

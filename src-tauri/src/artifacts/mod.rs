@@ -20,23 +20,30 @@
 
 pub mod chart;
 pub mod captured_blocks;
+pub mod content;
 pub mod conversation_store;
 pub mod diagram;
 pub mod doc_model;
+pub mod edit;
 pub mod docx;
 pub mod live_source;
 pub mod ooxml;
+pub mod package;
 pub mod pdf;
 pub mod pdf_validate;
 pub mod pptx;
 pub mod produce_model;
+pub mod render;
 pub mod production;
 pub mod stego_watermark;
 pub mod svg_validate;
+pub mod templates;
 pub mod visible_watermark;
 pub mod xlsx;
 pub mod text_formats;
+pub mod validation;
 pub mod verifier;
+pub mod xml_events;
 
 pub use docx::{check_document, write_document, DocumentCheck, DocumentMetadata};
 pub use pptx::{check_deck, write_deck, DeckCheck, Slide, BRIEFING_SECTIONS};

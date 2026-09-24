@@ -1,0 +1,22 @@
+     Running tests/agent_runtime.rs (src-tauri/target/debug/deps/agent_runtime-e6ab37dc075af3a6)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+     Running tests/artifact_formats_end_to_end.rs (src-tauri/target/debug/deps/artifact_formats_end_to_end-0d54d6d28633a005)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/imported_skills_load.rs (src-tauri/target/debug/deps/imported_skills_load-2c65fd7ee580ebf0)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/production_acceptance.rs (src-tauri/target/debug/deps/production_acceptance-aadbbda174f2d7e6)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/production_hardening.rs (src-tauri/target/debug/deps/production_hardening-99423bb7dccea9e4)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/rbac_isolation.rs (src-tauri/target/debug/deps/rbac_isolation-32dfa9c9555db97f)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/scan_real_library.rs (src-tauri/target/debug/deps/scan_real_library-af36550e1b3d5220)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/seed_local_accounts.rs (src-tauri/target/debug/deps/seed_local_accounts-2e79be15b49f1000)
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/test_memory_pipeline.rs (src-tauri/target/debug/deps/test_memory_pipeline-2622720dfb69fad4)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/two_runtimes.rs (src-tauri/target/debug/deps/two_runtimes-77a6719e84b505eb)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/verify_certification_system.rs (src-tauri/target/debug/deps/verify_certification_system-6e3c7d192a531a82)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -385,7 +385,11 @@ function blockedOnUnbuiltAgents() {
     ['art-xlsx-03-recalculates', 'P13', 'Spreadsheet Analyst, and a recalculation engine'],
     ['art-evidence-01-citations-resolve', 'P02', 'shared memory provenance and authority'],
     ['art-evidence-02-receipt-is-real', 'P02', 'real receipt provenance (plan §3 finding 2)'],
-    ['art-evidence-03-artifact-hash-recorded', 'P04', 'shared artifact, evidence and validation tools'],
+    // P04 built what this grades against -- every registered version carries
+    // its sha-256, `artifact.manifest` returns it, and a read re-hashes the
+    // stored bytes (src-tauri/src/agent_runtime/artifact_tools_tests.rs). What
+    // is still missing is the agent whose *result* carries a produced file.
+    ['art-evidence-03-artifact-hash-recorded', 'P09', 'a writer agent whose result carries the artifact version (the P04 tools that record and verify the hash exist)'],
   ];
 
   for (const [id, phase, what] of pending) {

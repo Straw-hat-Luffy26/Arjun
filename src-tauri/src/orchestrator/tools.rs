@@ -212,6 +212,28 @@ pub enum ToolName {
     ArtifactList,
     /// Read one exact version of one conversation artifact.
     ArtifactRead,
+    /// Everything recorded about one version: hash, media type from the bytes,
+    /// stage, classification, template, dependencies and whether each is still
+    /// current, permission scope, latest validation and render handles.
+    ArtifactManifest,
+    /// One version's content in the shared unit contract, bounded.
+    ArtifactReadVersion,
+    /// One region of a version: a section, slide, sheet range, page or lines.
+    ArtifactReadRegion,
+    /// The templates and composition structures, each versioned and hashed.
+    ArtifactListTemplates,
+    /// The five-rung validation ladder for one version.
+    ArtifactValidate,
+    /// Real pages from the pinned renderers, as handles.
+    ArtifactRender,
+    /// Unit-level differences between two versions.
+    ArtifactDiff,
+    /// Every citation, what it is bound to, and whether that is current.
+    ArtifactResolveEvidence,
+    /// Candidate or final registration of one version.
+    ArtifactRegisterVersion,
+    /// A targeted edit that keeps every other part of the file as it was.
+    ArtifactEdit,
 }
 
 impl ToolName {
@@ -249,6 +271,16 @@ impl ToolName {
         ToolName::CreateTable,
         ToolName::ArtifactList,
         ToolName::ArtifactRead,
+        ToolName::ArtifactManifest,
+        ToolName::ArtifactReadVersion,
+        ToolName::ArtifactReadRegion,
+        ToolName::ArtifactListTemplates,
+        ToolName::ArtifactValidate,
+        ToolName::ArtifactRender,
+        ToolName::ArtifactDiff,
+        ToolName::ArtifactResolveEvidence,
+        ToolName::ArtifactRegisterVersion,
+        ToolName::ArtifactEdit,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -287,6 +319,16 @@ impl ToolName {
             ToolName::CreateTable => "artifact.create_table",
             ToolName::ArtifactList => "artifact.list",
             ToolName::ArtifactRead => "artifact.read",
+            ToolName::ArtifactManifest => "artifact.manifest",
+            ToolName::ArtifactReadVersion => "artifact.read_version",
+            ToolName::ArtifactReadRegion => "artifact.read_region",
+            ToolName::ArtifactListTemplates => "artifact.list_templates",
+            ToolName::ArtifactValidate => "artifact.validate",
+            ToolName::ArtifactRender => "artifact.render",
+            ToolName::ArtifactDiff => "artifact.diff",
+            ToolName::ArtifactResolveEvidence => "artifact.resolve_evidence",
+            ToolName::ArtifactRegisterVersion => "artifact.register_version",
+            ToolName::ArtifactEdit => "artifact.edit",
         }
     }
 
@@ -336,6 +378,18 @@ impl ToolName {
             ToolName::CreateTable => Some("create_table"),
             // Introduced namespaced and never spelled any other way.
             ToolName::ArtifactList | ToolName::ArtifactRead => None,
+            // Introduced namespaced by P04. The old DOCX-specific verifier
+            // keeps `validate_artifact`; these have no older spelling.
+            ToolName::ArtifactManifest
+            | ToolName::ArtifactReadVersion
+            | ToolName::ArtifactReadRegion
+            | ToolName::ArtifactListTemplates
+            | ToolName::ArtifactValidate
+            | ToolName::ArtifactRender
+            | ToolName::ArtifactDiff
+            | ToolName::ArtifactResolveEvidence
+            | ToolName::ArtifactRegisterVersion
+            | ToolName::ArtifactEdit => None,
         }
     }
 
@@ -401,6 +455,8 @@ impl ToolName {
                 | ToolName::CreateDiagram
                 | ToolName::CreatePdf
                 | ToolName::CreateTable
+                // Writes a new version of the file it names.
+                | ToolName::ArtifactEdit
         )
     }
 
@@ -464,7 +520,18 @@ impl ToolName {
             | ToolName::NotebookSources
             // Both read this conversation's own artifacts and write nothing.
             | ToolName::ArtifactList
-            | ToolName::ArtifactRead => true,
+            | ToolName::ArtifactRead
+            // Reading, checking and rendering a stored version. Validation and
+            // render records are observations about immutable bytes, kept in
+            // ARJUN's own store; the deliverable itself does not change.
+            | ToolName::ArtifactManifest
+            | ToolName::ArtifactReadVersion
+            | ToolName::ArtifactReadRegion
+            | ToolName::ArtifactListTemplates
+            | ToolName::ArtifactValidate
+            | ToolName::ArtifactRender
+            | ToolName::ArtifactDiff
+            | ToolName::ArtifactResolveEvidence => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -481,7 +548,10 @@ impl ToolName {
             | ToolName::CreateDocx
             | ToolName::CreateXlsx
             | ToolName::CreatePptx
-            | ToolName::ExecuteCode => false,
+            | ToolName::ExecuteCode
+            // Publishing a version and writing a new one.
+            | ToolName::ArtifactRegisterVersion
+            | ToolName::ArtifactEdit => false,
         }
     }
 
@@ -523,6 +593,16 @@ impl ToolName {
             ToolName::CreateDiagram => "draw a block, process or engineering diagram",
             ToolName::CreatePdf => "write a PDF report or note",
             ToolName::CreateTable => "write a table as a spreadsheet",
+            ToolName::ArtifactManifest => "read what is recorded about one artifact version",
+            ToolName::ArtifactReadVersion => "read the content of one artifact version",
+            ToolName::ArtifactReadRegion => "read one part of an artifact version",
+            ToolName::ArtifactListTemplates => "list the templates a deliverable can be produced from",
+            ToolName::ArtifactValidate => "check an artifact version, rung by rung",
+            ToolName::ArtifactRender => "lay an artifact version out into pages",
+            ToolName::ArtifactDiff => "compare two artifact versions",
+            ToolName::ArtifactResolveEvidence => "check what an artifact's citations rest on",
+            ToolName::ArtifactRegisterVersion => "register an artifact version as a candidate or publish it as final",
+            ToolName::ArtifactEdit => "change named parts of an artifact, keeping the rest as it is",
         }
     }
 
@@ -563,6 +643,16 @@ impl ToolName {
             ToolName::CreateXlsx => Some(concat!(
                 "Writes the calculations already run in this task, so run at least ",
                 "one calculation first. It refuses rather than writing an empty workbook.",
+            )),
+            ToolName::ArtifactEdit => Some(concat!(
+                "`artifact` names the exact version being edited (art-…@N). `edits` is a list of ",
+                "{locator, find, replace}; locators come from artifact.read_version. `find` must ",
+                "occur once inside that unit; omit it to replace a unit held in one run.",
+            )),
+            ToolName::ArtifactRegisterVersion => Some(concat!(
+                "`stage` is \"final\" to publish an exact version (art-…@N) whose latest ",
+                "artifact.validate accepted it, or \"candidate\". Publishing rechecks every ",
+                "dependency first and refuses if any moved.",
             )),
             _ => None,
         }
@@ -753,6 +843,129 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
             optional_arguments: &[ArgumentSpec { name: "version", kind: Text }],
             network: NetworkUse::None,
+            ..defaults(name)
+        },
+        // P04: the shared artifact tools. Reads carry the same permission as
+        // `artifact.read`; checking, rendering, editing and publishing are
+        // `GenerateArtifact`, the permission the producers hold. None takes a
+        // path: bytes come from the owner-scoped store, renders go to a fresh
+        // directory under the application's own cache.
+        ToolName::ArtifactManifest => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "version", kind: Text }],
+            network: NetworkUse::None,
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactReadVersion => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "version", kind: Text },
+                ArgumentSpec { name: "fromUnit", kind: Integer },
+                ArgumentSpec { name: "maxUnits", kind: Integer },
+            ],
+            network: NetworkUse::None,
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactReadRegion => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[
+                ArgumentSpec { name: "artifact", kind: Text },
+                ArgumentSpec { name: "region", kind: Text },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "version", kind: Text }],
+            network: NetworkUse::None,
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactListTemplates => ToolSpec {
+            permission: SearchKnowledge,
+            optional_arguments: &[ArgumentSpec { name: "format", kind: Text }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(5),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactValidate => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "version", kind: Text },
+                ArgumentSpec { name: "render", kind: Text },
+                ArgumentSpec { name: "fromPage", kind: Integer },
+                ArgumentSpec { name: "toPage", kind: Integer },
+            ],
+            network: NetworkUse::None,
+            // Rendering starts LibreOffice and the rasteriser, each bounded in
+            // Rust at `render::RENDER_TIMEOUT`.
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            ..defaults(name)
+        },
+        ToolName::ArtifactRender => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "version", kind: Text },
+                ArgumentSpec { name: "fromPage", kind: Integer },
+                ArgumentSpec { name: "toPage", kind: Integer },
+            ],
+            network: NetworkUse::None,
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            ..defaults(name)
+        },
+        ToolName::ArtifactDiff => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "fromVersion", kind: Text },
+                ArgumentSpec { name: "toVersion", kind: Text },
+                ArgumentSpec { name: "against", kind: Text },
+            ],
+            network: NetworkUse::None,
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactResolveEvidence => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "version", kind: Text }],
+            network: NetworkUse::None,
+            ..defaults(name)
+        },
+        ToolName::ArtifactRegisterVersion => ToolSpec {
+            permission: GenerateArtifact,
+            // A person says yes first (the default for a tool that is not
+            // read-only). Publishing is not producing what was asked for: it
+            // declares a version the one later work should rely on, and it
+            // cannot be undone -- a final version is never demoted. The machine
+            // checks (an accepted validation, a clean recheck) are necessary
+            // and are not the same thing as somebody agreeing.
+            arguments: &[
+                ArgumentSpec { name: "artifact", kind: Text },
+                ArgumentSpec { name: "stage", kind: Text },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "effectKey", kind: Text }],
+            network: NetworkUse::None,
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactEdit => ToolSpec {
+            permission: GenerateArtifact,
+            // Automatic for the producers' reason: the effect is a new
+            // candidate version, and the version edited stays as it was.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            arguments: &[
+                ArgumentSpec { name: "artifact", kind: Text },
+                ArgumentSpec { name: "edits", kind: List },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "version", kind: Text }],
+            network: NetworkUse::None,
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            max_response_bytes: 8 * 1024,
             ..defaults(name)
         },
         ToolName::SearchDocuments => ToolSpec {
@@ -1052,9 +1265,11 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             approval_class: ApprovalClass::Automatic,
             arguments: &[
                 ArgumentSpec { name: "title", kind: Text },
-                ArgumentSpec { name: "classification", kind: Text },
                 ArgumentSpec { name: "body", kind: Text },
             ],
+            // Accepted for compatibility with calls written before P04 and not
+            // used: the label is derived from the evidence the run retrieved.
+            optional_arguments: &[ArgumentSpec { name: "classification", kind: Text }],
             network: NetworkUse::None,
             timeout: ARTIFACT_RENDER_TIMEOUT,
             max_response_bytes: 4 * 1024,
@@ -1074,8 +1289,9 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "header", kind: Text },
                 ArgumentSpec { name: "rows", kind: Text },
-                ArgumentSpec { name: "classification", kind: Text },
             ],
+            // See `CreatePdf`: accepted, never used as the label.
+            optional_arguments: &[ArgumentSpec { name: "classification", kind: Text }],
             network: NetworkUse::None,
             timeout: ARTIFACT_RENDER_TIMEOUT,
             // The markdown table comes back for the chat to draw.
@@ -1221,7 +1437,11 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
                 // per-argument check cannot express.
                 ArgumentSpec { name: "template", kind: Text },
                 ArgumentSpec { name: "content", kind: Object },
-                ArgumentSpec { name: "sections", kind: Object },
+                // A list of sections (`doc_model::Section`), which is what the
+                // handler deserialises. Declared `Object` until P04 drove a
+                // composed document through the gateway and found every such
+                // call refused as "should be an object, but was a list".
+                ArgumentSpec { name: "sections", kind: List },
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "classification", kind: Text },
             ],
@@ -1248,7 +1468,8 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             // the calculation workbook, which is what this tool has always
             // produced.
             optional_arguments: &[
-                ArgumentSpec { name: "sheets", kind: Object },
+                // A list of sheets (`doc_model::Sheet`); see `sections` above.
+                ArgumentSpec { name: "sheets", kind: List },
                 ArgumentSpec { name: "title", kind: Text },
                 ArgumentSpec { name: "classification", kind: Text },
             ],

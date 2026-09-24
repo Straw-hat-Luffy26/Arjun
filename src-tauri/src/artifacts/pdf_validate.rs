@@ -61,6 +61,10 @@ pub struct PdfCheck {
     pub objects: usize,
     /// Everything recovered from the page streams, for the quality pass.
     pub text: String,
+    /// The same text, one entry per page in page order. A page whose stream
+    /// could not be reached has an empty entry rather than none, so an index
+    /// here is always a page number minus one.
+    pub page_texts: Vec<String>,
     pub problems: Vec<String>,
 }
 
@@ -386,6 +390,7 @@ pub fn check_pdf_bytes(bytes: &[u8]) -> PdfCheck {
 
     let mut recovered = String::new();
     let mut pages_without_text = Vec::new();
+    check.page_texts = vec![String::new(); kids.len()];
     for (index, kid) in kids.iter().enumerate() {
         let Some(page) = body_of(*kid) else {
             check.problems.push(format!(
@@ -441,6 +446,7 @@ pub fn check_pdf_bytes(bytes: &[u8]) -> PdfCheck {
         if text.trim().is_empty() {
             pages_without_text.push(index + 1);
         }
+        check.page_texts[index] = text.clone();
         recovered.push_str(&text);
     }
     check.characters = recovered.chars().filter(|c| !c.is_whitespace()).count();

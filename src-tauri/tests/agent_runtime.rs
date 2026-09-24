@@ -1445,3 +1445,159 @@ async fn stopping_a_real_model_mid_answer_ends_the_run_as_aborted() {
         eprintln!("note: the model was still reasoning at the stop; no visible text to preserve");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// P04: a shared artifact tool, called by a model, across the real boundary.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A fixture model server that answers the nth request with the nth script.
+async fn scripted_model_server(turns: Vec<Vec<String>>) -> FixtureServer {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    tokio::spawn(async move {
+        let mut served = 0usize;
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut raw = Vec::new();
+            let mut buffer = [0u8; 8192];
+            loop {
+                let read = match socket.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                raw.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&raw).to_string();
+                let Some(head_end) = text.find("\r\n\r\n") else { continue };
+                let want: usize = text[..head_end]
+                    .lines()
+                    .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse().ok()))
+                    .unwrap_or(0);
+                if raw.len() >= head_end + 4 + want {
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw[head_end + 4..head_end + 4 + want]) {
+                        sink.lock().unwrap().push(value);
+                    }
+                    break;
+                }
+            }
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: keep-alive\r\n\r\n";
+            let _ = socket.write_all(head.as_bytes()).await;
+            let frames = turns.get(served).or_else(|| turns.last()).cloned().unwrap_or_default();
+            served += 1;
+            for frame in frames {
+                let _ = socket.write_all(frame.as_bytes()).await;
+            }
+            let _ = socket.write_all(b"data: [DONE]\n\n").await;
+            let _ = socket.shutdown().await;
+        }
+    });
+    FixtureServer { base_url: format!("http://{addr}/v1"), seen }
+}
+
+/// The TypeScript catalogue offers `artifact.manifest`, a model calls it, the
+/// runtime asks Rust to authorise and execute it over stdio, and what the
+/// handler returned — the artifact's exact hash — reaches the model's next
+/// request. Deterministic transport: the model is a fixture, the runtime, the
+/// gateway, the handler and the store are the product's own.
+#[tokio::test]
+async fn a_model_reads_an_artifact_manifest_through_the_real_runtime() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let (deps, dir) = deps();
+    deps.run_to_conversation.bind("run-1", "c-p04-journey");
+    let path = dir.path().join("note.docx");
+    sarathi_lib::artifacts::docx::write_document_model(
+        &path,
+        &sarathi_lib::artifacts::doc_model::Document {
+            title: "Shell thickness".into(),
+            classification: "Internal".into(),
+            properties: Default::default(),
+            sections: vec![sarathi_lib::artifacts::doc_model::Section {
+                heading: "Findings".into(),
+                level: 1,
+                blocks: vec![sarathi_lib::artifacts::doc_model::Block::Paragraph {
+                    text: "Point C measured 8.2 mm against a 9.0 mm minimum.".into(),
+                }],
+            }],
+        },
+        &sarathi_lib::artifacts::docx::DocumentMetadata {
+            task_id: "run-0".into(),
+            created_at: "2026-09-24T00:00:00Z".into(),
+            model: "fixture".into(),
+            classification: "Internal".into(),
+            is_draft: true,
+        },
+    )
+    .expect("a note to read");
+    let record = deps
+        .conversation_artifacts
+        .record_version(
+            sarathi_lib::artifacts::conversation_store::NewArtifact {
+                artifact_id: None,
+                conversation_id: "c-p04-journey".into(),
+                owner_user_id: "priya".into(),
+                message_id: None,
+                run_id: Some("run-0".into()),
+                producer: Default::default(),
+                kind: sarathi_lib::artifacts::conversation_store::ArtifactKind::Document,
+                mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
+                title: "note.docx".into(),
+                filename: Some("note.docx".into()),
+                complete: true,
+                derived_from: None,
+                renders: None,
+                language: None,
+                render_requires: Vec::new(),
+                content: std::fs::read(&path).unwrap(),
+            },
+            sarathi_lib::artifacts::conversation_store::VersionMeta {
+                stage: sarathi_lib::artifacts::conversation_store::Stage::Candidate,
+                ..Default::default()
+            },
+        )
+        .expect("recorded")
+        .record;
+
+    let call = serde_json::json!({
+        "tool_calls": [{
+            "index": 0, "id": "call_1", "type": "function",
+            "function": { "name": "artifact.manifest", "arguments": serde_json::json!({ "artifact": record.reference().to_string() }).to_string() }
+        }]
+    });
+    let server = scripted_model_server(vec![
+        vec![sse(serde_json::json!({ "role": "assistant", "content": "" }), None), sse(call, None), sse(serde_json::json!({}), Some("tool_calls"))],
+        vec![sse(serde_json::json!({ "role": "assistant", "content": "" }), None), sse(serde_json::json!({ "content": "It is a candidate." }), Some("stop"))],
+    ])
+    .await;
+
+    let runtime = AgentRuntime::spawn(deps, Arc::new(|_| {}), bundle()).expect("runtime starts");
+    let _ = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "run-1",
+                "messageId": "p04-msg-1",
+                "prompt": "Review the note this conversation produced.",
+                "systemPrompt": "Answer from what the tools return.",
+                "model": { "id": "fixture", "provider": "sovereign-local", "baseUrl": server.base_url },
+            }),
+        )
+        .await
+        .expect("run.start resolves");
+    runtime.shutdown().await;
+
+    let seen = server.seen.lock().unwrap().clone();
+    assert!(seen.len() >= 2, "the model was not asked again after its tool call: {} request(s)", seen.len());
+    let offered: Vec<String> = seen[0]["tools"]
+        .as_array()
+        .map(|tools| tools.iter().filter_map(|t| t["function"]["name"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    assert!(offered.iter().any(|name| name == "artifact.manifest"), "not offered: {offered:?}");
+    let second = sent_text(&seen[1]);
+    assert!(second.contains(&record.sha256), "the manifest did not reach the model: {second}");
+    assert!(second.contains("\"stage\": \"candidate\""), "{second}");
+}

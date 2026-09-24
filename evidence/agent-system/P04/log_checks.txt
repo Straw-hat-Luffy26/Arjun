@@ -1,0 +1,62 @@
+$ npm run runtime:typecheck
+exit=0
+
+$ npm run runtime:test
+ Test Files  131 passed (131)
+      Tests  2332 passed (2332)
+exit=0
+
+$ npx tsc --noEmit -p tsconfig.json
+exit=0
+
+$ npm run test:ui
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+exit=0
+
+$ node scripts/check-ipc.mjs
+IPC contract OK: 176 commands (18 admin, 3 external, 135 frontend, 20 frontend-pending).
+exit=0
+
+$ node scripts/check-reachable.mjs
+Reachability OK: 196 module(s) reachable from the entry points, 1 reached only by tests.
+exit=0
+
+$ node scripts/check-egress.mjs
+egress gate: pass — one chokepoint, no unapproved hosts
+exit=0
+
+$ node scripts/check-no-lora.mjs
+LoRA removal gate passed across 613 product files.
+exit=0
+
+$ node scripts/check-deployment.mjs
+Deployment gate passed: everything the code resolves, the installer ships.
+exit=0
+
+$ npm run check:bundle
+bundle gate: pass — 1.7 MiB, adapters: openai-completions, 6 reviewed vendor hostname(s), all defences present
+exit=0
+
+$ npm run check:bundle:self
+bundle gate self-test — each case reintroduces one thing the gate must catch
+bundle gate self-test: pass — the gate refuses every regression it claims to catch
+exit=0
+
+$ npm run check:offline
+offline gate: pass — the build needs no network
+exit=0
+
+$ node scripts/fixture-manifest.mjs --check
+The fixture manifest is stale: a file in the pack changed and its hash was not updated.
+exit=1
+
+$ python3 -m unittest sidecars/document_sidecar/tests/test_render_pages.py
+Ran 4 tests in 9.031s
+OK
+exit=0
+
+$ npm run test:sidecar:document
+Ran 116 tests in 9.589s
+FAILED (errors=13)
+exit=1

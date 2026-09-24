@@ -183,7 +183,18 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::SearchAttachedDocuments
         | ToolName::BuildDocumentGraph
         | ToolName::NotebookList
-        | ToolName::NotebookSources => ToolClass::ReadOnly,
+        | ToolName::NotebookSources
+        // P04's reading and checking tools. Validation and render records are
+        // observations kept in ARJUN's own store about immutable bytes; the
+        // deliverable does not change and nothing leaves the machine.
+        | ToolName::ArtifactManifest
+        | ToolName::ArtifactReadVersion
+        | ToolName::ArtifactReadRegion
+        | ToolName::ArtifactListTemplates
+        | ToolName::ArtifactValidate
+        | ToolName::ArtifactRender
+        | ToolName::ArtifactDiff
+        | ToolName::ArtifactResolveEvidence => ToolClass::ReadOnly,
         // Reversible: a notebook created by mistake can be deleted, a
         // rename can be renamed back, and a source taken out can be put
         // back - the document itself is never touched by any of them.
@@ -225,6 +236,11 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::CreateDocx
         | ToolName::CreateXlsx
         | ToolName::CreatePptx => ToolClass::SideEffecting,
+
+        // A new candidate version, and a version published as final. Both are
+        // findable afterwards (`artifact.manifest`), and neither may be done
+        // twice by a blind retry.
+        ToolName::ArtifactEdit | ToolName::ArtifactRegisterVersion => ToolClass::SideEffecting,
 
         // Whatever the code did. The sandbox bounds it, and bounding is not the
         // same as being able to list it afterwards.
