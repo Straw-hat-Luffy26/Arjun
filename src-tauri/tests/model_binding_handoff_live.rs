@@ -129,6 +129,7 @@ impl Live {
             graph: Some(&self.graph),
             checkpoints: &self.checkpoints,
             models_dir: &self.models_dir,
+            leases: None,
         }
     }
 
@@ -158,6 +159,7 @@ impl Live {
                 tool_schemas: 0,
                 output: 1_024,
                 framing: 256,
+                safety: 0,
             }),
         };
         runtime()

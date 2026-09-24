@@ -1,0 +1,190 @@
+# P03 checks — 2026-09-24T13:58:23Z — HEAD 9dd01ec + P03 working tree
+# host: Linux 6.18.44-fc-v37 x86_64, rustc 1.94.1, node v22.22.2
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- subagents::scheduling
+test subagents::scheduling::tests::a_grandchild_suspends_a_holding_grandparent ... ok
+test subagents::scheduling::tests::a_bound_run_is_forgotten_when_its_driver_leaves_by_any_path ... ok
+test subagents::scheduling::tests::a_model_is_never_served_to_an_owner_without_the_lease ... ok
+test subagents::scheduling::tests::a_model_outside_the_definitions_eligible_set_is_refused ... ok
+test subagents::scheduling::tests::a_parent_and_three_children_in_turn_never_overlap_and_leave_the_book_empty ... ok
+test subagents::scheduling::tests::a_rebind_onto_a_smaller_window_reports_the_window_it_actually_got ... ok
+test subagents::scheduling::tests::a_cancelled_wait_returns_promptly_and_leaves_nothing_behind ... ok
+test subagents::scheduling::tests::a_warm_rebind_is_the_same_server_and_says_so ... ok
+test subagents::scheduling::tests::after_a_restart_nothing_is_held_and_the_resumed_run_starts_cold ... ok
+test subagents::scheduling::tests::a_child_suspends_its_parent_before_taking_the_card_and_never_waits_on_it ... ok
+test subagents::scheduling::tests::an_explicit_suspension_is_recorded_even_when_nothing_was_held ... ok
+test subagents::scheduling::tests::an_old_guard_cannot_release_a_newer_grant ... ok
+test subagents::scheduling::tests::an_out_of_memory_load_is_classified_and_the_quantisation_is_untouched ... ok
+test subagents::scheduling::tests::an_owner_re_entering_is_one_holder_not_a_deadlock_with_itself ... ok
+test subagents::scheduling::tests::a_wait_that_times_out_leaves_nothing_behind ... ok
+test subagents::scheduling::tests::forgetting_an_owner_releases_everything_it_had ... ok
+test subagents::scheduling::tests::aged_background_work_is_not_starved_by_newer_interactive_work ... ok
+test subagents::scheduling::tests::residency_is_still_reported_and_is_not_the_concurrency_rule ... ok
+test subagents::scheduling::tests::serving_one_piece_of_work_leaves_nothing_behind_either_way ... ok
+test subagents::scheduling::tests::the_in_flight_measurement_would_see_a_second_holder ... ok
+test subagents::scheduling::tests::fresh_background_work_waits_behind_interactive_work ... ok
+test subagents::scheduling::tests::every_class_of_heavy_work_shares_one_slot ... ok
+test subagents::scheduling::tests::unregistered_and_impossible_models_are_refused_without_queueing ... ok
+test subagents::scheduling::tests::the_queue_is_bounded_and_refuses_rather_than_growing ... ok
+test subagents::scheduling::tests::two_rounds_on_the_same_warm_model_no_longer_run_at_once ... ok
+test subagents::scheduling::tests::a_holder_past_its_limit_is_expired_for_a_waiter_and_the_expiry_is_recorded ... ok
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 2759 filtered out; finished in 0.26s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- serving::fallback
+test serving::fallback::tests::a_missing_file_with_no_alternative_is_blocked_not_retried ... ok
+test serving::fallback::tests::a_failed_load_never_falls_back_to_a_lower_quantisation_of_the_same_model ... ok
+test serving::fallback::tests::a_fresh_turn_may_move_to_a_different_conforming_model_and_says_so ... ok
+test serving::fallback::tests::a_nonconforming_or_unknown_width_is_not_an_automatic_alternative ... ok
+test serving::fallback::tests::mid_task_the_run_keeps_its_model_and_is_told_it_can_resume ... ok
+test serving::fallback::tests::serving_errors_are_classified_from_what_the_loader_said ... ok
+test serving::fallback::tests::the_q8_q4_rule_is_applied_by_size_and_never_assumed ... ok
+test serving::fallback::tests::a_pinned_job_is_never_substituted_even_when_an_alternative_exists ... ok
+test serving::fallback::tests::widths_are_read_off_every_spelling_this_product_meets ... ok
+test serving::fallback::tests::two_widths_of_one_model_share_a_base_and_two_models_do_not ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2775 filtered out; finished in 0.00s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- agent_runtime::rounds
+test agent_runtime::rounds::tests::a_compactions_source_range_is_recorded_without_any_text ... ok
+test agent_runtime::rounds::tests::a_load_failure_is_refused_as_recoverable_and_changes_nothing_else ... ok
+test agent_runtime::rounds::tests::a_block_dropped_before_the_wire_is_recorded_on_the_request ... ok
+test agent_runtime::rounds::tests::a_huge_tool_output_is_refused_before_it_reaches_the_model ... ok
+test agent_runtime::rounds::tests::a_mandatory_overflow_refuses_the_round_and_gives_the_card_back ... ok
+test agent_runtime::rounds::tests::a_round_takes_the_lease_and_budgets_against_the_served_window ... ok
+test agent_runtime::rounds::tests::a_mid_task_correction_reaches_the_very_next_round ... ok
+test agent_runtime::rounds::tests::a_round_whose_context_cannot_be_compiled_is_refused_and_gives_the_card_back ... ok
+test agent_runtime::rounds::tests::a_server_that_cannot_render_is_recorded_as_uncounted_not_estimated ... ok
+test agent_runtime::rounds::tests::a_small_window_transition_is_rebound_recompiled_and_refused_when_it_must_be ... ok
+test agent_runtime::rounds::tests::an_unbound_run_says_it_is_unbound ... ok
+test agent_runtime::rounds::tests::delegation_suspends_the_parent_on_the_record_and_its_next_round_resumes_it ... ok
+test agent_runtime::rounds::tests::a_stopped_run_stops_waiting_for_the_card ... ok
+test agent_runtime::rounds::tests::a_tool_boundary_gives_the_card_back_before_the_tool_runs ... ok
+test agent_runtime::rounds::tests::image_cost_is_learned_from_the_server_and_then_charged ... ok
+test agent_runtime::rounds::tests::the_limit_excludes_the_reply_and_the_safety_reserve_but_not_the_schemas ... ok
+test agent_runtime::rounds::tests::settling_releases_the_card_and_reconciles_the_count ... ok
+test agent_runtime::rounds::tests::round_state_for_finished_runs_is_pruned ... ok
+test agent_runtime::rounds::tests::overflow_depends_on_the_tokenizer_and_the_dense_one_is_refused ... ok
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 2767 filtered out; finished in 0.38s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- agent_runtime::context_compiler
+test agent_runtime::context_compiler::projection_tests::block_shaped_content_the_manifest_does_not_account_for_is_reported ... ok
+test agent_runtime::context_compiler::projection_tests::every_round_is_its_own_projection ... ok
+test agent_runtime::context_compiler::projection_tests::a_block_dropped_between_compilation_and_the_wire_is_reported ... ok
+test agent_runtime::context_compiler::projection_tests::a_faithful_request_has_nothing_unaccounted ... ok
+test agent_runtime::context_compiler::tests::a_failing_provider_falls_back_to_lexical_and_says_so ... ok
+test agent_runtime::context_compiler::tests::a_mandatory_overflow_names_the_window_and_the_reserves ... ok
+test agent_runtime::context_compiler::projection_tests::ordinary_prompt_text_is_not_mistaken_for_injected_context ... ok
+test agent_runtime::context_compiler::projection_tests::the_projection_names_the_run_and_attempt_it_belongs_to ... ok
+test agent_runtime::context_compiler::tests::a_proposal_reaches_the_model_labelled_as_unverified ... ok
+test agent_runtime::context_compiler::tests::a_procedure_for_another_role_is_not_applied_and_absence_is_not_a_wildcard ... ok
+test agent_runtime::context_compiler::tests::a_proposed_procedure_is_a_candidate_and_is_not_applied ... ok
+test agent_runtime::context_compiler::tests::a_provider_decides_the_ranking_and_is_recorded_as_itself ... ok
+test agent_runtime::context_compiler::tests::a_version_one_manifest_still_loads_and_says_it_has_no_graph ... ok
+test agent_runtime::context_compiler::tests::a_receipt_names_its_artifact_by_exact_revision_and_hash ... ok
+test agent_runtime::context_compiler::tests::a_task_correction_outranks_an_older_preference_and_the_block_says_so ... ok
+test agent_runtime::context_compiler::tests::a_revoked_source_removes_its_claims_from_the_context ... ok
+test agent_runtime::context_compiler::tests::a_window_that_cannot_hold_the_mandatory_set_says_so ... ok
+test agent_runtime::context_compiler::tests::all_four_scopes_are_composed_at_one_cursor_and_recorded ... ok
+test agent_runtime::context_compiler::tests::adversarial_stored_text_is_labelled_rather_than_obeyed ... ok
+test agent_runtime::context_compiler::tests::an_expired_preference_is_not_applied_whatever_the_timestamp_spelling ... ok
+test agent_runtime::context_compiler::tests::an_optional_item_that_does_not_fit_is_named_and_kept_recallable ... ok
+test agent_runtime::context_compiler::tests::an_unauthorised_item_never_enters_the_ranking ... ok
+test agent_runtime::context_compiler::tests::another_persons_preferences_and_another_projects_knowledge_are_invisible ... ok
+test agent_runtime::context_compiler::tests::editing_the_compiled_record_breaks_the_seal ... ok
+test agent_runtime::context_compiler::tests::content_already_carried_is_not_injected_twice ... ok
+test agent_runtime::context_compiler::tests::only_the_five_necessity_kinds_are_mandatory ... ok
+test agent_runtime::context_compiler::tests::reserves_are_subtracted_before_anything_is_offered ... ok
+test agent_runtime::context_compiler::tests::lexical_retrieval_is_reported_as_degraded_not_as_semantic ... ok
+test agent_runtime::context_compiler::tests::more_than_one_agent_consumes_the_same_committed_record ... ok
+test agent_runtime::context_compiler::tests::the_manifest_records_the_cursor_budget_and_hashes_and_stays_sealed ... ok
+test agent_runtime::context_compiler::tests::older_material_that_does_not_fit_is_named_in_a_deterministic_digest ... ok
+test agent_runtime::context_compiler::tests::the_objective_constraints_plan_receipts_and_approvals_are_all_carried ... ok
+test agent_runtime::context_compiler::tests::selection_is_deterministic ... ok
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 2752 filtered out; finished in 0.05s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- agent_runtime::context_manifest
+test agent_runtime::context_manifest::tests::a_fresh_manifest_is_intact_and_current ... ok
+test agent_runtime::context_manifest::tests::an_empty_selection_is_distinct_from_no_research_at_all ... ok
+test agent_runtime::context_manifest::tests::a_manifest_from_a_newer_build_is_not_treated_as_current ... ok
+test agent_runtime::context_manifest::tests::document_hashes_are_the_versions ... ok
+test agent_runtime::context_manifest::tests::a_version_two_manifest_with_a_budget_still_verifies_after_the_fields_grew ... ok
+test agent_runtime::context_manifest::tests::it_round_trips_through_json ... ok
+test agent_runtime::context_manifest::tests::editing_any_field_breaks_the_seal ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2778 filtered out; finished in 0.00s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib -- agent_runtime::p03_chain_tests
+test agent_runtime::p03_chain_tests::a_prior_write_and_a_correction_survive_four_models_and_a_restart_exactly_once ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2784 filtered out; finished in 0.26s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --lib --no-fail-fast
+test agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring ... FAILED
+test skills::containment::tests::an_absolute_path_is_refused_before_it_is_joined ... FAILED
+test result: FAILED. 2781 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 32.51s
+# The two failures are pre-existing on Linux and reproduce identically at HEAD 9dd01ec in a clean worktree (2720 passed, 2 failed): both assert Windows path forms (C:/Windows, \\\\server\\share).
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --test agent_runtime
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+$ cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+$ cargo test --manifest-path src-tauri/Cargo.toml --test two_runtimes
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+$ cargo test --manifest-path src-tauri/Cargo.toml --test production_acceptance
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+$ cargo test --manifest-path src-tauri/Cargo.toml --test production_hardening
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+$ cargo test --manifest-path src-tauri/Cargo.toml --test rbac_isolation
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test --manifest-path src-tauri/Cargo.toml --test subagent_model_loop_live   (live; needs Windows APPDATA + models)
+thread 'a_childs_model_is_placed_and_served_for_real' (16634) panicked at tests/common/mod.rs:54:10:
+thread 'two_workers_on_one_model_take_turns_on_the_card' (16636) panicked at tests/common/mod.rs:54:10:
+# Pre-existing: tests/common/mod.rs:54 expects APPDATA (Windows only). model_binding_handoff_live fails identically at HEAD 9dd01ec.
+
+$ cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.45s
+
+$ npm run runtime:typecheck
+exit=0
+$ npm --prefix agent-runtime test
+ Test Files  131 passed (131)
+      Tests  2301 passed (2301)
+
+$ npx tsc --noEmit -p tsconfig.json
+exit=0
+$ npm run test:ui
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+
+$ npm run runtime:build
+bundled 1096 modules -> dist/arjun-agent-runtime.mjs (1762 KiB)
+sha256 9ba543d23def498e88e416cc31f5153e36d63173ad4b64b755090e6f1b57b970
+
+$ node scripts/check-ipc.mjs
+IPC contract OK: 172 commands (18 admin, 3 external, 135 frontend, 16 frontend-pending).
+$ node scripts/check-reachable.mjs
+Reachability OK: 196 module(s) reachable from the entry points, 1 reached only by tests.
+$ node scripts/check-egress.mjs
+egress gate: pass — one chokepoint, no unapproved hosts
+$ node scripts/check-no-lora.mjs
+LoRA removal gate passed across 605 product files.
+$ node scripts/check-bundle.test.mjs
+bundle gate self-test: pass — the gate refuses every regression it claims to catch
+
+$ node scripts/p03-native-gate.mjs
+P03 native gate: BLOCKED — 3 prerequisite(s) missing:
+  - an NVIDIA GPU with nvidia-smi on PATH (the target is an RTX 5060, 8 GB)
+  - llama-server (tried llama-server; set ARJUN_LLAMA_SERVER or put it on PATH)
+  - a model registry at /root/.local/share/com.arjun.workbench/models/registry.json (set ARJUN_MODELS_DIR)
+Report: /home/user/Arjun/evidence/agent-system/P03/native-gate.json
+exit=2
+
+# After the review fix (a round whose context cannot be compiled is refused and gives the card back):
+$ npm run test:integration   (the CI set: 11 targets)
+agent_runtime 15 passed; artifact_formats_end_to_end 6; imported_skills_load 1; production_acceptance 12;
+production_hardening 8; rbac_isolation 12; scan_real_library 2; seed_local_accounts 0 passed, 1 ignored (ignored at HEAD);
+test_memory_pipeline 1; two_runtimes 5; verify_certification_system 1 — 0 failed.
+$ npm run build
+✓ built (egress gate, no-lora gate, tsc, vite build) — exit 0
+$ npm run check:bundle
+bundle gate: pass — 1.7 MiB, adapters: openai-completions, 6 reviewed vendor hostname(s), all defences present
+$ npm run check:offline
+offline gate: pass — the build needs no network

@@ -288,29 +288,65 @@ impl ChildWorker for SpecialistWorker {
 
         // -- The card ----------------------------------------------------
         //
-        // Held for the length of the work and released when this returns. On a
-        // machine that cannot hold two models, this is where four logically
-        // parallel children become one at a time.
+        // Held for the length of the work and released when this returns. The
+        // card is one heavy call for the whole machine (see
+        // `subagents::scheduling`), so four logically parallel children take
+        // turns — and the parent that dispatched this one gives way first.
+        //
+        // The parent's suspension is written down *before* this child asks,
+        // because that is the moment the parent starts awaiting work that needs
+        // the same card: a crash while the child runs must still show why the
+        // parent was not holding its model. Only for a child that needs a model
+        // — a mechanical routine needs no card and suspends nobody.
         let lease = match &packet.model_id {
-            Some(model_id) => match self
-                .services
-                .scheduler
-                .reserve(model_id, remaining(packet))
-                .await
-            {
-                Ok(lease) => Some(lease),
-                Err(refusal) => {
-                    return Ok(ChildResult::ended(
-                        &packet.child_id,
-                        &packet.profile,
-                        ChildStatus::Failed,
-                        packet.required_schema,
-                        Vec::new(),
-                        refusal.explain(),
-                        0,
-                    ))
+            Some(model_id) => {
+                let scheduler = &self.services.scheduler;
+                let parent = packet.parent_run_id.as_str();
+                if !parent.is_empty()
+                    && (scheduler.binding(parent).is_some() || scheduler.holds(parent))
+                {
+                    scheduler.suspend(
+                        parent,
+                        Some(packet.child_id.as_str()),
+                        &format!(
+                            "{parent} delegated to {} ({}), which needs the GPU; the parent \
+                             releases it until the child returns",
+                            packet.child_id, packet.profile
+                        ),
+                    );
                 }
-            },
+                let request = crate::subagents::scheduling::LeaseRequest::new(
+                    packet.child_id.as_str(),
+                    crate::subagents::scheduling::LeaseClass::Child,
+                    model_id.as_str(),
+                )
+                .child_of(parent)
+                // The definition's allowed models, enforced here: the packet
+                // only records whether routing stayed inside them.
+                .eligible(
+                    packet
+                        .model_policy
+                        .as_ref()
+                        .map(|policy| policy.eligible_model_ids.clone())
+                        .unwrap_or_default(),
+                )
+                .waiting(remaining(packet))
+                .cancelled_by(cancel.own.clone());
+                match scheduler.acquire(request).await {
+                    Ok(lease) => Some(lease),
+                    Err(refusal) => {
+                        return Ok(ChildResult::ended(
+                            &packet.child_id,
+                            &packet.profile,
+                            ChildStatus::Failed,
+                            packet.required_schema,
+                            Vec::new(),
+                            refusal.explain(),
+                            0,
+                        ))
+                    }
+                }
+            }
             None => None,
         };
 

@@ -83,7 +83,10 @@ pub use profile::{
 pub use result::{
     ArtifactVersion, ChildResult, ChildStatus, EvidenceRef, Finding, ReceiptRef, ValidationCheck,
 };
-pub use scheduling::{ModelLease, ModelScheduler, Residency, SchedulingRefusal};
+pub use scheduling::{
+    persist_lease_event, ForgetOnDrop, LeaseClass, LeaseEvent, LeaseGuard, LeaseRequest, LeaseSnapshot,
+    ModelLease, ModelScheduler, Rebind, Residency, RunBinding, SchedulingRefusal, ServedLease,
+};
 pub use worker::{SpecialistWorker, WorkerServices};
 
 /// A profile that could not be compiled, kept so it can be reported.

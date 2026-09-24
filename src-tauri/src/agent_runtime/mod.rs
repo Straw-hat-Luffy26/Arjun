@@ -53,6 +53,7 @@ pub mod protocol;
 pub mod recording;
 pub mod resume;
 pub mod retrieval;
+pub mod rounds;
 pub mod stages;
 pub mod state_commit;
 pub mod tasks;
@@ -284,6 +285,20 @@ pub struct RuntimeDeps {
     /// asking. A graph is a summary of what a person documents say, so
     /// reaching one is an entitlement question, not a lookup.
     pub notebooks: Arc<crate::knowledge::NotebookStore>,
+    /// The one lease/admission service for heavy model work.
+    ///
+    /// `context.refresh` takes a run's lease for each model round and re-binds
+    /// its endpoint; a tool boundary and `context.settle` give it back. `None`
+    /// on a path with no GPU work to schedule — the rounds then say they are
+    /// unbound rather than pretending to hold anything. See
+    /// [`crate::subagents::scheduling`].
+    pub leases: Option<Arc<crate::subagents::ModelScheduler>>,
+    /// Every run's stop signal, so a round waiting for the GPU stops when its
+    /// run is stopped rather than when its wait expires.
+    pub cancellations: Option<Arc<cancellation::RunCancellations>>,
+    /// What each run's current round was compiled against, and what this
+    /// process has measured about image costs. See [`rounds`].
+    pub rounds: Arc<rounds::RoundBook>,
 }
 
 impl RuntimeDeps {
@@ -655,9 +670,11 @@ async fn handle(
         // of it is written. See `state_commit` for which claims are checked and
         // why each one is. This is the only way notes reach a checkpoint.
         "state.commit" => state_commit_handler(params, deps),
-        // The boundary before every model round. See `context_refresh_handler`
-        // for why run-start injection alone is not enough.
-        "context.refresh" => context_refresh_handler(params, deps),
+        // The boundary around every model round: the lease, the endpoint, the
+        // context, the exact count, and giving the card back. See `rounds`.
+        "context.refresh" => rounds::refresh(params, deps).await,
+        "context.count" => rounds::count(params, deps).await,
+        "context.settle" => rounds::settle(params, deps),
         other => Err(WireError::new(
             code::UNKNOWN_METHOD,
             format!("no handler for {other}"),
@@ -712,173 +729,6 @@ fn state_commit_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value,
             format!("the commit outcome could not be encoded: {error}"),
         )
     })
-}
-
-/// Recompiles context for the round the loop is about to make.
-///
-/// ## Why this exists at all
-///
-/// Because run-start injection is insufficient, and the way it fails is quiet.
-/// A run that makes twelve tool calls used to send the model the context
-/// compiled before the first one. An operator recording a correction at call
-/// three reached the model at call four only if the model happened to re-read
-/// it — and a fact another agent committed to the same task never arrived at
-/// all. The loop looked like it was working with current information because
-/// nothing said otherwise.
-///
-/// So the loop asks, here, before each round: after a tool, after a compaction,
-/// on a retry and on recovery. Rust answers with a freshly authorised set at a
-/// freshly read cursor.
-///
-/// ## Why the loop cannot do this for itself
-///
-/// The three things that decide the answer all live on this side. The session
-/// is here, so authorisation is here. The graph revision is here, so the cursor
-/// is here. And the admission rules — which claims count as established and
-/// which are only proposals — are here. A loop that assembled its own context
-/// would be assembling it without any of them.
-fn context_refresh_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
-    use crate::agent_runtime::context_compiler::{ContextCompiler, FrozenScope, Reserves,
-        RetrievalMode};
-
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Request {
-        run_id: String,
-        task_id: String,
-        agent_id: String,
-        #[serde(default)]
-        definition_version: u64,
-        model_id: String,
-        served_window: u32,
-        #[serde(default)]
-        question: String,
-        /// Content hashes the round already carries. A block whose hash is here
-        /// is not injected a second time.
-        #[serde(default)]
-        already_carried: Vec<String>,
-        #[serde(default)]
-        project_id: Option<String>,
-        #[serde(default)]
-        template_id: Option<String>,
-        #[serde(default)]
-        reserved_tool_schemas: u32,
-        #[serde(default)]
-        reserved_output: u32,
-        #[serde(default)]
-        reserved_framing: u32,
-    }
-
-    let request: Request = serde_json::from_value(params).map_err(|error| {
-        WireError::new(
-            code::BAD_PARAMS,
-            format!("context.refresh needs a typed request: {error}"),
-        )
-    })?;
-
-    // The same gate every other method here passes.
-    if !has_registered_plan(deps, &request.run_id) {
-        return Err(no_plan_error(&request.run_id));
-    }
-
-    let Some(graph) = deps.memory_graph.as_ref() else {
-        // Said plainly rather than answered with an empty set. "There is no
-        // graph on this deployment" and "the graph holds nothing for this task"
-        // are different facts, and a loop told the second when the first is true
-        // would report a working memory feature that is not running.
-        return Err(WireError::new(
-            code::REFUSED,
-            "this deployment has no runtime memory graph, so context cannot be recompiled for              this round"
-                .to_string(),
-        ));
-    };
-
-    let session = {
-        let held = deps.session.read().map_err(|_| {
-            WireError::new(code::INTERNAL, "the session lock is poisoned".to_string())
-        })?;
-        held.clone().ok_or_else(|| {
-            WireError::new(
-                code::REFUSED,
-                "nobody is signed in, so no context may be authorised".to_string(),
-            )
-        })?
-    };
-
-    // Read fresh. A cached cursor is a cursor that can describe a state the
-    // graph has already moved past.
-    let graph_revision = graph.graph_revision().map_err(|error| {
-        WireError::new(code::INTERNAL, error.explain())
-    })?;
-
-    let scope = FrozenScope {
-        task_id: request.task_id,
-        agent_id: request.agent_id,
-        definition_version: request.definition_version,
-        graph_revision,
-        model_id: request.model_id.clone(),
-        template_id: request.template_id,
-        served_window: request.served_window,
-        project_id: request.project_id,
-    };
-
-    // A base manifest for this round. The conversation-level half was settled
-    // when the turn was composed; what this call adds is the graph half.
-    let base = crate::agent_runtime::context_manifest::ContextManifest::new(
-        &request.run_id,
-        "",
-        "",
-        "",
-        &request.model_id,
-        request.served_window,
-        Vec::new(),
-        None,
-        crate::agent_runtime::context_manifest::HistoryBinding {
-            carried: 0,
-            dropped: 0,
-            tokens: 0,
-            pinned: Vec::new(),
-            omitted_pins: Vec::new(),
-        },
-    );
-
-    let compiled = ContextCompiler::new(graph)
-        .compile(
-            &session,
-            &scope,
-            base,
-            &request.question,
-            &request.already_carried.into_iter().collect(),
-            Reserves {
-                tool_schemas: request.reserved_tool_schemas,
-                output: request.reserved_output,
-                framing: request.reserved_framing,
-                // Nothing here consults the model's own tokenizer, and saying
-                // `tokenizer` when an estimate was used is how a turn overruns
-                // a window it was told it fitted.
-                counted_by: "estimate".to_string(),
-                mode: RetrievalMode::Lexical,
-            },
-        )
-        .map_err(|error| WireError::new(code::INTERNAL, error.explain()))?;
-
-    if compiled.mandatory_overflowed {
-        log::warn!(
-            "[context] run {}: the mandatory context for this round needs more than the window              affords; it was not trimmed",
-            request.run_id
-        );
-    }
-
-    Ok(serde_json::json!({
-        "graphRevision": compiled.manifest.graph.as_ref().map(|g| g.graph_revision),
-        "manifestHash": compiled.manifest.manifest_hash,
-        "mandatoryOverflowed": compiled.mandatory_overflowed,
-        "blocks": compiled.blocks,
-        "contentHashes": compiled.manifest.content_hashes,
-        "omissions": compiled.manifest.omissions,
-        "retrieval": compiled.manifest.retrieval,
-        "budget": compiled.manifest.budget,
-    }))
 }
 
 /// The tools a registered plan permits, or `None` when there is no such plan.
@@ -1377,6 +1227,15 @@ async fn authorize(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wire
     // and no plan to hold it to.
     if !has_registered_plan(deps, &call.run_id) {
         return Err(no_plan_error(&call.run_id));
+    }
+
+    // A tool call means the round that issued it has finished generating, so
+    // the GPU is given back before any tool runs. This is what keeps a parent
+    // from holding the card while it awaits a child that needs the same card:
+    // `agent.delegate_readonly` is a tool, and it is authorised here first.
+    // Idempotent: several parallel calls from one round release once.
+    if let Some(leases) = deps.leases.as_ref() {
+        leases.release_round(&call.run_id);
     }
 
     // Nothing with a side effect happens that cannot be written down.
@@ -4561,6 +4420,8 @@ mod large_document_tests;
 mod memory_boundary_tests;
 #[cfg(test)]
 mod model_transition_tests;
+#[cfg(test)]
+mod p03_chain_tests;
 #[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]

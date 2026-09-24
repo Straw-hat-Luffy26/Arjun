@@ -1,0 +1,430 @@
+{
+  "schema": "arjun.agent-baseline/1",
+  "phase": "P00",
+  "generated_at": "2026-09-24T13:57:44.623Z",
+  "reading_rule": "executed counts only cases that ran. blocked is a prerequisite this machine does not have and is never a pass. A group that selected nothing is reported as failed, not as clean.",
+  "totals": {
+    "cases": 39,
+    "executed": 8,
+    "passed": 6,
+    "failed": 2,
+    "blocked": 31,
+    "skipped": 0
+  },
+  "by_kind": {
+    "precondition": 3,
+    "real-driver": 1,
+    "real-model": 1,
+    "deterministic-transport": 2,
+    "deterministic-fixture": 2,
+    "fixture-case": 30
+  },
+  "deterministic_fixtures_used": [
+    "transport-01-health",
+    "transport-02-unknown-method-refused",
+    "coding-01-reference-passes-the-hidden-tests",
+    "coding-02-wrong-implementation-is-reported-as-failed"
+  ],
+  "commands": [
+    {
+      "command": "node scripts/fixture-manifest.mjs --check",
+      "exitCode": 1,
+      "durationMs": 128,
+      "toolchainAbsent": false
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1",
+      "exitCode": 0,
+      "durationMs": 1382,
+      "toolchainAbsent": false
+    },
+    {
+      "command": "python fixtures/agent-system/v1/expected/hidden-tests/test_thickness.py fixtures/agent-system/v1/expected/hidden-tests/reference_thickness.py",
+      "exitCode": 0,
+      "durationMs": 57,
+      "toolchainAbsent": false
+    },
+    {
+      "command": "python fixtures/agent-system/v1/expected/hidden-tests/test_thickness.py fixtures/agent-system/v1/sources/code/failing-example.py",
+      "exitCode": 1,
+      "durationMs": 32,
+      "toolchainAbsent": false
+    }
+  ],
+  "cases": [
+    {
+      "id": "heldout-01-key-outside-every-workspace",
+      "group": "held-out",
+      "kind": "precondition",
+      "status": "passed",
+      "detail": "the grading key at fixtures/agent-system/v1/expected is outside all 0 workspace root(s) checked",
+      "checkedRoots": []
+    },
+    {
+      "id": "fixture-01-manifest-current",
+      "group": "fixtures",
+      "kind": "precondition",
+      "status": "failed",
+      "detail": "the manifest is stale or unreadable: The fixture manifest is stale: a file in the pack changed and its hash was not updated.\nRun `node scripts/fixture-manifest.mjs` and commit the result.",
+      "command": "node scripts/fixture-manifest.mjs --check"
+    },
+    {
+      "id": "fixture-02-inputs-match-their-hashes",
+      "group": "fixtures",
+      "kind": "precondition",
+      "status": "failed",
+      "detail": "missing: none; changed since the manifest: fixtures/agent-system/v1/failures/failure-cases.json, src-tauri/tests/fixtures/inspection-report.md, src-tauri/tests/fixtures/maintenance-sop.md",
+      "inputsChecked": 17
+    },
+    {
+      "id": "driver-01-no-model-server-fails-honestly",
+      "group": "driver",
+      "kind": "real-driver",
+      "status": "passed",
+      "detail": "the driver returned a failure outcome: {\"ledger\":{\"committed\":25432,\"compactions\":0,\"entities\":[{\"id\":\"system:remainder\",\"label\":\"System prompt\",\"measurement\":\"estimated\",\"pinned\":false,\"section\":\"system\",\"sequence\":9007199254740991,\"status\":\"active\",\"tokens\":9},{\"id\":\"toolSchema:remainder\",\"label\":\"Tool definitions\",\"measurement\":\"estimated\",\"pinned\":false,\"section\":\"toolSchema\",\"sequence\":9007199254740991,\"status\":\"active\",\"tokens\":9039}],\"headroom\":0,\"itemisationErrors\":[],\"occupied\":9048,\"reconciliations\":[{\"actualIn\":0,\"actualOut\":0,\"at\":\"2026-09-24T13:57:44.070Z\",\"driftRatio\":0,\"estimatedIn\":9063,\"turn\":1}],\"sections\":{\"compaction\":0,\"evidence\":0,\"notes\":0,\"reserve\":16384,\"skill\":0,\"system\":9,\"toolSchema\":9039,\"transcript\":0},\"window\":0},\"notes\":{\"artifactIds\":[],\"calculationIds\":[],\"completed\":[],\"decisions\":[],\"dropped\":{},\"evidenceIds\":[],\"goal\":\"\",\"nextAction\":\"\",\"openQuestions\":[],\"stage\":{\"intent\":\"\",\"ordinal\":0}},\"outcome\":{\"detail\":\"Connection error.\",\"kind\":\"failed\"},\"runId\":\"p00-baseline-run-1\",\"stopReason\":\"error\",\"text\":\"\",\"turns\":1}",
+      "runId": "p00-baseline-run-1",
+      "agentId": "ag-p00-baseline",
+      "modelId": "no-such-model",
+      "trace": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "context_ledger",
+        "message_end",
+        "turn_end",
+        "agent_end"
+      ],
+      "artifactHashes": {},
+      "unblockCommand": null,
+      "driver": "sarathi_lib::agent_runtime::AgentRuntime -> agent-runtime/dist/arjun-agent-runtime.mjs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1"
+    },
+    {
+      "id": "model-01-real-generation",
+      "group": "driver",
+      "kind": "real-model",
+      "status": "blocked",
+      "detail": "no served model endpoint was supplied, so no tokens were generated on this machine",
+      "runId": "p00-baseline-run-1",
+      "agentId": "ag-p00-baseline",
+      "modelId": null,
+      "trace": [],
+      "artifactHashes": {},
+      "unblockCommand": "Start a server, e.g.  llama-server -m <weights.gguf> --port 8080 -c 4096  then set ARJUN_BASELINE_MODEL_URL=http://127.0.0.1:8080/v1 and re-run `cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture`.",
+      "driver": "sarathi_lib::agent_runtime::AgentRuntime -> agent-runtime/dist/arjun-agent-runtime.mjs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1"
+    },
+    {
+      "id": "transport-01-health",
+      "group": "driver",
+      "kind": "deterministic-transport",
+      "status": "passed",
+      "detail": "the production driver started and answered health: {\"node\":\"v22.22.2\",\"pid\":10519,\"ready\":true}",
+      "runId": "p00-baseline-run-1",
+      "agentId": "ag-p00-baseline",
+      "modelId": null,
+      "trace": [],
+      "artifactHashes": {},
+      "unblockCommand": null,
+      "driver": "sarathi_lib::agent_runtime::AgentRuntime -> agent-runtime/dist/arjun-agent-runtime.mjs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1"
+    },
+    {
+      "id": "transport-02-unknown-method-refused",
+      "group": "driver",
+      "kind": "deterministic-transport",
+      "status": "passed",
+      "detail": "an unknown method is refused rather than absorbed: No handler for no.such.method",
+      "runId": "p00-baseline-run-1",
+      "agentId": "ag-p00-baseline",
+      "modelId": null,
+      "trace": [],
+      "artifactHashes": {},
+      "unblockCommand": null,
+      "driver": "sarathi_lib::agent_runtime::AgentRuntime -> agent-runtime/dist/arjun-agent-runtime.mjs",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1"
+    },
+    {
+      "id": "coding-01-reference-passes-the-hidden-tests",
+      "group": "coding",
+      "kind": "deterministic-fixture",
+      "status": "passed",
+      "detail": "11 case(s) selected, 11 passed. The grading key is satisfiable.",
+      "selectedCases": 11,
+      "unblockCommand": null,
+      "command": "python fixtures/agent-system/v1/expected/hidden-tests/test_thickness.py fixtures/agent-system/v1/expected/hidden-tests/reference_thickness.py"
+    },
+    {
+      "id": "coding-02-wrong-implementation-is-reported-as-failed",
+      "group": "coding",
+      "kind": "deterministic-fixture",
+      "status": "passed",
+      "detail": "8 of 11 case(s) failed, as required. A harness that passed this file would report a broken program as working.",
+      "selectedCases": 11,
+      "unblockCommand": null,
+      "command": "python fixtures/agent-system/v1/expected/hidden-tests/test_thickness.py fixtures/agent-system/v1/sources/code/failing-example.py"
+    },
+    {
+      "id": "scan-01-governing-reading",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document & Vision Analyst with Unlimited-OCR",
+      "blockedOnPhase": "P06",
+      "unblockCommand": "Implement P06 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "scan-02-pitting-present",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document & Vision Analyst with Unlimited-OCR",
+      "blockedOnPhase": "P06",
+      "unblockCommand": "Implement P06 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "scan-03-no-internal-inspection",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document & Vision Analyst with Unlimited-OCR",
+      "blockedOnPhase": "P06",
+      "unblockCommand": "Implement P06 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "sop-01-applicable-minimum",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Knowledge Retriever and local retrieval tools",
+      "blockedOnPhase": "P07",
+      "unblockCommand": "Implement P07 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "sop-02-conflict-surfaced",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Knowledge Retriever and local retrieval tools",
+      "blockedOnPhase": "P07",
+      "unblockCommand": "Implement P07 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-01-wall-loss-mm",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-02-mixed-units-inch",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-03-percent-of-what",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-04-replacement-window",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-05-corrosion-rate",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "calc-06-division-by-zero",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Calculation Analyst & Checker",
+      "blockedOnPhase": "P08",
+      "unblockCommand": "Implement P08 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-docx-02-required-sections",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document Author and Word authoring tools",
+      "blockedOnPhase": "P09",
+      "unblockCommand": "Implement P09 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-docx-03-names-the-revision",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document Author and Word authoring tools",
+      "blockedOnPhase": "P09",
+      "unblockCommand": "Implement P09 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-docx-04-no-invented-internal-inspection",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Document Author and Word authoring tools",
+      "blockedOnPhase": "P09",
+      "unblockCommand": "Implement P09 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "code-01-thickness-helpers",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Coding & Testing Agent and real sandbox tools",
+      "blockedOnPhase": "P11",
+      "unblockCommand": "Implement P11 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-pptx-02-every-slide-has-a-title",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Presentation Creator",
+      "blockedOnPhase": "P12",
+      "unblockCommand": "Implement P12 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-pptx-03-no-invented-remaining-life",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Presentation Creator",
+      "blockedOnPhase": "P12",
+      "unblockCommand": "Implement P12 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-xlsx-02-live-formulas",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Spreadsheet Analyst",
+      "blockedOnPhase": "P13",
+      "unblockCommand": "Implement P13 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-xlsx-03-recalculates",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: Spreadsheet Analyst, and a recalculation engine",
+      "blockedOnPhase": "P13",
+      "unblockCommand": "Implement P13 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-evidence-01-citations-resolve",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: shared memory provenance and authority",
+      "blockedOnPhase": "P02",
+      "unblockCommand": "Implement P02 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-evidence-02-receipt-is-real",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: real receipt provenance (plan §3 finding 2)",
+      "blockedOnPhase": "P02",
+      "unblockCommand": "Implement P02 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "art-evidence-03-artifact-hash-recorded",
+      "group": "agent-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "the agent that would answer this does not exist in this build yet: shared artifact, evidence and validation tools",
+      "blockedOnPhase": "P04",
+      "unblockCommand": "Implement P04 of docs/plans/2026-09-20-agent-system-build-plan.md, then re-run this harness."
+    },
+    {
+      "id": "fail-01-missing-source",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'blocked', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-02-revoked-source",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'partial', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-03-unreadable-scan-region",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'partial', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-04-sandbox-unavailable",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'blocked', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-05-unit-mismatch",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'completed-with-conversion-stated', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-06-conflicting-revision-unresolved",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'completed-with-conflict-surfaced', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-07-denied-source",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'refused', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    },
+    {
+      "id": "fail-08-model-absent",
+      "group": "failure-cases",
+      "kind": "fixture-case",
+      "status": "blocked",
+      "detail": "defined and not yet exercisable: the correct outcome is 'blocked', and no agent exists to produce it",
+      "unblockCommand": "Implement the owning phase, then re-run this harness."
+    }
+  ]
+}

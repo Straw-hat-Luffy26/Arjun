@@ -184,6 +184,7 @@ impl World {
             graph: Some(&self.graph),
             checkpoints: &self.checkpoints,
             models_dir: &self.models_dir,
+            leases: None,
         }
     }
 

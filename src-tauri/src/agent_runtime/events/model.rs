@@ -190,6 +190,28 @@ pub enum TaskEventType {
     /// reader can tell a clean undo from one that needs a person.
     ModelTransitionRolledBack,
 
+    // -- The GPU lease and the context each round is given -----------------
+    //
+    // Observations, like the model-binding events above: none of them moves
+    // the run. See `subagents::scheduling` for the lease and
+    // `context_compiler` for what a compiled round records.
+    /// The context for one model round was compiled. Carries the manifest's
+    /// identifiers, cursor, selected versions, budget and omissions — never a
+    /// block's text.
+    ContextCompiled,
+    /// The run gave up the one heavy GPU slot before awaiting work that needs
+    /// the same card — a child, OCR, a vision call. Written *before* the slot
+    /// is handed on, so a crash while the child runs still shows why the parent
+    /// was not holding the model.
+    ModelLeaseSuspended,
+    /// The run took the slot back, and its model endpoint was re-bound. Says
+    /// whether the server was the same process (prompt cache warm) or had to be
+    /// started again (cold: nothing was carried across).
+    ModelLeaseResumed,
+    /// The run's model could not be loaded. Carries the failure's class and the
+    /// fallback decision, which never changes the model's quantisation.
+    ModelLoadFailed,
+
     // -- Compaction -------------------------------------------------------
     /// Compaction is beginning. Paired with `context_compacted`, which reports
     /// that it finished — before this existed only the finish was recorded, so
@@ -297,6 +319,10 @@ impl TaskEventType {
             TaskEventType::ModelTransitionCommitted => "model_transition_committed",
             TaskEventType::ModelTransitionFailed => "model_transition_failed",
             TaskEventType::ModelTransitionRolledBack => "model_transition_rolled_back",
+            TaskEventType::ContextCompiled => "context_compiled",
+            TaskEventType::ModelLeaseSuspended => "model_lease_suspended",
+            TaskEventType::ModelLeaseResumed => "model_lease_resumed",
+            TaskEventType::ModelLoadFailed => "model_load_failed",
             TaskEventType::CompactionStarted => "compaction_started",
             TaskEventType::WaitStarted => "wait_started",
             TaskEventType::WaitCompleted => "wait_completed",
@@ -358,6 +384,10 @@ impl TaskEventType {
             "model_transition_committed" => TaskEventType::ModelTransitionCommitted,
             "model_transition_failed" => TaskEventType::ModelTransitionFailed,
             "model_transition_rolled_back" => TaskEventType::ModelTransitionRolledBack,
+            "context_compiled" => TaskEventType::ContextCompiled,
+            "model_lease_suspended" => TaskEventType::ModelLeaseSuspended,
+            "model_lease_resumed" => TaskEventType::ModelLeaseResumed,
+            "model_load_failed" => TaskEventType::ModelLoadFailed,
             "compaction_started" => TaskEventType::CompactionStarted,
             "wait_started" => TaskEventType::WaitStarted,
             "wait_completed" => TaskEventType::WaitCompleted,

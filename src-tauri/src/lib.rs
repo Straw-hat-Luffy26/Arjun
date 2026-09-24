@@ -764,6 +764,23 @@ pub fn run() {
                     app.manage(StdArc::clone(graph));
                 }
 
+                // The one lease/admission service for heavy model work: the
+                // parent's rounds, children, OCR, vision and background jobs
+                // all ask this book, so the card holds one heavy call at a
+                // time. Managed so the agent path, the OCR commands and the
+                // handoff reach the same instance. See `subagents::scheduling`.
+                let scheduler = StdArc::new(subagents::ModelScheduler::new(
+                    models.inner().clone(),
+                    servers.inner().clone(),
+                ));
+                {
+                    let lease_events = StdArc::clone(&worker_events);
+                    scheduler.observe(StdArc::new(move |event: &subagents::LeaseEvent| {
+                        subagents::persist_lease_event(&lease_events, event);
+                    }));
+                }
+                app.manage(StdArc::clone(&scheduler));
+
                 let services = StdArc::new(subagents::WorkerServices {
                     index: index.inner().clone(),
                     graph,
@@ -772,10 +789,7 @@ pub fn run() {
                     // memory, so four logically parallel children on an 8 GB
                     // card take turns rather than each getting a fraction of
                     // it. See `subagents::scheduling`.
-                    scheduler: StdArc::new(subagents::ModelScheduler::new(
-                        models.inner().clone(),
-                        servers.inner().clone(),
-                    )),
+                    scheduler: StdArc::clone(&scheduler),
                     session: session.inner().clone(),
                     // A child's own model loop, on the runtime the parent is
                     // using. The handle is the lazily-filled slot
@@ -800,6 +814,7 @@ pub fn run() {
                         servers: servers.inner().clone(),
                         registry: models.inner().clone(),
                         models_dir: models.models_dir().to_path_buf(),
+                        scheduler: StdArc::clone(&scheduler),
                     })),
                     cancellations: StdArc::clone(&cancellations.0),
                 });

@@ -22,7 +22,7 @@ import { estimateTextTokens, fitToolsToBudget } from "./tool-budget.js";
 import { ContextLedger } from "./context-ledger.js";
 import { WorkingNotes, type WorkingNotesState } from "./working-notes.js";
 import { commitState } from "./state-commit.js";
-import { withContextRefresh } from "./context-refresh.js";
+import { RoundBoundary } from "./context-refresh.js";
 import { payloadPolicy } from "./providers.js";
 import { withToolCallRepair } from "./repair.js";
 import { withCallTiming } from "./timing.js";
@@ -55,6 +55,13 @@ export interface RunRequest {
   agentId?: string;
   /** The agent definition this run pinned. See `agents::PinnedDefinition`. */
   definitionVersion?: number;
+  /**
+   * What this agent does — its capability key (`calculation`, `extraction`).
+   * Sent with every round so an activated procedure written for one role does
+   * not reach another. Absent for a run with no role, which then satisfies no
+   * capability restriction.
+   */
+  capability?: string;
   /**
    * The id of the assistant `Message` row the chat surface reserved for this
    * turn via `agent_append_turn`. Attached to every `message_start`,
@@ -428,6 +435,20 @@ function toModel(spec: RunRequest["model"]): Model {
 const TEMPLATE_OVERHEAD_TOKENS = 256;
 
 /**
+ * What a round holds back for what the per-block estimates may miss.
+ *
+ * A policy, not a measurement, and named as one: 3% of the served window, at
+ * least 256 tokens. The exact figure is not needed here — the whole request is
+ * counted by the served model's own tokenizer at `context.count` before it is
+ * sent — this only keeps the compiler from spending the last few tokens the
+ * estimate believed it had.
+ */
+export function safetyReserveFor(window: number): number {
+  if (!Number.isFinite(window) || window <= 0) return 0;
+  return Math.max(256, Math.floor(window * 0.03));
+}
+
+/**
  * The least of the window that is kept for the conversation, whatever the
  * tools cost.
  *
@@ -738,6 +759,49 @@ export async function startRun(
     },
   });
 
+  // The boundary every model round passes through: the GPU lease and the
+  // re-bound endpoint, the context Rust compiled for the window the server
+  // actually has, the exact count of the outgoing request, and the release when
+  // the stream ends. See `context-refresh.ts` and Rust's `agent_runtime::rounds`.
+  const boundary: RoundBoundary = new RoundBoundary({
+    peer,
+    request: () => {
+      const window = boundary.endpoint?.servedWindow ?? request.model.contextWindow ?? 0;
+      return {
+        runId,
+        // Until a task registry exists, the run *is* the task. Named
+        // separately so the two can diverge without this having to change.
+        taskId: request.runId,
+        agentId,
+        definitionVersion,
+        modelId: request.model.id,
+        servedWindow: window,
+        question: request.prompt,
+        // What the round already carries, so nothing is injected twice.
+        alreadyCarried: [...carriedHashes],
+        capability: request.capability,
+        templateId: undefined,
+        // Estimates, and labelled so on the Rust side. The request as a whole
+        // is counted exactly at `context.count`.
+        reservedToolSchemas: contextLedger.get("toolSchema"),
+        reservedOutput: request.model.maxTokens ?? 0,
+        reservedFraming: TEMPLATE_OVERHEAD_TOKENS,
+        reservedSafety: safetyReserveFor(window),
+      };
+    },
+    remember: (hashes: readonly string[]) => {
+      for (const hash of hashes) carriedHashes.add(hash);
+    },
+    onRebind: (endpoint) => {
+      compactor.rebind({
+        ...model,
+        baseUrl: endpoint.baseUrl,
+        contextWindow: endpoint.servedWindow,
+      });
+      contextLedger.setWindow(endpoint.servedWindow);
+    },
+  });
+
   const agent = new Agent({
     // Timed on the outside of the repair wrapper, so a call the repair layer
     // re-issues is counted as the second call it is. Counting them together
@@ -754,7 +818,7 @@ export async function startRun(
     // Outside `withCallTiming` so the refresh is not counted as model latency:
     // it is an IPC round trip to this process's own parent, and folding it into
     // the model's time would misreport both.
-    streamFn: withContextRefresh(
+    streamFn: boundary.stream(
       withCallTiming(
         withToolCallRepair(
           runtime.streamSimple,
@@ -762,29 +826,6 @@ export async function startRun(
         ),
         runId,
       ),
-      () => ({
-        peer,
-        request: {
-          runId,
-          // Until a task registry exists, the run *is* the task. Named
-          // separately so the two can diverge without this having to change.
-          taskId: request.runId,
-          agentId,
-          definitionVersion,
-          modelId: request.model.id,
-          servedWindow: request.model.contextWindow ?? 0,
-          question: request.prompt,
-          // What the round already carries, so nothing is injected twice.
-          alreadyCarried: [...carriedHashes],
-          templateId: undefined,
-          reservedToolSchemas: 0,
-          reservedOutput: 0,
-          reservedFraming: 0,
-        },
-        remember: (hashes: readonly string[]) => {
-          for (const hash of hashes) carriedHashes.add(hash);
-        },
-      }),
     ),
     /**
      * The harness converter, not the default.
@@ -802,7 +843,10 @@ export async function startRun(
      *   and may repeat a write that already happened.
      */
     convertToLlm,
-    transformContext: (messages, signal) => compactor.transform(messages, signal),
+    // The round is opened — lease, endpoint, context — before compaction runs,
+    // because compaction may itself ask the model for a summary and that call
+    // must hold the card and reach the re-bound endpoint too.
+    transformContext: boundary.transform((messages, signal) => compactor.transform(messages, signal)),
     /**
      * Read-only tools run together.
      *

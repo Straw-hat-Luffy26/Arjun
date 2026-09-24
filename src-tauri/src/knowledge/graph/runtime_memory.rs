@@ -81,6 +81,20 @@ pub enum MemoryKind {
     SourceRef,
     /// A pointer to a produced artifact, at an exact revision.
     ArtifactRef,
+    /// How one person likes their work done ("pressures in bar, please").
+    ///
+    /// Lives in that person's user scope. Applied beneath the task's own
+    /// constraints and the project's rules, never above them: an older
+    /// preference must not override what the current request asks for.
+    Preference,
+    /// A reusable way of doing something — a lesson, a checklist — that has
+    /// been activated for use.
+    ///
+    /// Only an *established* procedure is applied, and only where its
+    /// [`Applicability`] says. A proposed one is a learning candidate (plan §8),
+    /// and applying a candidate would be letting an unevaluated lesson steer
+    /// work.
+    Procedure,
 }
 
 impl MemoryKind {
@@ -96,6 +110,8 @@ impl MemoryKind {
             Self::ToolObservation => "toolObservation",
             Self::SourceRef => "sourceRef",
             Self::ArtifactRef => "artifactRef",
+            Self::Preference => "preference",
+            Self::Procedure => "procedure",
         }
     }
 
@@ -111,6 +127,8 @@ impl MemoryKind {
             "toolObservation" => Self::ToolObservation,
             "sourceRef" => Self::SourceRef,
             "artifactRef" => Self::ArtifactRef,
+            "preference" => Self::Preference,
+            "procedure" => Self::Procedure,
             _ => return None,
         })
     }
@@ -292,6 +310,38 @@ pub struct ArtifactRef {
     pub sha256: String,
 }
 
+/// Where an item applies, when that is narrower than everywhere it is readable.
+///
+/// Readability is the ACL's question and this is a different one: a procedure
+/// the calculation checker learned is *readable* by the document author on the
+/// same project, and is still not *for* it. Empty lists mean "no restriction on
+/// that axis"; a present list is a restriction, and a reader that cannot say
+/// which capability it has does not satisfy one.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Applicability {
+    /// Role capabilities this applies to (`calculation`, `extraction`, …).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Agent ids this applies to.
+    #[serde(default)]
+    pub agents: Vec<String>,
+}
+
+impl Applicability {
+    /// Whether a reader with this capability and agent id is one this is for.
+    ///
+    /// Absence is not a wildcard: a reader with no capability does not satisfy
+    /// a capability restriction.
+    pub fn applies_to(&self, capability: Option<&str>, agent_id: &str) -> bool {
+        let capability_ok = self.capabilities.is_empty()
+            || capability.is_some_and(|held| self.capabilities.iter().any(|c| c == held));
+        let agent_ok =
+            self.agents.is_empty() || self.agents.iter().any(|agent| agent == agent_id);
+        capability_ok && agent_ok
+    }
+}
+
 /// Which slice of the world an item belongs to.
 ///
 /// Three, and they are not interchangeable. A task's memory ends under an
@@ -373,6 +423,10 @@ pub struct MemoryItem {
     /// recognised as the same write rather than performed twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Where this applies, when narrower than where it is readable. `None`
+    /// applies wherever it may be read. See [`Applicability`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applies_to: Option<Applicability>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -617,6 +671,7 @@ pub(crate) mod tests {
             conflicts_with: Vec::new(),
             causal_parents: Vec::new(),
             idempotency_key: None,
+            applies_to: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }

@@ -72,6 +72,11 @@ pub mod code {
     pub const REFUSED: &str = "refused";
     pub const TOOL_FAILED: &str = "tool_failed";
     pub const INTERNAL: &str = "internal";
+    /// A model round that must not go ahead: no GPU lease, a model that would
+    /// not load, mandatory state or a rendered request that does not fit. The
+    /// runtime fails the run on this code instead of calling the model anyway.
+    /// See `agent_runtime::rounds`.
+    pub const ROUND_REFUSED: &str = "round_refused";
 }
 
 #[derive(Debug, thiserror::Error)]

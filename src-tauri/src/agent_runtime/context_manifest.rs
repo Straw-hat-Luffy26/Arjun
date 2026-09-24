@@ -58,7 +58,7 @@ use crate::knowledge::graph::SourceSelection;
 /// build does not understand is refused rather than partly read — resuming a
 /// run from a description of its context you can only half parse is exactly the
 /// case where being wrong is silent.
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 
 /// Versions this build can still read.
 ///
@@ -68,7 +68,12 @@ pub const MANIFEST_VERSION: u32 = 2;
 /// refused, because refusing would make every run checkpointed by the previous
 /// build unresumable for a reason that has nothing to do with whether it is
 /// safe to resume.
-pub const READABLE_MANIFEST_VERSIONS: &[u32] = &[1, 2];
+///
+/// Version 2 recorded a graph revision that was *supplied* to the compiler and
+/// read no rows at it — see [`GraphBinding::graph_revision`]. Version 3 records
+/// the cursor the rows were actually read at, and the scopes they came from. A
+/// version 2 manifest is still read, as what it is.
+pub const READABLE_MANIFEST_VERSIONS: &[u32] = &[1, 2, 3];
 
 /// One document the turn was given, pinned to the bytes it was given.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,8 +147,20 @@ pub struct HistoryBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphBinding {
-    /// The changefeed position this turn was compiled against.
+    /// The changefeed position the selected rows were read at.
+    ///
+    /// Read in the same transaction as the rows (version 3 onward), so it
+    /// names exactly the last change folded into them. A version 2 manifest
+    /// holds whatever the caller supplied instead, which is plan §3's finding 1.
     pub graph_revision: i64,
+    /// The position the caller asked to compile at, when it asked for one and
+    /// the graph had moved since.
+    ///
+    /// Recorded rather than pretended: this store serves current rows, not
+    /// historical ones, so a compilation asked for "revision 412" that read at
+    /// 415 says so instead of labelling 415's rows as 412's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_revision: Option<i64>,
     /// Exactly which memory items, at which revision of each.
     ///
     /// The revision matters: an item corrected after this turn was compiled is
@@ -162,6 +179,15 @@ pub struct SelectedItem {
     /// `evidence`. Recorded so a person reading the manifest can tell what the
     /// compiler was doing, not only what it produced.
     pub reason: String,
+    /// Which scope it came from: `task`, `project`, `procedure` or
+    /// `preference`. Absent on a version 2 manifest, which read the task only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Its precedence when it and something else disagree: 0 is the task's own
+    /// state and the operator's corrections, and every later scope yields to
+    /// every earlier one. See `context_compiler::ScopeRole`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precedence: Option<u8>,
 }
 
 /// How the window was divided, and by what counting.
@@ -177,6 +203,15 @@ pub struct BudgetRecord {
     /// Held back for chat-template framing — the tokens a template spends on
     /// role markers and separators, which are real and are nobody's content.
     pub reserved_framing: u32,
+    /// Held back for what the counting may have missed. Zero on a manifest
+    /// written before the reserve existed, and then not serialised, so the
+    /// seal on those manifests still verifies.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reserved_safety: u32,
+    /// Where `window` came from: `server` when the server said what it was
+    /// started with, `registryDeclared` when it did not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_source: Option<String>,
     /// What was left for context after the three reserves.
     pub available: u32,
     /// What the compiler actually spent.
@@ -192,13 +227,40 @@ pub struct BudgetRecord {
     pub server_reported_tokens: Option<u32>,
 }
 
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// What one scope contributed to a round, in counts.
+///
+/// Counts and a role, never the scope's key: the key names a person or a
+/// project, and this record is read by the recovery path before anybody has
+/// signed in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeRecord {
+    /// `task`, `project`, `procedure` or `preference`.
+    pub role: String,
+    /// Its precedence; lower wins. See [`SelectedItem::precedence`].
+    pub precedence: u8,
+    /// Items the reader was authorised to see in it.
+    pub read: u32,
+    /// Items carried into the round.
+    pub selected: u32,
+    /// Items left out, for any reason the omissions list names.
+    pub omitted: u32,
+}
+
 /// Why something was left out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Omission {
     /// What it was: an item id, a source hash, a pin.
     pub what: String,
-    /// One of `budget`, `deduplicated`, `unauthorised`, `revoked`, `expired`.
+    /// One of `budget`, `deduplicated`, `unauthorised`, `revoked`, `expired`,
+    /// `notEstablished` (a proposal outside the task's own scope),
+    /// `notApplicable` (a procedure written for another role), or
+    /// `mandatoryOverflow`.
     pub reason: String,
     /// The sentence a person reads.
     pub detail: String,
@@ -323,6 +385,10 @@ pub struct ContextManifest {
     /// compiler did not authorise is exactly what that finds.
     #[serde(default)]
     pub content_hashes: Vec<String>,
+    /// What each scope contributed. Empty on a manifest compiled before scopes
+    /// were composed, and then left out of the seal so those still verify.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<ScopeRecord>,
     /// RFC 3339, UTC.
     pub created_at: String,
     /// Over every field above.
@@ -364,6 +430,7 @@ impl ContextManifest {
             retrieval: None,
             omissions: Vec::new(),
             content_hashes: Vec::new(),
+            scopes: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
             manifest_hash: String::new(),
         };
@@ -392,6 +459,13 @@ impl ContextManifest {
         self.retrieval = retrieval;
         self.omissions = omissions;
         self.content_hashes = content_hashes;
+        self.manifest_hash = self.compute_hash();
+        self
+    }
+
+    /// Adds the per-scope record, and re-seals.
+    pub fn with_scopes(mut self, scopes: Vec<ScopeRecord>) -> Self {
+        self.scopes = scopes;
         self.manifest_hash = self.compute_hash();
         self
     }
@@ -443,7 +517,7 @@ impl ContextManifest {
         // somebody forgets is the field an editor can change undetected. The
         // *outer* format string stays canonical, which is what the field-order
         // argument above is actually about.
-        let compiled = format!(
+        let mut compiled = format!(
             "{}|{}|{}|{}|{}",
             serde_json::to_string(&self.graph).unwrap_or_default(),
             serde_json::to_string(&self.budget).unwrap_or_default(),
@@ -451,6 +525,12 @@ impl ContextManifest {
             serde_json::to_string(&self.omissions).unwrap_or_default(),
             self.content_hashes.join(","),
         );
+        // Only when present, so a manifest sealed before scopes existed still
+        // verifies — the rule `subagents::result` follows for its new lists.
+        if !self.scopes.is_empty() {
+            compiled.push('|');
+            compiled.push_str(&serde_json::to_string(&self.scopes).unwrap_or_default());
+        }
         digest(&format!(
             "v{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.manifest_version,
@@ -638,6 +718,47 @@ mod tests {
             empty.manifest_hash,
             "a selection of none must not hash the same as every source"
         );
+    }
+
+    /// A manifest sealed under version 2 — no scopes, no safety reserve, no
+    /// requested revision — must still verify after this build reads and
+    /// re-serialises it. The new fields are left out of both the JSON and the
+    /// seal when they are empty for exactly this reason.
+    #[test]
+    fn a_version_two_manifest_with_a_budget_still_verifies_after_the_fields_grew() {
+        let mut old = manifest();
+        old.manifest_version = 2;
+        old.graph = Some(GraphBinding {
+            graph_revision: 7,
+            requested_revision: None,
+            selected: vec![SelectedItem {
+                item_id: "mi-1".into(),
+                revision: 1,
+                reason: "mandatory".into(),
+                scope: None,
+                precedence: None,
+            }],
+        });
+        old.budget = Some(BudgetRecord {
+            window: 8_192,
+            reserved_tool_schemas: 1_000,
+            reserved_output: 1_024,
+            reserved_framing: 128,
+            reserved_safety: 0,
+            window_source: None,
+            available: 6_040,
+            spent: 12,
+            counted_by: "estimate".into(),
+            server_reported_tokens: None,
+        });
+        old.manifest_hash = old.compute_hash();
+        let text = serde_json::to_string(&old).expect("serialises");
+        assert!(!text.contains("reservedSafety"), "{text}");
+        assert!(!text.contains("scopes"), "{text}");
+        assert!(!text.contains("requestedRevision"), "{text}");
+        let back: ContextManifest = serde_json::from_str(&text).expect("parses");
+        assert!(back.is_intact(), "a version 2 manifest no longer verifies");
+        assert!(back.is_known_version());
     }
 
     #[test]

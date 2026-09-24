@@ -31,8 +31,9 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 |---|---|---|
 | P00 | Baseline, inventory, executable acceptance fixtures | **Complete** — see below |
 | P01 | Agent definitions, jobs, tool/result contracts | **Complete** (portable code and deterministic tests; no native gate) — see below |
-| P02 | Shared memory correctness and authority | In progress |
-| P03–P16 | — | Not started |
+| P02 | Shared memory correctness and authority | In progress — not closed; P03 fixed finding 1 on the compile path only (see P03 below) |
+| P03 | Context assembly, model scheduling and durable handoff | **Complete** for portable code and deterministic contract tests; **native gate blocked** (no GPU, server or models on the machine it was built on) — see below |
+| P04–P16 | — | Not started |
 
 ---
 
@@ -475,3 +476,226 @@ tool loading (P03) is the remedy; nothing here measured it.
 **Exact next step:** P02 — begin at `subagents/worker.rs:391`, which publishes
 `event_seq: 0`, and at `knowledge/graph/runtime_memory.rs:507`, which admits only
 `event_seq > 0`; the receipt must name the child's own successful tool event.
+
+---
+
+# P03 — Context assembly, model scheduling and durable handoff
+
+Worked on 2026-09-24 on branch `claude/affectionate-cori-dsvo6e`, starting at
+HEAD `9dd01ec`, in a cloud Linux container (Ubuntu 24.04, 4 vCPU, 15 GiB RAM,
+**no GPU, no `llama-server`, no model weights**). Nothing here is a measurement
+on the target machine, and nothing claims to be.
+
+**P02 was not closed when P03 started** (status above: in progress, no P02
+evidence directory). P03 depends on it. What P03 did that overlaps P02, and what
+it deliberately left there:
+
+| P02 item | State after P03 |
+|---|---|
+| Finding 1 — cursor labelled onto rows not read at it | **Fixed on the compile path.** `MemoryGraph::snapshot_scopes` reads every scope and the cursor in one transaction; the manifest's `graph_revision` is that cursor and a requested revision that differs is recorded separately as `requested_revision`. Historical (old-revision) reads are still not implemented — P02. |
+| Finding 2 — worker receipts published with `event_seq: 0` | Untouched — P02. |
+| Authority migration, outbox reconciliation, `shared_with_task` enforcement | Untouched — P02. |
+
+## Traced before changing
+
+- **Scheduling.** `subagents::scheduling::ModelScheduler` served subagent workers
+  only: a per-model semaphore of **two** request slots plus a card mutex taken
+  only when residency said `Serialise`. The parent run (`commands::agent::drive_run`)
+  held no lease at all; OCR (`commands::ocr`, two sites), the model handoff (two
+  sites), the administrator's orchestrator swap and the in-process
+  `prepare_model_for` each called `serving::admission::admit` on their own.
+  Consequences found: two generations on one warm model at once; a child's
+  admission could stop the parent's server while the parent awaited that child,
+  and the parent's next round then went to a dead base URL; a child waiting on a
+  card its parent held was a deadlock with nothing to break it; the swap command
+  stopped every server, including one mid-generation.
+- **Context.** `context.refresh` compiled task scope only, read the cursor and
+  the rows in two separate reads, was sent `reservedToolSchemas/Output/Framing: 0`
+  by the runtime, budgeted against the window the run was *started* with, logged
+  a mandatory overflow and carried on, and persisted no manifest. There was no
+  exact count of the outgoing request anywhere — only chars/4 with a drift factor.
+- **Continuity.** `model_handoff` already implements drain → settle → checkpoint
+  → validate → load → recompile → commit with rollback and crash reconciliation.
+  What was missing was the per-round path: a server restarted under a running
+  run, and a load that fails mid-run or at the start of a turn.
+- **Second scheduler check.** `ai_engine::scheduler::GenerationScheduler` is the
+  in-process engine's job queue for the external-tool gateway; it is not an
+  admission service and was not duplicated. No new scheduler was created: the
+  existing `ModelScheduler` *became* the one service.
+
+## Implemented
+
+| Area | Change | Files |
+|---|---|---|
+| One lease/admission service | `ModelScheduler` is now a single book with capacity `ONE_HEAVY_CALL = 1` for the whole process. Classes `parent`, `child`, `ocr`, `vision`, `background`. Bounded queue (`MAX_WAITING = 16`, refused beyond), per-request wait deadline and cancellation token, FIFO for interactive work with background ageing into the same tier after 30 s (starvation guard), per-holder hold limit expired only when somebody waits (leak guard), re-entrant per owner (a worker's guard and its child's own rounds are one holder). Eligible-model set from the job packet is **enforced** here (`OutsideEligible`). `ensure_served` loads only for a holder and reports `restarted` / `cache: cold` honestly. `serve()` and `bind_run_until_dropped()` make release-on-every-path the default. The per-model two-slot semaphore is gone. | `subagents/scheduling.rs`, `subagents/mod.rs` |
+| Parent/child deadlock | A child's request suspends every *holding* ancestor — recorded through the observer **before** the capacity is released — and is admitted at once. The worker additionally suspends the parent explicitly before a model-needing child, so the suspension is on the parent's record even when the parent had already released at its tool boundary. The parent's next round re-acquires (recorded as resumed) and re-binds its endpoint. | `subagents/scheduling.rs`, `subagents/worker.rs` |
+| Every heavy consumer leased | Parent rounds (`context.refresh`), the parent's initial load (`drive_run`), children (worker + `child_loop` serving through `ensure_served`), OCR pages (both commands), the handoff's load and rollback reload, the orchestrator swap, and `prepare_model_for`. The lease service is created once in `lib.rs`, managed, and its observer persists `model_lease_suspended` / `model_lease_resumed` to the owner's run record. | `lib.rs`, `commands/{agent,agents,ocr,registry}.rs`, `agent_runtime/model_handoff.rs`, `subagents/child_loop.rs` |
+| Round boundary (Rust) | New `agent_runtime::rounds`: `context.refresh` = lease → re-bind → compile against the **served** window → `ContextCompiled` event with the whole manifest → refuse with `round_refused` (and give the card back) on mandatory overflow or a context that cannot be compiled; `context.count` = the exact outgoing payload rendered by the served model's own template and counted by its own tokenizer (`/apply-template` + `/tokenize`, loopback-only, in the audited probe module), images accounted separately (unmeasured until the server's own usage report measures them), fit judged against window − reply − safety, projection check (every authorised block reached the wire, nothing block-shaped was introduced), `model_requested` event, refusal on overflow; `context.settle` = release + reconcile against reported usage + learn per-image cost, `model_responded` event. `tool.authorize` releases the round (a tool call means the round finished generating). Round state self-prunes to live runs. | `agent_runtime/rounds.rs`, `agent_runtime/mod.rs`, `agent_runtime/protocol.rs` (`ROUND_REFUSED`), `serving/probe.rs` (`count_rendered`) |
+| Round boundary (runtime) | `RoundBoundary`: opens the round in `transformContext` *before* compaction (the compactor's own summary call must hold the card and reach the re-bound server), sends the stream to the re-bound base URL, chains `context.count` onto the provider's `onPayload` so the exact body is counted, settles on the stream's `result()`. `round_refused` fails the run with Rust's sentence and the model is not called; anything else degrades and says so. Real reserves are now sent (tool schemas, reply, framing, a 3 %/≥256 safety policy) and the run's `capability`. | `agent-runtime/src/{context-refresh,run}.ts` |
+| Scope composition | Four scopes read at one cursor, each authorised on its own terms: task (precedence 0), project/workspace (1, established only), activated procedure (2, established, unexpired, `Applicability` must match the reader's capability/agent — absence is not a wildcard), preference (3, the reader's own user scope, established). Expiry parsed as an instant, not text. Each selected item records scope and precedence; each block from outside the task says what it yields to; the manifest carries a per-scope count record. `MemoryKind::{Preference, Procedure}` and `MemoryItem::applies_to` added (serde-defaulted; UI mirrors updated). | `agent_runtime/context_compiler.rs`, `agent_runtime/context_manifest.rs`, `knowledge/graph/{runtime_memory,runtime_store}.rs`, `src/services/memoryGraph.service.ts`, `src/components/graph/AgentMemoryPanel.tsx` |
+| Retrieval seam | `RetrievalProvider` trait; `LexicalRetrieval` is the only shipped provider and is recorded as degraded "until P07"; a failing provider falls back to lexical and the record says so. | `agent_runtime/context_compiler.rs` |
+| Budget and compaction | `Reserves.safety`; `BudgetRecord.{reserved_safety, window_source}`; exact artifact references (`id@revision sha256:<full>`) and source addresses rendered on every block; older optional material that does not fit is moved into a deterministic **digest** block (ids at revisions, graph cursor, how to recall) — never a model-written summary; the runtime compactor names the transcript range and tool-call ids its summary stands in for, and its ceiling pass now drops a tool call **together with its results** (it used to walk the cut backwards and truncate every message instead). Manifest version 3; v1/v2 manifests still verify (new fields are omitted from JSON and seal when empty — tested). | `agent_runtime/{context_compiler,context_manifest,recording}.rs`, `agent-runtime/src/compaction.ts` |
+| Load failure | `serving::fallback`: failure classes read off the serving error (OOM, files missing, unsupported runtime, never ready, launch failed); the Q8/Q4 rule as a pure function (≤4.4 B → 8-bit, else 4-bit; OCR/embedding exempt; unknown width is not conformance); `base_identity` so two widths of one model are recognised as the same model; `decide()` → `retryLater` / `useAlternative` / `blocked`, **never** a lower quantisation of the failed model. Mid-task: retry later on the same model (a model change mid-task is a handoff). Pinned child job: never substituted. Fresh turn in `drive_run`: at most one alternative that passes the failed model's gates (role, classification, modalities) and the Q8/Q4 rule, recorded in the routing reasons. Mid-run failures record `model_load_failed` with the decision. | `serving/fallback.rs`, `agent_runtime/rounds.rs`, `commands/agent.rs`, `subagents/child_loop.rs` |
+| Identity across hops | The child loop now sends its pinned `definitionVersion` (was `0`) and its `capability`. No KV or prompt cache is ever carried: a new server process is reported `cache: cold`. | `subagents/child_loop.rs` |
+| Native gate | `scripts/p03-native-gate.mjs` (`npm run test:p03:native`) checks GPU, `llama-server`, registry and the four models' weights; reports **blocked** (exit 2) when any is missing, otherwise runs `tests/p03_native_chain.rs` (Spark → OCR → Qwen → reviewer → Spark on real servers under the production lease service, exact per-model token counts, served windows, VRAM, prior write and correction carried exactly once) and records executed/passed/failed separately. | `scripts/p03-native-gate.mjs`, `src-tauri/tests/p03_native_chain.rs`, `package.json` |
+| Events | `context_compiled`, `model_lease_suspended`, `model_lease_resumed`, `model_load_failed` (observational); `model_requested` / `model_responded` are now actually written. | `agent_runtime/events/{model,machine,projection}.rs` |
+
+No IPC command was added (172, unchanged). The three new runtime methods are
+stdio RPCs between the runtime and Rust, like `context.refresh` before them.
+
+## Contract decisions
+
+1. **One book, capacity one.** Co-residency is a later measured optimisation
+   (plan §4); a capacity above one exists only for tests and a future measured
+   configuration. With nothing else in flight, admission may stop any idle
+   server — it can never stop one mid-generation.
+2. **A round holds the card only while it generates.** Released at the tool
+   boundary, at settle and at run end. That is what makes a parent/child
+   deadlock impossible by construction; ancestor suspension is the second guard.
+3. **Suspension is recorded before release**, through an observer the book calls
+   with the holder still in place, so a crash while the child runs still shows
+   why the parent was not holding.
+4. **The rendered request is counted by the served model, or it is recorded as
+   not counted.** No estimate is substituted for a count; images are
+   "unmeasured" until the server's own usage report measures them.
+5. **Mandatory state and a rendered request that does not fit are refusals, not
+   warnings.** The model is not called; the run fails with the numbers.
+6. **Precedence is scope order** (task > project > procedure > preference), stated
+   on the block the model reads; runtime policy and the current request sit above
+   all of memory.
+7. **A fallback never changes quantisation** and never switches a model under
+   work already done.
+
+## Tests
+
+All deterministic unless marked. Rust tests drive the production handlers
+(`context.refresh` / `count` / `settle`, `tool.authorize`), the real memory graph
+and event log (on disk for the restart), and the real lease service; the only
+fake is the model server backend.
+
+| Property the prompt names | Test |
+|---|---|
+| global one-heavy-call policy, disproving the two-per-model policy | `subagents::scheduling::tests::two_rounds_on_the_same_warm_model_no_longer_run_at_once`, `every_class_of_heavy_work_shares_one_slot` (15 concurrent holders of 5 classes, peak 1), `the_in_flight_measurement_would_see_a_second_holder` |
+| parent released/suspended before a capacity-dependent child; reacquire/rebind | `…::a_child_suspends_its_parent_before_taking_the_card_and_never_waits_on_it` (asserts the record was written while the parent still held), `a_parent_and_three_children_in_turn_never_overlap_and_leave_the_book_empty`, `a_grandchild_suspends_a_holding_grandparent`, `an_explicit_suspension_is_recorded_even_when_nothing_was_held`, `agent_runtime::rounds::tests::delegation_suspends_the_parent_on_the_record_and_its_next_round_resumes_it`, `a_tool_boundary_gives_the_card_back_before_the_tool_runs` |
+| bounded queues, timeouts, cancellation, starvation, leaks | `the_queue_is_bounded_and_refuses_rather_than_growing`, `a_wait_that_times_out_leaves_nothing_behind`, `a_cancelled_wait_returns_promptly_and_leaves_nothing_behind`, `fresh_background_work_waits_behind_interactive_work`, `aged_background_work_is_not_starved_by_newer_interactive_work`, `a_holder_past_its_limit_is_expired_for_a_waiter_and_the_expiry_is_recorded`, `an_old_guard_cannot_release_a_newer_grant`, `a_bound_run_is_forgotten_when_its_driver_leaves_by_any_path`, `serving_one_piece_of_work_leaves_nothing_behind_either_way`, `rounds::tests::a_stopped_run_stops_waiting_for_the_card`, `round_state_for_finished_runs_is_pruned` |
+| tokenizer-dependent overflow | `rounds::tests::overflow_depends_on_the_tokenizer_and_the_dense_one_is_refused` |
+| huge tool output | `rounds::tests::a_huge_tool_output_is_refused_before_it_reaches_the_model`; runtime `compaction.test.ts` "drops a tool call together with its results…" |
+| small-window transition | `rounds::tests::a_small_window_transition_is_rebound_recompiled_and_refused_when_it_must_be`, `a_round_takes_the_lease_and_budgets_against_the_served_window`, `scheduling::tests::a_rebind_onto_a_smaller_window_reports_the_window_it_actually_got`; runtime "fits the next projection to the smaller window the server came back with" |
+| mid-task correction | `rounds::tests::a_mid_task_correction_reaches_the_very_next_round`, `context_compiler::tests::a_task_correction_outranks_an_older_preference_and_the_block_says_so` |
+| cancel / OOM / load failure | `scheduling::tests::an_out_of_memory_load_is_classified_and_the_quantisation_is_untouched`, `rounds::tests::a_load_failure_is_refused_as_recoverable_and_changes_nothing_else`, `serving::fallback::tests::*` (10, incl. `a_failed_load_never_falls_back_to_a_lower_quantisation_of_the_same_model`, `a_pinned_job_is_never_substituted_even_when_an_alternative_exists`) |
+| restart | `scheduling::tests::after_a_restart_nothing_is_held_and_the_resumed_run_starts_cold`, and the chain below |
+| scope composition, precedence, applicability, expiry, per-scope ACL | `context_compiler::tests::{all_four_scopes_are_composed_at_one_cursor_and_recorded, a_procedure_for_another_role_is_not_applied_and_absence_is_not_a_wildcard, a_proposed_procedure_is_a_candidate_and_is_not_applied, an_expired_preference_is_not_applied_whatever_the_timestamp_spelling, another_persons_preferences_and_another_projects_knowledge_are_invisible}` |
+| retrieval provider interface, honest lexical label | `…::a_provider_decides_the_ranking_and_is_recorded_as_itself`, `a_failing_provider_falls_back_to_lexical_and_says_so`, `lexical_retrieval_is_reported_as_degraded_not_as_semantic` |
+| compaction with source ranges and omissions; exact artifact refs | `…::older_material_that_does_not_fit_is_named_in_a_deterministic_digest`, `a_receipt_names_its_artifact_by_exact_revision_and_hash`, `rounds::tests::a_compactions_source_range_is_recorded_without_any_text`; runtime "names the range and the tool calls a summary replaced", "names the tool calls the ceiling pass dropped" |
+| manifest persists versions, true cursor, budget | `rounds::tests::a_round_takes_the_lease_and_budgets_against_the_served_window` (reads the `context_compiled` event), `context_compiler::tests::the_manifest_records_the_cursor_budget_and_hashes_and_stays_sealed` (cursor read ≠ cursor requested), `context_manifest::tests::a_version_two_manifest_with_a_budget_still_verifies_after_the_fields_grew` |
+| multimodal accounting | `rounds::tests::image_cost_is_learned_from_the_server_and_then_charged`, `a_server_that_cannot_render_is_recorded_as_uncounted_not_estimated` |
+| runtime boundary | `run.test.ts` "the round boundary" (5): re-bound endpoint used; refresh → count → settle order with the exact payload; refused count never reaches the model; refused refresh fails the run; an old Rust side degrades |
+| **contract harness** (deterministic, *not* the native chain) | `agent_runtime::p03_chain_tests::a_prior_write_and_a_correction_survive_four_models_and_a_restart_exactly_once`: Spark → OCR → Qwen → reviewer → Spark over on-disk stores, one holder at every hop, the prior write's receipt (`art-note@1 sha256:…`) carried exactly once by all five models and after a process restart, the correction exactly once (as a mandatory constraint) by every model after it arrived, the effect ledger replaying the write rather than running it — before and after the restart — and exactly one receipt and one correction in the graph at the end |
+
+**Found in review and fixed.** A last adversarial read of the round path found
+that an error *after* the lease was taken (the session gone, a graph read
+failing) left `context.refresh` without releasing the card, and — because the
+runtime degrades on any error but `round_refused` — the model would then have
+been called with no context at all. Such a round is now refused and gives the
+card back at once:
+`rounds::tests::a_round_whose_context_cannot_be_compiled_is_refused_and_gives_the_card_back`
+(fails with the fix removed; so do the two overflow tests, which share the
+give-back path).
+
+**Seen failing.** Every load-bearing test was run against a mutation and failed:
+capacity set to 2 (8 of the then 24 scheduler tests fail); ancestor suspension
+disabled (3 fail: child/parent, grandchild, parent-and-three-children);
+tool-boundary release removed together with the mandatory-overflow refusal
+(3 of the then 16 round tests fail: the tool-boundary test and both overflow
+tests); the runtime's endpoint swap disabled (1 fails: "sends the round to the
+endpoint Rust re-bound"); artifact references dropped from rendering (the chain
+harness fails at Spark's first round: receipt carried 0 times); corrections
+demoted from the mandatory set (the chain harness fails: kind `neighbour`, not
+`constraint`). Each mutation was reverted and the suite re-run green.
+
+## Checks run
+
+Raw output: `evidence/agent-system/P03/log_checks.txt`.
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2781 passed**, 2 failed, 3 ignored. HEAD `9dd01ec` in a clean worktree on the same machine: 2720 passed, the **same 2 failed** — both assert Windows path forms (`C:/Windows`, `\\server\share`) and are pre-existing on Linux. |
+| focused: scheduling / fallback / rounds / compiler / manifest / chain | 26 / 10 / 19 / 33 / 7 / 1 passed |
+| `cargo test --test` agent_runtime, agent_baseline, two_runtimes, production_acceptance, production_hardening, rbac_isolation | 15 / 4 / 5 / 12 / 8 / 12 passed (agent_baseline drives the rebuilt runtime bundle) |
+| `cargo test --test` subagent_model_loop_live, model_binding_handoff_live | Fail at `tests/common/mod.rs:54` (`APPDATA` is Windows-only); identical at HEAD. **Not execution coverage** — live tests need the target machine. Updated to the new lease API; `two_workers_on_one_model_take_turns_on_the_card` now asserts the new policy (it asserted the old one). |
+| `cargo check --all-targets` | pass; no new warnings in changed files |
+| `npm run test:integration` (the CI set, 11 targets) | 63 passed, 0 failed, 1 ignored (`seed_local_accounts`, ignored at HEAD) |
+| `npm run build`, `check:bundle`, `check:offline` (the rest of CI) | pass |
+| `npm run runtime:typecheck`, runtime vitest | pass; 131 files, **2301** tests (was 2291) |
+| `npx tsc --noEmit -p tsconfig.json`, `npm run test:ui` | pass; 43 files, 618 tests |
+| `npm run runtime:build`, bundle self-test | pass |
+| `check-ipc`, `check-reachable`, `check-egress`, `check-no-lora` | pass — 172 commands, 196 modules, one chokepoint, 605 files |
+| `node scripts/agent-baseline.mjs --out evidence/agent-system/P03/baseline.json` | 39 cases: 8 executed, 6 passed, **2 failed**, 31 blocked. The two failures are `fixture-01/02`: the fixture manifest's hashes were computed on the Windows working copy (CRLF) and this Linux checkout has LF — verified by hashing the CRLF form, which matches. Pre-existing and platform-specific; not regenerated here, because regenerating on Linux would break it on Windows. |
+| `node scripts/p03-native-gate.mjs` | **BLOCKED** (exit 2): no NVIDIA GPU, no `llama-server`, no model registry on this machine. `evidence/agent-system/P03/native-gate.json`. |
+
+## Measured
+
+Nothing on the target machine. No model ran in this session.
+
+## Unverified or blocked
+
+| What | Why | Runnable command |
+|---|---|---|
+| P03 native gate (real Spark / OCR / Qwen / reviewer swaps under the lease, exact per-model counts, served windows, VRAM) | This machine has no GPU, server or weights | On the RTX 5060 machine: `ARJUN_MODELS_DIR=<app data>/com.arjun.workbench/models npm run test:p03:native` (override model ids with `ARJUN_P03_{SPARK,OCR,QWEN,REVIEWER}`) |
+| The full native specialist chain with roles | Needs P05/P06/P09/P10 | P10's gate, repeated in P16 |
+| Image-token cost on the real projectors | Learned only from a real server's usage report | The first vision/OCR round through the agent path on the target records it (`model_responded.imageCostLearned`) |
+| `/apply-template` + `/tokenize` on each installed model's template | Needs the real servers | The native gate records `renderedTokens` / `countError` per hop |
+| The installed desktop app | Not rebuilt or redeployed | `npm run tauri build`, then replace the installed binary |
+
+## Known gaps left open (with owner)
+
+| Gap | Why it is not closed here | Owner |
+|---|---|---|
+| The external-tool gateway's in-process generations (`ai_engine::scheduler`) do not take the lease | Off by default; serves external clients, not agent work; `admission::admit` already unloads the in-process model under a lease when it needs room | P14 or a gateway follow-up |
+| Rust tool handlers are not interrupted at their `ToolSpec::timeout` (contract map §7) | Interrupting a side-effecting handler creates an effect nobody can account for (the reason `authorize` lets a running tool finish); a read-only-only deadline is possible but was not needed for the lease guarantees | P04/P05 |
+| Historical (old-revision) graph reads | Store serves current rows; P03 records requested vs read cursor instead of pretending | P02 |
+| Procedure lifecycle (candidate → evaluated → activated) | P03 applies only *established* procedures and treats a proposal as a candidate; the promotion workflow is P15 | P15 |
+| Embedding/rerank retrieval | Seam in place, lexical labelled degraded | P07 |
+
+## PS 26117 evidence matrix after P03
+
+IDs are this plan's tracking labels (§12.1), not official steps.
+
+| ID | P03's contribution | Evidence |
+|---|---|---|
+| PS-A | The exact-count call is loopback-only in the audited probe module; egress gate re-run and clean. No new network path. | `log_checks.txt` |
+| PS-B | Multiple registered models share one card under one scheduler; load failure has an honest, quantisation-preserving fallback decision; the child's definition-allowed model set is enforced. Native routing demo is P05/P16. | scheduler + fallback tests |
+| PS-C | Every model round re-reads corrections and receipts, fails explicitly instead of silently dropping state, and survives model swaps and restart. | rounds + chain tests |
+| PS-E | OCR pages now run under the one lease; image tokens are accounted honestly. OCR quality is P06. | `commands/ocr.rs`, image test |
+| PS-H | The one-heavy-call policy for an 8 GB card is implemented and tested; recoverable overload (queue bound, timeouts, OOM classification). **Target-machine measurement blocked.** | scheduler tests; `native-gate.json` |
+| PS-D, F, G, I, J, K | Not addressed by P03. | — |
+
+User-added requirements covered: model-independent memory across model change
+and restart (chain harness), Q8/Q4 retention, Spark as the resumed parent.
+
+## P03 close-out
+
+- **Implemented** — the one lease/admission service (capacity one, classes,
+  bounded queue, ageing, deadlines, cancellation, hold limit, re-entry,
+  ancestor suspension recorded before release, eligible-set enforcement,
+  serving and honest rebind); every heavy consumer routed through it; the
+  runtime round boundary (refresh before compaction, re-bound endpoint, exact
+  rendered count with multimodal accounting, settle); four-scope context
+  composition with precedence, applicability, expiry and per-scope ACL; the
+  retrieval seam; safety reserve, digest compaction, exact artifact references,
+  whole-group ceiling drops, manifest v3 persisted per round; load-failure
+  classification and fallback decisions; the native gate.
+- **Wired** — `lib.rs` manages the service and its persisting observer;
+  `commands::agent::runtime` hands it to the runtime's handlers; `drive_run`,
+  the worker, `child_loop`, both OCR commands, the handoff, the swap and
+  `prepare_model_for` take leases; the runtime's `RoundBoundary` is the stream
+  function and context transform of every run.
+- **Tested** — the table above; mutation-checked; Rust lib, runtime, UI and the
+  related integration targets green apart from failures reproduced at HEAD.
+- **Unverified or blocked** — the native gate (no GPU/server/models here); the
+  full role chain (P10/P16); the installed app.
+- **Remaining** — the gaps table above, each with its owner.
+
+**Exact next step:** close P02 (receipt linkage at `subagents/worker.rs`
+`event_seq: 0`; historical reads), then P04. On the target machine, run
+`npm run test:p03:native` and commit `evidence/agent-system/P03/native-gate*.json`.

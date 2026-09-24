@@ -856,6 +856,15 @@ fn runtime(
         run_to_conversation: Arc::clone(&state.run_to_conversation.0),
         conversation_artifacts: Arc::clone(&state.conversation_artifacts.0),
         notebooks: Arc::clone(state.notebooks),
+        // The one lease service `lib.rs` manages, so a parent's rounds, its
+        // children, OCR and the handoff all ask the same book. Absent only in a
+        // build that could not register the workers, and then every round says
+        // it is unbound rather than pretending to hold the card.
+        leases: tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(app)
+            .map(|held| Arc::clone(held.inner())),
+        cancellations: tauri::Manager::try_state::<CancellationsState>(app)
+            .map(|held| Arc::clone(&held.0)),
+        rounds: Arc::new(crate::agent_runtime::rounds::RoundBook::default()),
         emit_durable,
         // The same channel the loop's own events travel, so an operator sees
         // one sequence of what happened rather than two interleaved by luck.
@@ -2054,7 +2063,7 @@ async fn drive_run(
         }),
     );
 
-    let entry = registry.find(&routing.model_id).ok_or_else(|| {
+    let mut entry = registry.find(&routing.model_id).ok_or_else(|| {
         format!(
             "{} was routed to but is not in the registry.",
             routing.model_id
@@ -2098,21 +2107,47 @@ async fn drive_run(
     // Planning against installed VRAM with an assumed layer count is what let
     // a model that could not fit start anyway and then sit unready for the
     // full three-minute readiness timeout.
-    // Read through a per-file cache, so a warm turn costs a hash lookup and
-    // the answer cannot differ between the warm and cold paths below.
-    let model_capabilities =
-        crate::ai_engine::gguf_meta::capabilities(&registry.models_dir().join(&entry.path));
+    // The one lease service, if this build registered it. See
+    // `subagents::scheduling`: every heavy consumer asks the same book.
+    let scheduler: Option<Arc<crate::subagents::ModelScheduler>> =
+        tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(&app)
+            .map(|held| Arc::clone(held.inner()));
+    // The load happens before the run has an id of its own, so it holds the
+    // card under a name of its own for exactly as long as the load takes.
+    let load_owner = format!("load:{}", uuid::Uuid::new_v4());
 
     let load_started = std::time::Instant::now();
-    let warm_already = servers.warm_endpoint(&entry.id);
-    let warm = warm_already.is_some();
-    let endpoint = match warm_already {
-        Some(endpoint) => endpoint,
-        None => {
-            let admitted =
-                crate::serving::admission::admit(&servers, entry, registry.models_dir())
+    let mut tried: Vec<String> = Vec::new();
+    let (endpoint, warm) = loop {
+        tried.push(entry.id.clone());
+        if let Some(endpoint) = servers.warm_endpoint(&entry.id) {
+            break (endpoint, true);
+        }
+
+        // A cold load is heavy work: admission may stop an idle server to make
+        // room, and under the one-heavy-call lease there is no generation in
+        // flight for it to stop. Held for the load only; the run's own rounds
+        // lease the card for themselves once it starts.
+        let _load_lease = match &scheduler {
+            Some(scheduler) => Some(
+                scheduler
+                    .acquire(
+                        crate::subagents::LeaseRequest::new(
+                            load_owner.as_str(),
+                            crate::subagents::LeaseClass::Parent,
+                            entry.id.as_str(),
+                        )
+                        .cancelled_by(cancel.clone()),
+                    )
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|refusal| refusal.explain())?,
+            ),
+            None => None,
+        };
+
+        let loaded: Result<crate::serving::Endpoint, crate::serving::ServingError> = async {
+            let admitted =
+                crate::serving::admission::admit(&servers, entry, registry.models_dir()).await?;
             if !admitted.released.is_empty() {
                 log::info!(
                     "[serving] released {} to make room for {}",
@@ -2123,7 +2158,7 @@ async fn drive_run(
             reporter.stage_with(
                 Stage::LoadingModel,
                 json!({
-                    "modelName": routing.model_name,
+                    "modelName": entry.name,
                     "weightsBytes": entry.weights_bytes,
                     "fullyOnGpu": admitted.plan.full_offload,
                     "gpuPlan": admitted.plan.reason,
@@ -2141,9 +2176,71 @@ async fn drive_run(
             servers
                 .endpoint_for(entry, registry.models_dir(), &admitted.plan)
                 .await
-                .map_err(|error| error.to_string())?
+        }
+        .await;
+
+        match loaded {
+            Ok(endpoint) => break (endpoint, false),
+            Err(error) => {
+                // An honest decision, not a quiet substitution. Nothing has been
+                // done under any model yet, so a *different* model that passes
+                // the gates this one passed — role, classification, modalities —
+                // and sits at its own policy quantisation may take the turn,
+                // once, and the reasons say so. The same model at fewer bits is
+                // never chosen: see `serving::fallback`.
+                use crate::serving::fallback::{decide, FallbackDecision, LoadFailure, RunPhase};
+                let failure = LoadFailure::from_serving(&entry.id, &error);
+                let candidates: Vec<crate::registry::ModelEntry> = registry
+                    .all()
+                    .iter()
+                    .filter(|candidate| !tried.contains(&candidate.id))
+                    .filter(|candidate| {
+                        request
+                            .classification
+                            .is_none_or(|classification| candidate.permits(classification))
+                    })
+                    .filter(|candidate| {
+                        entry
+                            .modalities
+                            .iter()
+                            .all(|modality| candidate.modalities.contains(modality))
+                    })
+                    .cloned()
+                    .collect();
+                let decision = decide(entry, &failure, RunPhase::FreshTurn, routing.role, &candidates);
+                log::warn!(
+                    "[serving] {} could not be loaded ({}); decision: {}",
+                    entry.id,
+                    failure.kind.as_str(),
+                    decision.as_str()
+                );
+                match &decision {
+                    FallbackDecision::UseAlternative { model_id, because } if tried.len() < 2 => {
+                        let Some(next) = registry.find(model_id) else {
+                            return Err(decision.because().to_string());
+                        };
+                        routing.model_id = next.id.clone();
+                        routing.model_name = next.name.clone();
+                        routing.used_fallback = true;
+                        routing.reasons.insert(0, because.clone());
+                        entry = next;
+                        continue;
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{} Nothing was started under any model, so there is nothing to undo.",
+                            decision.because()
+                        ))
+                    }
+                }
+            }
         }
     };
+
+    // Read through a per-file cache, and after the load, because a fallback
+    // may have changed which model this turn runs on.
+    let model_capabilities =
+        crate::ai_engine::gguf_meta::capabilities(&registry.models_dir().join(&entry.path));
     // Nothing loaded for a turn nobody is waiting for. Admitting a model to
     // VRAM can evict another server and then read gigabytes off disk; a Stop
     // pressed while a cold model loads should not be answered by loading it.
@@ -2215,6 +2312,20 @@ async fn drive_run(
     // as registration, one stage later.
     cancellations.0.also_known_as(&run_id, &cancel);
     _cancel_guard.ids.push(run_id.clone());
+    // This run's model rounds lease the card as this run, on the model it was
+    // routed to (or fell back to above). Forgotten when this function returns,
+    // however it returns, so no lease or binding outlives the run.
+    let _lease_binding = scheduler.as_ref().map(|scheduler| {
+        scheduler.bind_run_until_dropped(
+            &run_id,
+            crate::subagents::RunBinding {
+                model_id: entry.id.clone(),
+                class: crate::subagents::LeaseClass::Parent,
+                parent: None,
+                eligible: Vec::new(),
+            },
+        )
+    });
     cancel.check()?;
     let started_at = chrono::Utc::now();
 

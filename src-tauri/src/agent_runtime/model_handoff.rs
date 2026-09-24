@@ -48,7 +48,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::context_compiler::{ContextCompiler, FrozenScope, Reserves, RetrievalMode};
+use super::context_compiler::{ContextCompiler, FrozenScope, Reserves};
 use super::context_manifest::ContextManifest;
 use super::events::{ApprovalStatus, EventDraft, TaskEventLog, TaskEventType};
 use super::memory::CompletedEffect;
@@ -132,6 +132,11 @@ pub struct ReserveRequest {
     pub tool_schemas: u32,
     pub output: u32,
     pub framing: u32,
+    /// Held back for what counting may miss. Zero on a request or a source
+    /// manifest from before the reserve existed, which is what those turns
+    /// were actually budgeted with.
+    #[serde(default)]
+    pub safety: u32,
 }
 
 impl ReserveRequest {
@@ -139,6 +144,7 @@ impl ReserveRequest {
         self.tool_schemas
             .saturating_add(self.output)
             .saturating_add(self.framing)
+            .saturating_add(self.safety)
     }
 
     fn as_reserves(self) -> Reserves {
@@ -146,13 +152,14 @@ impl ReserveRequest {
             tool_schemas: self.tool_schemas,
             output: self.output,
             framing: self.framing,
+            safety: self.safety,
             // Nothing here consults a model's own tokenizer to *measure* the
             // blocks, and saying `tokenizer` when an estimate was used is how a
             // turn overruns a window it was told it fitted. The tokenizer probe
             // in the record is a comparison between two models, not a
             // measurement of this context.
             counted_by: "estimate".to_string(),
-            mode: RetrievalMode::Lexical,
+            window_source: None,
         }
     }
 }
@@ -239,6 +246,12 @@ pub struct Handoff<'a> {
     /// [`crate::commands::agent::RunCheckpoints`].
     pub checkpoints: &'a Mutex<HashMap<String, CheckpointSeed>>,
     pub models_dir: &'a Path,
+    /// The one lease service. A handoff's load — and a rollback's reload —
+    /// hold the card, because admission may stop servers to make room and must
+    /// never stop one another generation is using. `None` on a path with no
+    /// scheduler (the handoff's own unit tests), which then loads as it did
+    /// before the service existed.
+    pub leases: Option<&'a crate::subagents::ModelScheduler>,
 }
 
 impl Handoff<'_> {
@@ -637,6 +650,11 @@ impl Handoff<'_> {
 
         // -- Load and health-check ---------------------------------------
         self.step(record, TransitionPhase::Loading, None)?;
+        // Held until this attempt returns: the load, the health check and the
+        // recompile all happen with nothing else generating.
+        let _load_lease = self
+            .lease_for(&format!("handoff:{}", record.transition_id), &target.id)
+            .await?;
         let capabilities =
             crate::ai_engine::gguf_meta::capabilities(&self.models_dir.join(&target.path));
 
@@ -714,6 +732,31 @@ impl Handoff<'_> {
     }
 
     // -- The phases, one method each --------------------------------------
+
+    /// The card, for a load this handoff is about to perform.
+    async fn lease_for(
+        &self,
+        owner: &str,
+        model_id: &str,
+    ) -> Result<Option<crate::subagents::LeaseGuard>, Failure> {
+        let Some(leases) = self.leases else {
+            return Ok(None);
+        };
+        leases
+            .acquire(crate::subagents::LeaseRequest::new(
+                owner,
+                crate::subagents::LeaseClass::Parent,
+                model_id,
+            ))
+            .await
+            .map(Some)
+            .map_err(|refusal| {
+                Failure::refused(ValidationRefusal::AdmissionRefused {
+                    model_id: model_id.to_string(),
+                    detail: refusal.explain(),
+                })
+            })
+    }
 
     fn step(
         &self,
@@ -928,6 +971,7 @@ impl Handoff<'_> {
                     tool_schemas: budget.reserved_tool_schemas,
                     output: budget.reserved_output,
                     framing: budget.reserved_framing,
+                    safety: budget.reserved_safety,
                 },
                 None => {
                     return Err(Failure::storage(format!(
@@ -951,6 +995,15 @@ impl Handoff<'_> {
             template_id: None,
             served_window: source_manifest.served_window,
             project_id: request.project_id.clone(),
+            // What the agent does, from its definition, so the procedures that
+            // applied before the handoff are the ones that apply after it.
+            capability: self
+                .agents
+                .resolve_for_provenance(&record.agent_id)
+                .ok()
+                .and_then(|agent| crate::subagents::capability_for(agent.output_schema))
+                .map(str::to_string),
+            now: chrono::Utc::now().to_rfc3339(),
         };
 
         // The source manifest with the model and the window replaced, and
@@ -973,7 +1026,10 @@ impl Handoff<'_> {
                 // goal is what Rust accepted as the run's objective.
                 &seed.committed_notes.goal,
                 &BTreeSet::new(),
-                reserves.as_reserves(),
+                Reserves {
+                    window_source: Some(served.window_source.as_str().to_string()),
+                    ..reserves.as_reserves()
+                },
             )
             .map_err(|error| Failure::storage(error.explain()))?;
 
@@ -1332,6 +1388,18 @@ impl Handoff<'_> {
         // The explicit reload-failure path. On a card that holds one model the
         // source was evicted to make room for the target, so putting the
         // binding back is not enough — something has to be serving it.
+        // Reloading the source is a load like any other: under the card.
+        let _reload_lease = match self.leases {
+            Some(leases) => leases
+                .acquire(crate::subagents::LeaseRequest::new(
+                    format!("handoff-rollback:{}", record.transition_id),
+                    crate::subagents::LeaseClass::Parent,
+                    entry.id.as_str(),
+                ))
+                .await
+                .ok(),
+            None => None,
+        };
         let admitted = crate::serving::admission::admit(self.servers, &entry, self.models_dir)
             .await
             .map_err(|error| error.to_string())?;

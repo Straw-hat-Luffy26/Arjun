@@ -199,6 +199,9 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         notebooks: Arc::new(
             sarathi_lib::knowledge::NotebookStore::open(dir.path()).expect("notebook store opens"),
         ),
+        leases: None,
+        cancellations: None,
+        rounds: Arc::new(sarathi_lib::agent_runtime::rounds::RoundBook::default()),
     };
 
     (Arc::new(deps), dir)

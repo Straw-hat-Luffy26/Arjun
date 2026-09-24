@@ -189,14 +189,23 @@ fn two_workers_on_one_card_take_turns() {
             let held = Arc::clone(&held_first);
             tokio::spawn(async move {
                 let lease = scheduler
-                    .reserve(&id, wait)
+                    .acquire(
+                        sarathi_lib::subagents::LeaseRequest::new(
+                            "worker-1",
+                            sarathi_lib::subagents::LeaseClass::Child,
+                            id.as_str(),
+                        )
+                        .waiting(wait),
+                    )
                     .await
                     .expect("the first worker gets its model");
                 let taken = Instant::now();
                 // Long enough that a second worker asking concurrently has to
                 // wait for it rather than slipping past.
                 tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-                let exclusive = lease.exclusive();
+                // One heavy call at a time, on every machine: the card is
+                // always the holder's alone. See `subagents::scheduling`.
+                let exclusive = true;
                 let released = Instant::now();
                 *held.lock().expect("lock") = Some((taken, released));
                 drop(lease);
@@ -213,11 +222,18 @@ fn two_workers_on_one_card_take_turns() {
             let held = Arc::clone(&held_second);
             tokio::spawn(async move {
                 let lease = scheduler
-                    .reserve(&id, wait)
+                    .acquire(
+                        sarathi_lib::subagents::LeaseRequest::new(
+                            "worker-2",
+                            sarathi_lib::subagents::LeaseClass::Child,
+                            id.as_str(),
+                        )
+                        .waiting(wait),
+                    )
                     .await
                     .expect("the second worker gets its model eventually");
                 *held.lock().expect("lock") = Some(Instant::now());
-                let exclusive = lease.exclusive();
+                let exclusive = true;
                 drop(lease);
                 exclusive
             })
@@ -257,13 +273,17 @@ fn two_workers_on_one_card_take_turns() {
     runtime.block_on(servers.stop_all());
 }
 
-/// Two children on the *same* model genuinely run at once.
+/// Two children on the *same* model take turns too.
 ///
-/// The other half of the rule, and the one that would be lost if residency were
-/// the only dimension: two workers sharing one model's weights are not competing
-/// for the card, they are competing for the server's request slots.
+/// This used to assert the opposite. The per-model semaphore let two requests
+/// share one warm model's server at once — and its KV cache, which the window
+/// was budgeted without. Plan P03 replaced that with one heavy call across the
+/// whole machine, so the second worker waits for the first even on the same
+/// weights. The deterministic proof is
+/// `subagents::scheduling::tests::two_rounds_on_the_same_warm_model_no_longer_run_at_once`;
+/// this repeats it against a real registry and a real server table.
 #[test]
-fn two_workers_on_one_model_do_not_serialise() {
+fn two_workers_on_one_model_take_turns_on_the_card() {
     let Some(registry) = load_registry() else {
         eprintln!("SKIP: no model registry on this machine");
         return;
@@ -278,28 +298,33 @@ fn two_workers_on_one_model_do_not_serialise() {
 
     runtime().block_on(async {
         let wait = std::time::Duration::from_secs(10);
-        let one = scheduler
-            .reserve(&first.id, wait)
-            .await
-            .expect("the first slot");
+        let request = |owner: &str| {
+            sarathi_lib::subagents::LeaseRequest::new(
+                owner,
+                sarathi_lib::subagents::LeaseClass::Child,
+                first.id.as_str(),
+            )
+            .waiting(wait)
+        };
+        let one = scheduler.acquire(request("worker-1")).await.expect("the first worker");
 
-        // The second must not block on the first: same model, same weights, a
-        // different request slot.
-        let started = Instant::now();
-        let two = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            scheduler.reserve(&first.id, wait),
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            scheduler.acquire(request("worker-2")),
         )
-        .await
-        .expect("a second worker on the same model must not wait for the card")
-        .expect("the second slot");
-
+        .await;
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(1),
-            "two workers on one model should not have serialised"
+            waited.is_err(),
+            "a second worker on the same model was admitted while the first held the card"
         );
-        drop(two);
+
         drop(one);
+        let two = tokio::time::timeout(std::time::Duration::from_secs(2), scheduler.acquire(request("worker-2")))
+            .await
+            .expect("admitted once the first released")
+            .expect("the second worker");
+        drop(two);
+        assert!(scheduler.snapshot().is_idle());
     });
 }
 

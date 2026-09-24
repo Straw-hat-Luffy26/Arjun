@@ -130,6 +130,9 @@ pub(super) fn deps_with(
         notebooks: Arc::new(
             crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
         ),
+        leases: None,
+        cancellations: None,
+        rounds: Arc::new(crate::agent_runtime::rounds::RoundBook::default()),
     });
     (deps, dir)
 }

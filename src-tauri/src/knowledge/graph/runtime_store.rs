@@ -1025,6 +1025,62 @@ impl MemoryGraph {
         })
     }
 
+    /// Several scopes read together, with the one cursor they were read at.
+    ///
+    /// ## Why this exists beside [`Self::snapshot`]
+    ///
+    /// The context compiler used to call `snapshot` for the task and label the
+    /// result with a revision it had read *separately* — so a commit landing
+    /// between the two reads was in the rows and not in the cursor, or the
+    /// other way round, and the manifest recorded a position the rows did not
+    /// come from (plan §3, finding 1). And it read only the task: the project's
+    /// knowledge, the person's preferences and activated procedures were never
+    /// consulted at all.
+    ///
+    /// Here every scope is read inside one transaction and the cursor is read
+    /// inside the same one, the way [`Self::snapshot_at`] does it for a single
+    /// scope. `cursor` names exactly the last change folded into the rows.
+    ///
+    /// ## Authorisation per scope, before anything else
+    ///
+    /// Each item is checked with [`MemoryItem::readable_by`], which applies the
+    /// scope's own rule — a user scope is one person's, a workspace scope is its
+    /// project's — and then the item's ACL. A scope the reader may not see
+    /// contributes nothing, and nothing about it: no count, no id.
+    pub fn snapshot_scopes(
+        &self,
+        session: &Session,
+        scopes: &[MemoryScope],
+        project_id: Option<&str>,
+    ) -> Result<(Vec<MemoryItem>, i64), MemoryError> {
+        let mut conn = self.conn.lock().map_err(|_| MemoryError::Storage {
+            detail: "the memory graph was left locked".into(),
+        })?;
+        let transaction = conn.transaction().map_err(storage)?;
+        let mut items: Vec<MemoryItem> = Vec::new();
+        {
+            let mut statement = transaction
+                .prepare("SELECT body FROM agent_memory_items WHERE scope_key = ?1")
+                .map_err(storage)?;
+            for scope in scopes {
+                let bodies: Vec<String> = statement
+                    .query_map(params![scope.key()], |row| row.get::<_, String>(0))
+                    .map_err(storage)?
+                    .filter_map(Result::ok)
+                    .collect();
+                items.extend(
+                    bodies
+                        .into_iter()
+                        .filter_map(|text| serde_json::from_str::<MemoryItem>(&text).ok())
+                        .filter(|item| item.readable_by(session, project_id)),
+                );
+            }
+        }
+        let cursor = Self::latest_revision(&transaction).unwrap_or(0);
+        transaction.commit().map_err(storage)?;
+        Ok((items, cursor))
+    }
+
     /// Everything that happened after `cursor`, as this reader may see it.
     ///
     /// ## Why the current row is resolved rather than the logged one

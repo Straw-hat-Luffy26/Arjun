@@ -267,6 +267,7 @@ fn migrated_item(
         // recognised inside the store's transaction rather than by a check here
         // that would race with a concurrent pass.
         idempotency_key: Some(item_id),
+        applies_to: None,
         created_at: at.to_string(),
         updated_at: at.to_string(),
     }

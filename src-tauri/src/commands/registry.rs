@@ -247,6 +247,35 @@ async fn swap_to(
         );
     };
 
+    // Stopping every other server and loading this one is heavy work, and
+    // stopping a server mid-generation is exactly what the one lease exists to
+    // prevent. So the swap waits for the card and holds it until it returns.
+    let _swap_lease = match tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(app) {
+        Some(scheduler) => match scheduler
+            .acquire(
+                crate::subagents::LeaseRequest::new(
+                    format!("swap:{entry_id}"),
+                    crate::subagents::LeaseClass::Parent,
+                    entry_id,
+                )
+                .waiting(std::time::Duration::from_secs(120)),
+            )
+            .await
+        {
+            Ok(lease) => Some(lease),
+            Err(refusal) => {
+                let detail = refusal.explain();
+                step("failed", entry_id, entry_name, Some(detail.clone()));
+                return SwapOutcome {
+                    released: Vec::new(),
+                    serving: false,
+                    detail: Some(detail),
+                };
+            }
+        },
+        None => None,
+    };
+
     let mut released = Vec::new();
     for running in servers.running_model_ids() {
         if running == entry_id {
@@ -789,6 +818,25 @@ pub async fn prepare_model_for(
     )
     .map_err(|failure| failure.reason)?;
 
+    // Loading into the in-process engine takes VRAM like any other load, so
+    // it waits for the one lease and holds it for the load only. See
+    // `subagents::scheduling`.
+    let _load_lease = match tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(&app) {
+        Some(scheduler) => Some(
+            scheduler
+                .acquire(
+                    crate::subagents::LeaseRequest::new(
+                        format!("prepare:{}", uuid::Uuid::new_v4()),
+                        crate::subagents::LeaseClass::Parent,
+                        routing.model_id.as_str(),
+                    )
+                    .waiting(std::time::Duration::from_secs(120)),
+                )
+                .await
+                .map_err(|refusal| refusal.explain())?,
+        ),
+        None => None,
+    };
     let activation = activator
         .ensure_ready(&registry, &routing.model_id, &signed_in.user.id)
         .map_err(|e| e.message())?;

@@ -101,6 +101,9 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         notebooks: Arc::new(
             crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
         ),
+        leases: None,
+        cancellations: None,
+        rounds: Arc::new(crate::agent_runtime::rounds::RoundBook::default()),
     });
     (deps, dir)
 }

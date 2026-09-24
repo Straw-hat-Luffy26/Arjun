@@ -492,6 +492,8 @@ pub async fn agent_model_transition_begin(
         graph: graph.as_ref(),
         checkpoints: checkpoints.inner(),
         models_dir: registry.models_dir(),
+        leases: tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(&app)
+            .map(|held| held.inner().as_ref()),
     };
 
     let asked = request.clone();
@@ -595,6 +597,8 @@ pub async fn agent_model_transition_rollback(
         graph: graph.as_ref(),
         checkpoints: checkpoints.inner(),
         models_dir: registry.models_dir(),
+        leases: tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(&app)
+            .map(|held| held.inner().as_ref()),
     };
 
     let outcome = handoff.rollback(&signed_in, &transition_id).await;
@@ -656,6 +660,8 @@ pub async fn agent_model_transition_reconcile(
         graph: graph.as_ref(),
         checkpoints: checkpoints.inner(),
         models_dir: registry.models_dir(),
+        leases: tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(&app)
+            .map(|held| held.inner().as_ref()),
     };
 
     let settled = handoff
@@ -756,6 +762,8 @@ pub async fn reconcile_interrupted_transitions(app: &AppHandle) {
         graph: graph.as_ref(),
         checkpoints: checkpoints.inner(),
         models_dir: registry.models_dir(),
+        leases: tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(app)
+            .map(|held| held.inner().as_ref()),
     };
 
     let settled = handoff.reconcile_open(SYSTEM_ACTOR, None).await;

@@ -404,6 +404,13 @@ pub fn advance(current: RunState, event: TaskEventType) -> Transition {
         | E::ModelTransitionCommitted
         | E::ModelTransitionFailed
         | E::ModelTransitionRolledBack
+        // The lease, the compiled context and a failed load are about what the
+        // run is running *on* and *with*, not where it has got to. A failed
+        // load is followed by the ending that says what it meant.
+        | E::ContextCompiled
+        | E::ModelLeaseSuspended
+        | E::ModelLeaseResumed
+        | E::ModelLoadFailed
         // The completion check reports; the ending event that follows decides.
         // Keeping these apart is what stops "it was checked" being read as "it
         // passed".

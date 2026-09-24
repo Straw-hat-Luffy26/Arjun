@@ -395,6 +395,7 @@ impl TaskMemory {
             conflicts_with: Vec::new(),
             causal_parents: claim.causal_parents,
             idempotency_key: Some(claim.idempotency_key),
+            applies_to: None,
             created_at: now.clone(),
             updated_at: now,
         };

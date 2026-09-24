@@ -67,6 +67,15 @@ pub struct CancelToken {
     notify: Arc<Notify>,
 }
 
+impl std::fmt::Debug for CancelToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancelToken")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
 impl Default for CancelToken {
     /// A token nothing will ever cancel. See [`CancelToken::never`].
     ///
@@ -265,6 +274,23 @@ impl RunCancellations {
             .get(id)
             .map(CancelToken::is_cancelled)
             .unwrap_or_else(|| state.remembered.contains(id))
+    }
+
+    /// The token a live turn is registered under, so work done on its behalf —
+    /// waiting for the GPU, say — stops when it is stopped.
+    ///
+    /// `None` for an id nothing registered. An id stopped before it was
+    /// registered comes back as an already-cancelled token, so a wait started
+    /// for a turn that was stopped a moment ago does not begin.
+    pub fn token(&self, id: &str) -> Option<CancelToken> {
+        let state = self.inner.lock().ok()?;
+        if let Some(token) = state.live.get(id) {
+            return Some(token.clone());
+        }
+        state
+            .remembered
+            .contains(id)
+            .then(CancelToken::cancelled_now)
     }
 
     /// Drops every id a finished turn was reachable under.

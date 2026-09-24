@@ -25,33 +25,58 @@
 //! and reports an overflow rather than silently dropping from it. Only then are
 //! neighbours, evidence and artifact references added, in ranked order, until
 //! the budget is gone. What did not fit is named in the manifest's omissions
-//! with a reason, so an omission is a fact somebody can read rather than an
-//! absence they have to notice.
+//! with a reason, and summarised for the model in one deterministic digest
+//! block — item ids at their revisions, never a model-written summary — so an
+//! omission is a fact somebody can read rather than an absence they have to
+//! notice.
+//!
+//! ## Four scopes, one precedence order
+//!
+//! A round reads four scopes, each authorised on its own terms (see
+//! [`MemoryGraph::snapshot_scopes`]), and records which one every selected item
+//! came from:
+//!
+//! | Precedence | Scope | What it holds | Admitted into a round when |
+//! |---|---|---|---|
+//! | 0 | task | the objective, corrections, plan, receipts, approvals, findings | readable; proposals labelled |
+//! | 1 | project | established project knowledge | established, unexpired |
+//! | 2 | procedure | activated lessons and checklists | established, unexpired, applicable to this role |
+//! | 3 | preference | how this person likes work done | established, unexpired |
+//!
+//! Precedence is what decides a disagreement, and it is stated on the block
+//! the model reads: a preference says it yields to the task's constraints. The
+//! runtime's own policy and the current request sit above all four — they are
+//! not memory, and nothing retrieved can override them. An older preference or
+//! procedure never outranks a correction made in this task.
 //!
 //! ## Authorisation happens before ranking, not after it
 //!
-//! The authorised set comes from [`MemoryGraph::snapshot`], and ranking,
-//! expansion and deduplication all run *inside* it. Ranking first and filtering
-//! last would mean the ordering was computed over rows the reader may not see —
-//! which changes what they *do* see, and is a disclosure even when every
-//! returned row is clean.
+//! The authorised set comes from one atomic read, and ranking, expansion and
+//! deduplication all run *inside* it. Ranking first and filtering last would
+//! mean the ordering was computed over rows the reader may not see — which
+//! changes what they *do* see, and is a disclosure even when every returned row
+//! is clean. The same read returns the cursor, so the manifest names the
+//! position the rows actually came from.
 //!
 //! ## Lexical is called lexical
 //!
 //! There is no local embedding model wired into this product today
-//! (`knowledge::LocalEmbedder` has no production caller). So retrieval here is
-//! keyword overlap, and the manifest's retrieval record says so. The
-//! alternative — labelling it semantic because the field exists — would let a
-//! deployment believe it has a capability it does not have.
+//! (`knowledge::LocalEmbedder` has no production caller). Ranking goes through
+//! [`RetrievalProvider`], the interface plan P07 plugs its embedding provider
+//! into, and the only provider this build ships is [`LexicalRetrieval`] —
+//! keyword overlap, recorded as degraded and saying why. A provider that fails
+//! falls back to lexical and the record says that too. Calling this "semantic"
+//! because a field exists for it would let a deployment believe it has a
+//! capability it does not have.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::context_manifest::{
     BudgetRecord, ContextManifest, FinalProjection, GraphBinding, Omission, RetrievalRecord,
-    SelectedItem,
+    ScopeRecord, SelectedItem,
 };
 use crate::ai_engine::ocr_budget::estimate_tokens;
 use crate::identity::Session;
@@ -68,9 +93,9 @@ use crate::knowledge::graph::runtime_store::{MemoryError, MemoryGraph};
 /// revision would make two calls in the same run incomparable, and would make a
 /// manifest describe a state that no longer exists by the time anybody reads it.
 ///
-/// So each call names its cursor. Refreshing between calls is then a deliberate
-/// act — take a new scope at a new revision — rather than an accident of
-/// whenever the query happened to run.
+/// So each call records the cursor its rows were read at. Refreshing between
+/// calls is then a deliberate act rather than an accident of whenever the query
+/// happened to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenScope {
     pub task_id: String,
@@ -79,7 +104,13 @@ pub struct FrozenScope {
     pub agent_id: String,
     /// The agent definition this run pinned. See `agents::PinnedDefinition`.
     pub definition_version: u64,
-    /// The changefeed position this call is authorised against.
+    /// The changefeed position the caller wants this compiled at, or 0 for
+    /// "now".
+    ///
+    /// A request, not a claim. The store serves current rows; when the graph
+    /// has moved past the requested position the manifest records both the
+    /// position asked for and the one actually read — see
+    /// `GraphBinding::requested_revision`.
     pub graph_revision: i64,
     pub model_id: String,
     /// The chat template identity, when the serving side knows it. Part of the
@@ -90,6 +121,13 @@ pub struct FrozenScope {
     /// The project this call is working in, for the ACL check. `None` is not a
     /// wildcard — see `MemoryItem::readable_by`.
     pub project_id: Option<String>,
+    /// What this agent does — its capability key (`calculation`, …). Decides
+    /// which activated procedures apply. `None` satisfies no capability
+    /// restriction.
+    pub capability: Option<String>,
+    /// The instant expiry is judged at, RFC 3339. Passed in rather than read
+    /// here so two compilations of the same state agree.
+    pub now: String,
 }
 
 /// What a block of compiled context is.
@@ -117,6 +155,13 @@ pub enum BlockKind {
     Evidence,
     /// A produced file, at an exact revision.
     Artifact,
+    /// An activated procedure that applies to this role.
+    Procedure,
+    /// How this person likes their work done.
+    Preference,
+    /// What was left out for space, by id and revision. Written by this code,
+    /// never by a model.
+    Digest,
 }
 
 impl BlockKind {
@@ -143,6 +188,74 @@ impl BlockKind {
             Self::Neighbour => "neighbour",
             Self::Evidence => "evidence",
             Self::Artifact => "artifact",
+            Self::Procedure => "procedure",
+            Self::Preference => "preference",
+            Self::Digest => "digest",
+        }
+    }
+}
+
+/// Which scope a memory item was read from, in precedence order.
+///
+/// The derived order *is* the precedence: `Task` outranks everything, and each
+/// later scope yields to every earlier one when they disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ScopeRole {
+    Task,
+    Project,
+    Procedure,
+    Preference,
+}
+
+impl ScopeRole {
+    pub const ALL: [ScopeRole; 4] = [
+        ScopeRole::Task,
+        ScopeRole::Project,
+        ScopeRole::Procedure,
+        ScopeRole::Preference,
+    ];
+
+    pub fn precedence(self) -> u8 {
+        match self {
+            ScopeRole::Task => 0,
+            ScopeRole::Project => 1,
+            ScopeRole::Procedure => 2,
+            ScopeRole::Preference => 3,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScopeRole::Task => "task",
+            ScopeRole::Project => "project",
+            ScopeRole::Procedure => "procedure",
+            ScopeRole::Preference => "preference",
+        }
+    }
+
+    /// The role an item plays, from where it lives and what it is.
+    pub fn of(item: &MemoryItem) -> Self {
+        match (&item.scope, item.kind) {
+            (_, MemoryKind::Procedure) => ScopeRole::Procedure,
+            (MemoryScope::Task { .. }, MemoryKind::Preference) => ScopeRole::Preference,
+            (MemoryScope::Task { .. }, _) => ScopeRole::Task,
+            (MemoryScope::Workspace { .. }, _) => ScopeRole::Project,
+            (MemoryScope::User { .. }, _) => ScopeRole::Preference,
+        }
+    }
+
+    /// What the block says about where it stands. `None` for the task's own
+    /// state, whose blocks read exactly as they did before scopes existed.
+    fn stance(self) -> Option<&'static str> {
+        match self {
+            ScopeRole::Task => None,
+            ScopeRole::Project => Some("project · yields to this task's constraints and corrections"),
+            ScopeRole::Procedure => {
+                Some("activated procedure · yields to this task and to project rules")
+            }
+            ScopeRole::Preference => {
+                Some("preference · yields to this task, project rules and procedures")
+            }
         }
     }
 }
@@ -185,14 +298,48 @@ pub fn hash_of(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// How retrieval was actually done.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetrievalMode {
-    /// Keyword overlap only. What this deployment does today.
-    Lexical,
-    /// Keyword and vector, fused. Reachable only with a real local embedding
-    /// model; see the module header.
-    Hybrid { embedding_dimension: u32 },
+/// Ranks candidates for a round. The seam plan P07 plugs a measured local
+/// embedding provider into.
+///
+/// ## The contract
+///
+/// - `score` returns one number per candidate, in order; higher is more
+///   relevant. It is only ever given items the reader is authorised to see.
+/// - `record` says how the ranking was done, honestly. A provider that did not
+///   search vectors must not say `hybrid`.
+/// - An `Err` from `score` does not fail the round: the compiler falls back to
+///   [`LexicalRetrieval`] and records the fallback as degraded, naming why.
+pub trait RetrievalProvider {
+    fn record(&self) -> RetrievalRecord;
+    fn score(&self, question: &str, candidates: &[&MemoryItem]) -> Result<Vec<f64>, String>;
+}
+
+/// Keyword overlap. What this build ships, labelled as what it is.
+pub struct LexicalRetrieval;
+
+impl RetrievalProvider for LexicalRetrieval {
+    fn record(&self) -> RetrievalRecord {
+        RetrievalRecord {
+            mode: "lexical".into(),
+            embedding_model_id: None,
+            embedding_dimension: None,
+            index_version: None,
+            // Degraded relative to what the deployment intends, and said so.
+            degraded: true,
+            degraded_because: Some(
+                "no local embedding model is wired into retrieval (plan P07), so this round was \
+                 ranked by keyword overlap only"
+                    .into(),
+            ),
+        }
+    }
+
+    fn score(&self, question: &str, candidates: &[&MemoryItem]) -> Result<Vec<f64>, String> {
+        Ok(candidates
+            .iter()
+            .map(|item| relevance(question, &item.content))
+            .collect())
+    }
 }
 
 /// What the compiler produced.
@@ -241,6 +388,11 @@ impl CompiledContext {
             .map(|block| block.tokens)
             .fold(0u32, u32::saturating_add)
     }
+
+    /// The cursor the rows were actually read at.
+    pub fn cursor(&self) -> Option<i64> {
+        self.manifest.graph.as_ref().map(|graph| graph.graph_revision)
+    }
 }
 
 /// What the window is spent on before any context is added.
@@ -252,9 +404,13 @@ pub struct Reserves {
     pub output: u32,
     /// What the chat template spends on role markers and separators.
     pub framing: u32,
+    /// Held back for what counting may miss: the drift between an estimate and
+    /// the tokenizer, an image whose cost has not been measured yet.
+    pub safety: u32,
     /// `tokenizer` or `estimate`. See `BudgetRecord::counted_by`.
     pub counted_by: String,
-    pub mode: RetrievalMode,
+    /// Where the window figure came from: `server` or `registryDeclared`.
+    pub window_source: Option<String>,
 }
 
 impl Reserves {
@@ -264,6 +420,35 @@ impl Reserves {
             .saturating_sub(self.tool_schemas)
             .saturating_sub(self.output)
             .saturating_sub(self.framing)
+            .saturating_sub(self.safety)
+    }
+
+    pub fn total(&self) -> u32 {
+        self.tool_schemas
+            .saturating_add(self.output)
+            .saturating_add(self.framing)
+            .saturating_add(self.safety)
+    }
+}
+
+/// Whether an item's validity has ended at `now`.
+///
+/// Parsed rather than compared as text, because two RFC 3339 spellings of one
+/// instant (`Z` and `+00:00`) do not sort together. An expiry nobody can read
+/// counts as expired: treating a corrupted timestamp as "never expires" turns
+/// it into an item that outlives its retention silently.
+fn expired(item: &MemoryItem, now: &str) -> bool {
+    let Some(until) = item.valid_until.as_deref() else {
+        return false;
+    };
+    let Ok(now) = chrono::DateTime::parse_from_rfc3339(now) else {
+        // A caller with no readable clock cannot judge expiry; nothing is
+        // expired on its say-so.
+        return false;
+    };
+    match chrono::DateTime::parse_from_rfc3339(until) {
+        Ok(until) => until <= now,
+        Err(_) => true,
     }
 }
 
@@ -277,7 +462,7 @@ impl<'a> ContextCompiler<'a> {
         Self { graph }
     }
 
-    /// Builds the context for one model round.
+    /// Builds the context for one model round, ranked lexically.
     ///
     /// `already_carried` is the set of content hashes the turn is carrying by
     /// other means — history, attached documents, the run's own notes. A block
@@ -285,8 +470,8 @@ impl<'a> ContextCompiler<'a> {
     /// because injecting the same sentence twice costs the window and teaches
     /// the model that repetition is emphasis.
     ///
-    /// `question` drives lexical ranking. `base` is the manifest the turn was
-    /// composed with; what comes back is that manifest extended and re-sealed.
+    /// `question` drives ranking. `base` is the manifest the turn was composed
+    /// with; what comes back is that manifest extended and re-sealed.
     pub fn compile(
         &self,
         session: &Session,
@@ -296,23 +481,48 @@ impl<'a> ContextCompiler<'a> {
         already_carried: &BTreeSet<String>,
         reserves: Reserves,
     ) -> Result<CompiledContext, MemoryError> {
-        // ── Authorised set first ─────────────────────────────────────────
+        self.compile_with(
+            session,
+            scope,
+            base,
+            question,
+            already_carried,
+            reserves,
+            &LexicalRetrieval,
+        )
+    }
+
+    /// [`Self::compile`], ranked by the given provider.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compile_with(
+        &self,
+        session: &Session,
+        scope: &FrozenScope,
+        base: ContextManifest,
+        question: &str,
+        already_carried: &BTreeSet<String>,
+        reserves: Reserves,
+        retrieval: &dyn RetrievalProvider,
+    ) -> Result<CompiledContext, MemoryError> {
+        // ── Authorised set first, every scope at one cursor ──────────────
         //
         // Everything below ranks, expands and deduplicates inside this. A
         // ranking computed over rows the reader may not see changes what they
         // do see, which is a disclosure even when the returned rows are clean.
-        let authorised = self.graph.snapshot(
-            session,
-            &MemoryScope::Task {
-                task_id: scope.task_id.clone(),
-            },
-            scope.project_id.as_deref(),
-        )?;
-
-        let usable: Vec<&MemoryItem> = authorised
-            .iter()
-            .filter(|item| item.status.usable_as_evidence())
-            .collect();
+        let mut scopes = vec![MemoryScope::Task {
+            task_id: scope.task_id.clone(),
+        }];
+        if let Some(project) = &scope.project_id {
+            scopes.push(MemoryScope::Workspace {
+                project_id: project.clone(),
+            });
+        }
+        scopes.push(MemoryScope::User {
+            user_id: session.user.id.clone(),
+        });
+        let (authorised, cursor) =
+            self.graph
+                .snapshot_scopes(session, &scopes, scope.project_id.as_deref())?;
 
         let available = reserves.available(scope.served_window);
         let mut blocks: Vec<ContextBlock> = Vec::new();
@@ -321,20 +531,101 @@ impl<'a> ContextCompiler<'a> {
         let mut seen: BTreeSet<String> = already_carried.clone();
         let mut spent: u32 = 0;
 
+        // Per-scope accounting: read, selected. Omitted is the difference.
+        let mut counts: BTreeMap<ScopeRole, (u32, u32)> = BTreeMap::new();
+        for item in &authorised {
+            counts.entry(ScopeRole::of(item)).or_default().0 += 1;
+        }
+
+        // ── What may be offered at all ──────────────────────────────────
+        let mut hidden = 0usize;
+        let mut usable: Vec<(&MemoryItem, ScopeRole)> = Vec::new();
+        for item in &authorised {
+            let role = ScopeRole::of(item);
+            if !item.status.usable_as_evidence() {
+                // Counted, not named — the count is the disclosure-safe half.
+                hidden += 1;
+                continue;
+            }
+            if expired(item, &scope.now) {
+                omissions.push(Omission {
+                    what: item.item_id.clone(),
+                    reason: "expired".into(),
+                    detail: format!(
+                        "{} stopped being valid at {} and was not offered",
+                        item.item_id,
+                        item.valid_until.as_deref().unwrap_or("?")
+                    ),
+                });
+                continue;
+            }
+            // Outside the task's own scope only what is established is used:
+            // a proposed project fact is unreviewed, a proposed procedure is a
+            // learning candidate, and a proposed preference is a model's guess
+            // about a person.
+            if role != ScopeRole::Task && !item.status.is_established() {
+                omissions.push(Omission {
+                    what: item.item_id.clone(),
+                    reason: "notEstablished".into(),
+                    detail: format!(
+                        "{} is a {} {} that nothing has established yet, so it was not applied",
+                        item.item_id,
+                        role.as_str(),
+                        item.kind.as_str()
+                    ),
+                });
+                continue;
+            }
+            if role == ScopeRole::Procedure {
+                let applies = item
+                    .applies_to
+                    .as_ref()
+                    .map(|condition| {
+                        condition.applies_to(scope.capability.as_deref(), &scope.agent_id)
+                    })
+                    .unwrap_or(true);
+                if !applies {
+                    omissions.push(Omission {
+                        what: item.item_id.clone(),
+                        reason: "notApplicable".into(),
+                        detail: format!(
+                            "{} is an activated procedure for a different role or agent, so it \
+                             does not apply to this one",
+                            item.item_id
+                        ),
+                    });
+                    continue;
+                }
+            }
+            usable.push((item, role));
+        }
+
         // ── Mandatory ────────────────────────────────────────────────────
+        //
+        // Only the task's own state. A project constraint is knowledge this
+        // round may use; an operator's correction to *this task* is a rule it
+        // must follow, and the two are not the same kind of thing.
         let mut mandatory: Vec<(BlockKind, &MemoryItem)> = Vec::new();
-        for item in &usable {
-            let kind = match item.kind {
-                MemoryKind::Goal => BlockKind::Objective,
-                // An operator's correction is a constraint on the work, not a
-                // suggestion. It is in the mandatory set for that reason.
-                MemoryKind::Constraint | MemoryKind::Correction => BlockKind::Constraint,
-                MemoryKind::Plan => BlockKind::Plan,
-                MemoryKind::ToolObservation => BlockKind::Receipt,
-                MemoryKind::OpenQuestion => BlockKind::PendingApproval,
-                _ => continue,
+        let mut optional_pool: Vec<(&MemoryItem, ScopeRole)> = Vec::new();
+        for (item, role) in &usable {
+            let kind = if *role == ScopeRole::Task {
+                match item.kind {
+                    MemoryKind::Goal => Some(BlockKind::Objective),
+                    // An operator's correction is a constraint on the work, not
+                    // a suggestion. It is in the mandatory set for that reason.
+                    MemoryKind::Constraint | MemoryKind::Correction => Some(BlockKind::Constraint),
+                    MemoryKind::Plan => Some(BlockKind::Plan),
+                    MemoryKind::ToolObservation => Some(BlockKind::Receipt),
+                    MemoryKind::OpenQuestion => Some(BlockKind::PendingApproval),
+                    _ => None,
+                }
+            } else {
+                None
             };
-            mandatory.push((kind, item));
+            match kind {
+                Some(kind) => mandatory.push((kind, item)),
+                None => optional_pool.push((item, *role)),
+            }
         }
         // Stable order: by kind, then by item id. Two compilations of the same
         // graph state must produce the same input, or a manifest cannot be
@@ -342,7 +633,7 @@ impl<'a> ContextCompiler<'a> {
         mandatory.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.item_id.cmp(&b.1.item_id)));
 
         for (kind, item) in mandatory {
-            let block = ContextBlock::new(kind, Some(item), render(item));
+            let block = ContextBlock::new(kind, Some(item), render(item, ScopeRole::Task));
             if seen.contains(&block.content_hash) {
                 omissions.push(Omission {
                     what: item.item_id.clone(),
@@ -357,10 +648,13 @@ impl<'a> ContextCompiler<'a> {
             }
             seen.insert(block.content_hash.clone());
             spent = spent.saturating_add(block.tokens);
+            counts.entry(ScopeRole::Task).or_default().1 += 1;
             selected.push(SelectedItem {
                 item_id: item.item_id.clone(),
                 revision: item.revision,
                 reason: "mandatory".into(),
+                scope: Some(ScopeRole::Task.as_str().into()),
+                precedence: Some(ScopeRole::Task.precedence()),
             });
             blocks.push(block);
         }
@@ -372,47 +666,70 @@ impl<'a> ContextCompiler<'a> {
                 reason: "budget".into(),
                 detail: format!(
                     "the objective, constraints, plan, receipts and pending approvals need \
-                     {spent} tokens and this model affords {available}. Nothing was dropped from \
-                     them — a turn that silently forgot a correction or a completed effect would \
-                     be worse than one that refuses."
+                     {spent} tokens and this model affords {available} of a {}-token window \
+                     after reserving {} for tool schemas, output, framing and safety. Nothing \
+                     was dropped from them — a turn that silently forgot a correction or a \
+                     completed effect would be worse than one that refuses.",
+                    scope.served_window,
+                    reserves.total()
                 ),
             });
         }
 
         // ── Optional, ranked, within what is left ────────────────────────
+        let mut retrieval_record = retrieval.record();
+        let mut left_out: Vec<&MemoryItem> = Vec::new();
         if !mandatory_overflowed {
-            let mut optional: Vec<(f64, BlockKind, &MemoryItem)> = usable
-                .iter()
-                .filter(|item| {
-                    !matches!(
-                        item.kind,
-                        MemoryKind::Goal
-                            | MemoryKind::Constraint
-                            | MemoryKind::Correction
-                            | MemoryKind::Plan
-                            | MemoryKind::ToolObservation
-                            | MemoryKind::OpenQuestion
-                    )
-                })
-                .map(|item| {
-                    let kind = match item.kind {
-                        MemoryKind::ArtifactRef => BlockKind::Artifact,
-                        MemoryKind::SourceRef => BlockKind::Evidence,
-                        _ => BlockKind::Neighbour,
+            let candidates: Vec<&MemoryItem> = optional_pool.iter().map(|(item, _)| *item).collect();
+            let scores = match retrieval.score(question, &candidates) {
+                Ok(scores) if scores.len() == candidates.len() => scores,
+                outcome => {
+                    // The provider failed or answered the wrong shape. Lexical
+                    // takes over, and the record says both things.
+                    let why = match outcome {
+                        Err(error) => error,
+                        Ok(scores) => format!(
+                            "it returned {} score(s) for {} candidate(s)",
+                            scores.len(),
+                            candidates.len()
+                        ),
                     };
-                    (relevance(question, &item.content), kind, *item)
-                })
+                    retrieval_record = RetrievalRecord {
+                        degraded: true,
+                        degraded_because: Some(format!(
+                            "the {} ranking failed ({why}), so this round fell back to keyword \
+                             overlap",
+                            retrieval_record.mode
+                        )),
+                        ..LexicalRetrieval.record()
+                    };
+                    LexicalRetrieval.score(question, &candidates).unwrap_or_default()
+                }
+            };
+
+            let mut optional: Vec<(f64, &MemoryItem, ScopeRole)> = optional_pool
+                .iter()
+                .zip(scores)
+                .map(|((item, role), score)| (score, *item, *role))
                 .collect();
-            // Descending relevance, then item id, so the order is total and
-            // deterministic even when scores tie.
+            // Descending relevance, then precedence, then item id, so the order
+            // is total and deterministic even when scores tie.
             optional.sort_by(|a, b| {
                 b.0.partial_cmp(&a.0)
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.2.item_id.cmp(&b.2.item_id))
+                    .then_with(|| a.2.cmp(&b.2))
+                    .then_with(|| a.1.item_id.cmp(&b.1.item_id))
             });
 
-            for (_, kind, item) in optional {
-                let block = ContextBlock::new(kind, Some(item), render(item));
+            for (_, item, role) in optional {
+                let kind = match (role, item.kind) {
+                    (ScopeRole::Procedure, _) => BlockKind::Procedure,
+                    (ScopeRole::Preference, _) => BlockKind::Preference,
+                    (_, MemoryKind::ArtifactRef) => BlockKind::Artifact,
+                    (_, MemoryKind::SourceRef) => BlockKind::Evidence,
+                    _ => BlockKind::Neighbour,
+                };
+                let block = ContextBlock::new(kind, Some(item), render(item, role));
                 if seen.contains(&block.content_hash) {
                     omissions.push(Omission {
                         what: item.item_id.clone(),
@@ -433,58 +750,133 @@ impl<'a> ContextCompiler<'a> {
                             available.saturating_sub(spent)
                         ),
                     });
+                    left_out.push(item);
                     continue;
                 }
                 seen.insert(block.content_hash.clone());
                 spent = spent.saturating_add(block.tokens);
+                counts.entry(role).or_default().1 += 1;
                 selected.push(SelectedItem {
                     item_id: item.item_id.clone(),
                     revision: item.revision,
                     reason: kind.as_str().to_string(),
+                    scope: Some(role.as_str().into()),
+                    precedence: Some(role.precedence()),
                 });
                 blocks.push(block);
             }
+
+            // What did not fit, said to the model by id and revision rather
+            // than summarised by one. This is the compaction: when the digest
+            // itself does not fit, the least relevant optional blocks carried
+            // so far are moved into it — they are named there and stay
+            // recallable — until it does. Only when nothing optional is left to
+            // move is the digest left out, and then the omissions still name
+            // every item.
+            if !left_out.is_empty() {
+                loop {
+                    let digest =
+                        ContextBlock::new(BlockKind::Digest, None, digest_of(&left_out, cursor));
+                    if spent.saturating_add(digest.tokens) <= available {
+                        if !seen.contains(&digest.content_hash) {
+                            spent = spent.saturating_add(digest.tokens);
+                            seen.insert(digest.content_hash.clone());
+                            blocks.push(digest);
+                        }
+                        break;
+                    }
+                    let Some(position) = blocks.iter().rposition(|b| !b.kind.is_mandatory()) else {
+                        break;
+                    };
+                    let moved = blocks.remove(position);
+                    spent = spent.saturating_sub(moved.tokens);
+                    seen.remove(&moved.content_hash);
+                    let Some(item_id) = moved.item_id.clone() else {
+                        break;
+                    };
+                    if let Some(index) = selected.iter().rposition(|s| s.item_id == item_id) {
+                        let removed = selected.remove(index);
+                        if let Some(role) = ScopeRole::ALL
+                            .iter()
+                            .find(|role| Some(role.as_str()) == removed.scope.as_deref())
+                        {
+                            if let Some(entry) = counts.get_mut(role) {
+                                entry.1 = entry.1.saturating_sub(1);
+                            }
+                        }
+                    }
+                    if let Some(item) = authorised.iter().find(|item| item.item_id == item_id) {
+                        omissions.push(Omission {
+                            what: item_id.clone(),
+                            reason: "budget".into(),
+                            detail: format!(
+                                "{item_id} was moved into the digest to make room for it; it \
+                                 stayed in the graph and can be recalled explicitly"
+                            ),
+                        });
+                        left_out.insert(0, item);
+                    }
+                }
+            }
         }
 
-        // Anything in the task that is not offerable is recorded as a count
-        // rather than named — the count is the disclosure-safe half.
-        let hidden = authorised.len().saturating_sub(usable.len());
         if hidden > 0 {
             omissions.push(Omission {
                 what: format!("{hidden} item(s)"),
                 reason: "revoked".into(),
                 detail: format!(
-                    "{hidden} item(s) in this task are rejected, superseded or tombstoned and \
-                     were not offered to the model"
+                    "{hidden} item(s) in the scopes this round read are rejected, superseded or \
+                     tombstoned and were not offered to the model"
                 ),
             });
         }
+
+        let scope_records: Vec<ScopeRecord> = ScopeRole::ALL
+            .iter()
+            .filter_map(|role| {
+                let (read, chosen) = counts.get(role).copied()?;
+                Some(ScopeRecord {
+                    role: role.as_str().into(),
+                    precedence: role.precedence(),
+                    read,
+                    selected: chosen,
+                    omitted: read.saturating_sub(chosen),
+                })
+            })
+            .collect();
 
         let content_hashes: Vec<String> = blocks
             .iter()
             .map(|block| block.content_hash.clone())
             .collect();
 
+        let requested = scope.graph_revision;
         Ok(CompiledContext {
-            manifest: base.with_compilation(
-                Some(GraphBinding {
-                    graph_revision: scope.graph_revision,
-                    selected,
-                }),
-                Some(BudgetRecord {
-                    window: scope.served_window,
-                    reserved_tool_schemas: reserves.tool_schemas,
-                    reserved_output: reserves.output,
-                    reserved_framing: reserves.framing,
-                    available,
-                    spent,
-                    counted_by: reserves.counted_by.clone(),
-                    server_reported_tokens: None,
-                }),
-                Some(retrieval_record(reserves.mode)),
-                omissions,
-                content_hashes,
-            ),
+            manifest: base
+                .with_compilation(
+                    Some(GraphBinding {
+                        graph_revision: cursor,
+                        requested_revision: (requested > 0 && requested != cursor)
+                            .then_some(requested),
+                        selected,
+                    }),
+                    Some(BudgetRecord {
+                        window: scope.served_window,
+                        reserved_tool_schemas: reserves.tool_schemas,
+                        reserved_output: reserves.output,
+                        reserved_framing: reserves.framing,
+                        reserved_safety: reserves.safety,
+                        window_source: reserves.window_source.clone(),
+                        available,
+                        spent,
+                        counted_by: reserves.counted_by.clone(),
+                        server_reported_tokens: None,
+                    }),
+                    Some(retrieval_record),
+                    omissions,
+                    content_hashes,
+                )
+                .with_scopes(scope_records),
             blocks,
             mandatory_overflowed,
         })
@@ -492,23 +884,20 @@ impl<'a> ContextCompiler<'a> {
 
     /// Recompiles the same task's context for a different model's real window.
     ///
-    /// ## Why the graph revision is carried over rather than re-read
+    /// ## Why the requested revision is carried over
     ///
     /// This is the part that makes a handoff comparable to what preceded it.
-    /// [`compile`](Self::compile) is called with a freshly read cursor, which is
-    /// right for a new round; here it would be wrong twice over.
+    /// The source scope is reused whole, with three fields replaced: the model,
+    /// its template, and the window it actually came up with. Everything that
+    /// decides *what* is authorised — the task, the agent, the definition
+    /// version, the project, the capability — is the source's, and the source's
+    /// cursor is passed as the *requested* revision.
     ///
-    /// A fact another agent committed *during* the handoff would appear in the
-    /// target's manifest and not the source's, so the two would be
-    /// incomparable — and worse, the record would suggest the new model was
-    /// given something the old one had considered. Reading at the frozen
-    /// revision means the only difference between the two manifests is the
-    /// budget, which is exactly the claim a transition record makes.
-    ///
-    /// So the source scope is reused whole, with three fields replaced: the
-    /// model, its template, and the window it actually came up with. Everything
-    /// that decides *what* is authorised — the task, the agent, the definition
-    /// version, the project, the cursor — is the source's.
+    /// The store serves current rows, so if another agent committed during the
+    /// handoff the manifest says so: `graph_revision` is where the rows came
+    /// from and `requested_revision` is the source's. It used to label the
+    /// current rows with the source's cursor, which described a context nobody
+    /// compiled.
     ///
     /// ## What the caller must still check
     ///
@@ -517,6 +906,7 @@ impl<'a> ContextCompiler<'a> {
     /// records and refuses on rather than an error in compiling it — see
     /// [`CompiledContext::mandatory_overflowed`] and
     /// [`super::model_transition::fits_mandatory`].
+    #[allow(clippy::too_many_arguments)]
     pub fn recompile_for_binding(
         &self,
         session: &Session,
@@ -541,39 +931,43 @@ impl<'a> ContextCompiler<'a> {
             definition_version: frozen.definition_version,
             graph_revision: frozen.graph_revision,
             project_id: frozen.project_id.clone(),
+            capability: frozen.capability.clone(),
+            now: frozen.now.clone(),
         };
         self.compile(session, &scope, base, question, already_carried, reserves)
     }
 }
 
-fn retrieval_record(mode: RetrievalMode) -> RetrievalRecord {
-    match mode {
-        RetrievalMode::Lexical => RetrievalRecord {
-            mode: "lexical".into(),
-            embedding_model_id: None,
-            embedding_dimension: None,
-            index_version: None,
-            // Degraded relative to what the deployment intends, and said so.
-            // Calling this "semantic" because a field exists for it is how a
-            // deployment comes to believe it has a capability it does not.
-            degraded: true,
-            degraded_because: Some(
-                "no local embedding model is wired into retrieval, so this turn was ranked by \
-                 keyword overlap only"
-                    .into(),
-            ),
-        },
-        RetrievalMode::Hybrid {
-            embedding_dimension,
-        } => RetrievalRecord {
-            mode: "hybrid".into(),
-            embedding_model_id: None,
-            embedding_dimension: Some(embedding_dimension),
-            index_version: None,
-            degraded: false,
-            degraded_because: None,
-        },
+/// The deterministic account of what did not fit.
+fn digest_of(left_out: &[&MemoryItem], cursor: i64) -> String {
+    const NAMED: usize = 8;
+    let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for item in left_out {
+        *kinds.entry(item.kind.as_str()).or_default() += 1;
     }
+    let kinds = kinds
+        .iter()
+        .map(|(kind, count)| format!("{count} {kind}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let named = left_out
+        .iter()
+        .take(NAMED)
+        .map(|item| format!("{}@{}", item.item_id, item.revision))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = left_out.len().saturating_sub(NAMED);
+    format!(
+        "[digest · not carried] {} item(s) were left out of this round for space ({kinds}): \
+         {named}{}. They remain in shared memory at graph revision {cursor}; recall one with \
+         memory.recall_authorized rather than assuming what it says.",
+        left_out.len(),
+        if more > 0 {
+            format!(", and {more} more")
+        } else {
+            String::new()
+        }
+    )
 }
 
 /// How a memory item reads to a model.
@@ -583,7 +977,13 @@ fn retrieval_record(mode: RetrievalMode) -> RetrievalRecord {
 /// it is reading something nothing corroborated — and stored text that tries to
 /// give instructions arrives under the same label, as data with a provenance
 /// rather than as a voice.
-fn render(item: &MemoryItem) -> String {
+///
+/// Items from outside the task say where they stand in the precedence order.
+/// Exact references follow the content — an artifact by id, revision and full
+/// SHA-256; a source by its content address and locator — so a receipt saying
+/// a file was written names *which* bytes, and a resumed run can check them
+/// rather than write them again.
+fn render(item: &MemoryItem, role: ScopeRole) -> String {
     let label = match item.status {
         ItemStatus::Admitted => "established",
         ItemStatus::Proposed => "unverified — proposed and not yet corroborated",
@@ -591,7 +991,20 @@ fn render(item: &MemoryItem) -> String {
         ItemStatus::Rejected => "rejected",
         ItemStatus::Tombstoned => "removed",
     };
-    format!("[{} · {}] {}", item.kind.as_str(), label, item.content)
+    let mut out = match role.stance() {
+        Some(stance) => format!("[{} · {} · {}] {}", item.kind.as_str(), label, stance, item.content),
+        None => format!("[{} · {}] {}", item.kind.as_str(), label, item.content),
+    };
+    for artifact in &item.artifacts {
+        out.push_str(&format!(
+            " (artifact {}@{} sha256:{})",
+            artifact.artifact_id, artifact.revision, artifact.sha256
+        ));
+    }
+    for source in &item.sources {
+        out.push_str(&format!(" (source sha256:{} {})", source.sha256, source.locator));
+    }
+    out
 }
 
 /// Keyword overlap between the question and a candidate.
@@ -623,7 +1036,7 @@ pub(crate) mod tests {
     use crate::agent_runtime::context_manifest::{HistoryBinding, MANIFEST_VERSION};
     use crate::agent_runtime::memory::Acl;
     use crate::identity::{Role, User};
-    use crate::knowledge::graph::runtime_memory::{item_id, Provenance, SourceRef};
+    use crate::knowledge::graph::runtime_memory::{item_id, Applicability, Provenance, SourceRef};
     use crate::policy::Classification;
 
     const TASK: &str = "task-1";
@@ -642,6 +1055,8 @@ pub(crate) mod tests {
             template_id: Some("chatml".into()),
             served_window: 32_768,
             project_id: None,
+            capability: None,
+            now: "2026-06-01T00:00:00Z".into(),
         }
     }
 
@@ -650,8 +1065,9 @@ pub(crate) mod tests {
             tool_schemas: 1_200,
             output: 4_096,
             framing: 256,
+            safety: 0,
             counted_by: "estimate".into(),
-            mode: RetrievalMode::Lexical,
+            window_source: None,
         }
     }
 
@@ -705,6 +1121,7 @@ pub(crate) mod tests {
             conflicts_with: Vec::new(),
             causal_parents: Vec::new(),
             idempotency_key: None,
+            applies_to: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         };
@@ -806,7 +1223,8 @@ pub(crate) mod tests {
             operator(),
         );
 
-        let carried: BTreeSet<String> = [hash_of(&render(&goal))].into_iter().collect();
+        let carried: BTreeSet<String> =
+            [hash_of(&render(&goal, ScopeRole::Task))].into_iter().collect();
         let compiled = ContextCompiler::new(&graph)
             .compile(
                 &session("priya"),
@@ -1018,8 +1436,12 @@ pub(crate) mod tests {
         assert_eq!(manifest.manifest_version, MANIFEST_VERSION);
         assert!(manifest.has_graph_binding());
 
+        // The cursor the rows were read at, not the one the caller named. The
+        // store serves current rows; labelling them "412" would describe a
+        // context nobody compiled (plan §3, finding 1).
         let graph_binding = manifest.graph.as_ref().expect("bound");
-        assert_eq!(graph_binding.graph_revision, 412);
+        assert_eq!(graph_binding.graph_revision, graph.graph_revision().expect("reads"));
+        assert_eq!(graph_binding.requested_revision, Some(412));
         assert_eq!(graph_binding.selected.len(), 1);
         assert_eq!(graph_binding.selected[0].reason, "mandatory");
         assert_eq!(graph_binding.selected[0].revision, 1);
@@ -1140,9 +1562,513 @@ pub(crate) mod tests {
         ] {
             assert!(kind.is_mandatory(), "{kind:?}");
         }
-        for kind in [BlockKind::Neighbour, BlockKind::Evidence, BlockKind::Artifact] {
+        for kind in [
+            BlockKind::Neighbour,
+            BlockKind::Evidence,
+            BlockKind::Artifact,
+            BlockKind::Procedure,
+            BlockKind::Preference,
+            BlockKind::Digest,
+        ] {
             assert!(!kind.is_mandatory(), "{kind:?}");
         }
+    }
+
+    // ── Scope composition ─────────────────────────────────────────────────
+
+    const PROJECT: &str = "p-1";
+
+    /// Writes an item into a given scope, with the ACL that scope needs.
+    pub(super) fn write_in(
+        graph: &MemoryGraph,
+        scope: MemoryScope,
+        kind: MemoryKind,
+        content: &str,
+        provenance: Provenance,
+        adjust: impl FnOnce(&mut MemoryItem),
+    ) -> MemoryItem {
+        let project = scope.project().map(str::to_string);
+        let mut item = MemoryItem {
+            item_id: item_id(),
+            revision: 1,
+            kind,
+            agent_id: "ag-1".into(),
+            acl: Acl::for_classification(Classification::Internal, project.as_deref()),
+            scope,
+            classification: Classification::Internal,
+            creator_model_id: Some("model-a".into()),
+            creator_run_id: Some("run-1".into()),
+            provenance,
+            content: content.into(),
+            sources: Vec::new(),
+            artifacts: Vec::new(),
+            confidence: None,
+            status: ItemStatus::Proposed,
+            valid_from: "2026-01-01T00:00:00Z".into(),
+            valid_until: None,
+            supersedes: None,
+            conflicts_with: Vec::new(),
+            causal_parents: Vec::new(),
+            idempotency_key: None,
+            applies_to: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        adjust(&mut item);
+        let committed = graph.commit(item.clone(), None, &[]).expect("commits");
+        item.status = committed.status;
+        item.revision = committed.revision;
+        item
+    }
+
+    fn project() -> MemoryScope {
+        MemoryScope::Workspace {
+            project_id: PROJECT.into(),
+        }
+    }
+
+    fn mine() -> MemoryScope {
+        MemoryScope::User {
+            user_id: "priya".into(),
+        }
+    }
+
+    fn scoped(capability: Option<&str>) -> FrozenScope {
+        FrozenScope {
+            project_id: Some(PROJECT.into()),
+            capability: capability.map(str::to_string),
+            ..scope()
+        }
+    }
+
+    fn compile_scoped(graph: &MemoryGraph, frozen: &FrozenScope, question: &str) -> CompiledContext {
+        ContextCompiler::new(graph)
+            .compile(
+                &session("priya"),
+                frozen,
+                base_manifest(),
+                question,
+                &BTreeSet::new(),
+                reserves(),
+            )
+            .expect("compiles")
+    }
+
+    fn selected_scope(compiled: &CompiledContext, item: &MemoryItem) -> Option<(String, u8)> {
+        compiled
+            .manifest
+            .graph
+            .as_ref()?
+            .selected
+            .iter()
+            .find(|s| s.item_id == item.item_id)
+            .map(|s| (s.scope.clone().unwrap_or_default(), s.precedence.unwrap_or(99)))
+    }
+
+    /// Task, project, activated procedure and preference, each authorised on
+    /// its own terms, read at one cursor, and recorded by scope and precedence.
+    #[test]
+    fn all_four_scopes_are_composed_at_one_cursor_and_recorded() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let goal = write(&graph, MemoryKind::Goal, "Produce the approval note", operator());
+        let fact = write_in(&graph, project(), MemoryKind::Fact, "Vessel V-101 is rated 10 bar", operator(), |_| {});
+        let procedure = write_in(
+            &graph,
+            project(),
+            MemoryKind::Procedure,
+            "Check units before any calculation",
+            operator(),
+            |item| {
+                item.applies_to = Some(Applicability {
+                    capabilities: vec!["calculation".into()],
+                    agents: Vec::new(),
+                })
+            },
+        );
+        let preference = write_in(&graph, mine(), MemoryKind::Preference, "Show pressures in bar", operator(), |_| {});
+
+        let compiled = compile_scoped(&graph, &scoped(Some("calculation")), "vessel pressure units");
+
+        assert_eq!(selected_scope(&compiled, &goal), Some(("task".into(), 0)));
+        assert_eq!(selected_scope(&compiled, &fact), Some(("project".into(), 1)));
+        assert_eq!(selected_scope(&compiled, &procedure), Some(("procedure".into(), 2)));
+        assert_eq!(selected_scope(&compiled, &preference), Some(("preference".into(), 3)));
+
+        let roles: Vec<&str> = compiled.manifest.scopes.iter().map(|s| s.role.as_str()).collect();
+        assert_eq!(roles, vec!["task", "project", "procedure", "preference"]);
+        assert!(compiled.manifest.scopes.iter().all(|s| s.read == 1 && s.selected == 1));
+
+        assert_eq!(compiled.cursor(), Some(graph.graph_revision().expect("reads")));
+        assert!(compiled.manifest.is_intact());
+    }
+
+    /// The precedence the plan requires: an older preference never overrides a
+    /// correction made in this task, and the block the model reads says which
+    /// one yields.
+    #[test]
+    fn a_task_correction_outranks_an_older_preference_and_the_block_says_so() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Correction, "Report every pressure in bar", operator());
+        write_in(&graph, mine(), MemoryKind::Preference, "I prefer pressures in psi", operator(), |_| {});
+
+        let compiled = compile_scoped(&graph, &scoped(None), "pressure");
+        let correction = compiled
+            .blocks
+            .iter()
+            .find(|b| b.content.contains("in bar"))
+            .expect("the correction is carried");
+        assert_eq!(correction.kind, BlockKind::Constraint);
+        assert!(correction.kind.is_mandatory());
+
+        let preference = compiled
+            .blocks
+            .iter()
+            .find(|b| b.content.contains("in psi"))
+            .expect("the preference is carried, labelled");
+        assert_eq!(preference.kind, BlockKind::Preference);
+        assert!(!preference.kind.is_mandatory());
+        assert!(
+            preference.content.contains("yields to this task"),
+            "the preference did not say it yields: {}",
+            preference.content
+        );
+        // Mandatory first: the correction is read before the preference.
+        let order: Vec<BlockKind> = compiled.blocks.iter().map(|b| b.kind).collect();
+        let c = order.iter().position(|k| *k == BlockKind::Constraint).unwrap();
+        let p = order.iter().position(|k| *k == BlockKind::Preference).unwrap();
+        assert!(c < p);
+    }
+
+    /// A procedure written for the calculation checker is readable by the
+    /// author on the same project and still not *for* it — and a reader that
+    /// cannot say what it is does not satisfy the restriction.
+    #[test]
+    fn a_procedure_for_another_role_is_not_applied_and_absence_is_not_a_wildcard() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let procedure = write_in(
+            &graph,
+            project(),
+            MemoryKind::Procedure,
+            "Recompute every figure with the calculation tool",
+            operator(),
+            |item| {
+                item.applies_to = Some(Applicability {
+                    capabilities: vec!["calculation".into()],
+                    agents: Vec::new(),
+                })
+            },
+        );
+        for capability in [Some("document"), None] {
+            let compiled = compile_scoped(&graph, &scoped(capability), "figure");
+            assert!(selected_scope(&compiled, &procedure).is_none(), "{capability:?}");
+            assert!(compiled
+                .manifest
+                .omissions
+                .iter()
+                .any(|o| o.what == procedure.item_id && o.reason == "notApplicable"));
+        }
+        let applies = compile_scoped(&graph, &scoped(Some("calculation")), "figure");
+        assert!(selected_scope(&applies, &procedure).is_some());
+    }
+
+    /// A procedure a model proposed is a learning candidate, not a rule.
+    #[test]
+    fn a_proposed_procedure_is_a_candidate_and_is_not_applied() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let candidate = write_in(
+            &graph,
+            project(),
+            MemoryKind::Procedure,
+            "Always round to one decimal place",
+            model(),
+            |_| {},
+        );
+        assert_eq!(candidate.status, ItemStatus::Proposed);
+        let compiled = compile_scoped(&graph, &scoped(Some("calculation")), "round");
+        assert!(selected_scope(&compiled, &candidate).is_none());
+        assert!(compiled
+            .manifest
+            .omissions
+            .iter()
+            .any(|o| o.what == candidate.item_id && o.reason == "notEstablished"));
+    }
+
+    /// Expiry is judged as an instant, not as text: `Z` and `+00:00` spell the
+    /// same moment and sort differently.
+    #[test]
+    fn an_expired_preference_is_not_applied_whatever_the_timestamp_spelling() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let lapsed = write_in(&graph, mine(), MemoryKind::Preference, "Old format", operator(), |item| {
+            item.valid_until = Some("2026-05-31T23:59:59+00:00".into());
+        });
+        let current = write_in(&graph, mine(), MemoryKind::Preference, "New format", operator(), |item| {
+            item.valid_until = Some("2026-06-01T00:00:01Z".into());
+        });
+        let compiled = compile_scoped(&graph, &scoped(None), "format");
+        assert!(selected_scope(&compiled, &lapsed).is_none());
+        assert!(selected_scope(&compiled, &current).is_some());
+        assert!(compiled
+            .manifest
+            .omissions
+            .iter()
+            .any(|o| o.what == lapsed.item_id && o.reason == "expired"));
+    }
+
+    /// Another person's preferences and another project's knowledge are never
+    /// read — not offered, not named in an omission, not counted.
+    #[test]
+    fn another_persons_preferences_and_another_projects_knowledge_are_invisible() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Goal, "mine", operator());
+        let theirs = write_in(
+            &graph,
+            MemoryScope::User {
+                user_id: "someone-else".into(),
+            },
+            MemoryKind::Preference,
+            "their preference",
+            operator(),
+            |_| {},
+        );
+        let other_project = write_in(
+            &graph,
+            MemoryScope::Workspace {
+                project_id: "p-2".into(),
+            },
+            MemoryKind::Fact,
+            "another project's fact",
+            operator(),
+            |_| {},
+        );
+
+        let compiled = compile_scoped(&graph, &scoped(None), "preference fact");
+        for hidden in [&theirs, &other_project] {
+            assert!(!compiled.blocks.iter().any(|b| b.content.contains(&hidden.content)));
+            assert!(!compiled.manifest.omissions.iter().any(|o| o.what.contains(&hidden.item_id)));
+        }
+        let read: u32 = compiled.manifest.scopes.iter().map(|s| s.read).sum();
+        assert_eq!(read, 1, "an unauthorised item was counted");
+    }
+
+    // ── The retrieval seam ────────────────────────────────────────────────
+
+    /// A stand-in for plan P07's provider: it ranks by its own rule and says
+    /// what it is.
+    struct ReversedHybrid;
+
+    impl RetrievalProvider for ReversedHybrid {
+        fn record(&self) -> RetrievalRecord {
+            RetrievalRecord {
+                mode: "hybrid".into(),
+                embedding_model_id: Some("test-embedder".into()),
+                embedding_dimension: Some(384),
+                index_version: Some("idx-1".into()),
+                degraded: false,
+                degraded_because: None,
+            }
+        }
+
+        fn score(&self, _question: &str, candidates: &[&MemoryItem]) -> Result<Vec<f64>, String> {
+            // Favour the *least* lexically relevant, so a test can tell which
+            // ranking was applied.
+            Ok(candidates
+                .iter()
+                .map(|item| if item.content.contains("zebra") { 1.0 } else { 0.0 })
+                .collect())
+        }
+    }
+
+    struct Broken;
+
+    impl RetrievalProvider for Broken {
+        fn record(&self) -> RetrievalRecord {
+            RetrievalRecord {
+                mode: "hybrid".into(),
+                embedding_model_id: Some("broken".into()),
+                embedding_dimension: Some(384),
+                index_version: None,
+                degraded: false,
+                degraded_because: None,
+            }
+        }
+
+        fn score(&self, _question: &str, _candidates: &[&MemoryItem]) -> Result<Vec<f64>, String> {
+            Err("the embedding sidecar is not running".into())
+        }
+    }
+
+    #[test]
+    fn a_provider_decides_the_ranking_and_is_recorded_as_itself() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Fact, "pressure pressure pressure", receipt());
+        write(&graph, MemoryKind::Fact, "zebra crossing", receipt());
+        let order = |compiled: &CompiledContext| -> Vec<bool> {
+            compiled
+                .blocks
+                .iter()
+                .map(|b| b.content.contains("zebra"))
+                .collect()
+        };
+
+        // Lexically, the pressure fact ranks first for a pressure question…
+        let lexical = compile(&graph, "pressure");
+        assert_eq!(order(&lexical), vec![false, true]);
+
+        // …and the provider's own ranking replaces that order.
+        let compiled = ContextCompiler::new(&graph)
+            .compile_with(
+                &session("priya"),
+                &scope(),
+                base_manifest(),
+                "pressure",
+                &BTreeSet::new(),
+                reserves(),
+                &ReversedHybrid,
+            )
+            .expect("compiles");
+        assert_eq!(order(&compiled), vec![true, false]);
+        let retrieval = compiled.manifest.retrieval.expect("recorded");
+        assert_eq!(retrieval.mode, "hybrid");
+        assert_eq!(retrieval.embedding_model_id.as_deref(), Some("test-embedder"));
+        assert!(!retrieval.degraded);
+    }
+
+    #[test]
+    fn a_failing_provider_falls_back_to_lexical_and_says_so() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Fact, "pressure reading", receipt());
+        let compiled = ContextCompiler::new(&graph)
+            .compile_with(
+                &session("priya"),
+                &scope(),
+                base_manifest(),
+                "pressure",
+                &BTreeSet::new(),
+                reserves(),
+                &Broken,
+            )
+            .expect("a provider failure does not fail the round");
+        assert!(compiled.blocks.iter().any(|b| b.content.contains("pressure reading")));
+        let retrieval = compiled.manifest.retrieval.expect("recorded");
+        assert_eq!(retrieval.mode, "lexical", "a failed hybrid was recorded as hybrid");
+        assert!(retrieval.degraded);
+        let because = retrieval.degraded_because.expect("named");
+        assert!(because.contains("fell back") && because.contains("sidecar"), "{because}");
+    }
+
+    // ── What does not fit ─────────────────────────────────────────────────
+
+    /// Older material that does not fit is named for the model by id and
+    /// revision in a digest this code writes — never summarised by a model —
+    /// and every item is still in the omissions.
+    #[test]
+    fn older_material_that_does_not_fit_is_named_in_a_deterministic_digest() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Goal, "short goal", operator());
+        let mut facts = Vec::new();
+        for n in 0..12 {
+            facts.push(write(
+                &graph,
+                MemoryKind::Fact,
+                &format!("fact {n} {}", "padding ".repeat(40)),
+                receipt(),
+            ));
+        }
+        let mut narrow = scope();
+        narrow.served_window = 5_552 + 400;
+        let compiled = ContextCompiler::new(&graph)
+            .compile(
+                &session("priya"),
+                &narrow,
+                base_manifest(),
+                "goal",
+                &BTreeSet::new(),
+                reserves(),
+            )
+            .expect("compiles");
+        let digest = compiled
+            .blocks
+            .iter()
+            .find(|b| b.kind == BlockKind::Digest)
+            .expect("a digest was written");
+        assert!(digest.content.starts_with("[digest · not carried]"));
+        assert!(digest.content.contains("memory.recall_authorized"));
+        let omitted: Vec<&Omission> = compiled
+            .manifest
+            .omissions
+            .iter()
+            .filter(|o| o.reason == "budget")
+            .collect();
+        assert!(!omitted.is_empty());
+        // Every omitted item that the digest names is named at its revision.
+        let named = omitted
+            .iter()
+            .filter(|o| digest.content.contains(&format!("{}@", o.what)))
+            .count();
+        assert_eq!(named, omitted.len().min(8));
+        assert!(compiled.spent() <= compiled.manifest.budget.as_ref().unwrap().available);
+        // The digest is authorised content like any other block.
+        assert!(compiled.manifest.content_hashes.contains(&digest.content_hash));
+    }
+
+    /// A receipt names the bytes it wrote. A resumed run that reads "the note
+    /// was written" without knowing which revision could not tell whether the
+    /// file on disk is that note.
+    #[test]
+    fn a_receipt_names_its_artifact_by_exact_revision_and_hash() {
+        use crate::knowledge::graph::runtime_memory::ArtifactRef;
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let sha = "9f".repeat(32);
+        write_in(
+            &graph,
+            MemoryScope::Task { task_id: TASK.into() },
+            MemoryKind::ToolObservation,
+            "approval-note.docx was written",
+            receipt(),
+            |item| {
+                item.artifacts = vec![ArtifactRef {
+                    artifact_id: "art-7".into(),
+                    revision: 2,
+                    sha256: sha.clone(),
+                }]
+            },
+        );
+        let compiled = compile(&graph, "note");
+        let block = compiled
+            .blocks
+            .iter()
+            .find(|b| b.kind == BlockKind::Receipt)
+            .expect("the receipt is mandatory");
+        assert!(
+            block.content.contains(&format!("art-7@2 sha256:{sha}")),
+            "{}",
+            block.content
+        );
+    }
+
+    /// The overflow is explicit and carries the numbers somebody needs to act.
+    #[test]
+    fn a_mandatory_overflow_names_the_window_and_the_reserves() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Correction, &"x ".repeat(400), operator());
+        let mut small = scope();
+        small.served_window = 5_600;
+        let mut with_safety = reserves();
+        with_safety.safety = 30;
+        let compiled = ContextCompiler::new(&graph)
+            .compile(&session("priya"), &small, base_manifest(), "x", &BTreeSet::new(), with_safety)
+            .expect("compiles");
+        assert!(compiled.mandatory_overflowed);
+        let detail = &compiled
+            .manifest
+            .omissions
+            .iter()
+            .find(|o| o.what == "mandatory")
+            .expect("recorded")
+            .detail;
+        assert!(detail.contains("5600-token window"), "{detail}");
+        assert!(detail.contains("5582"), "{detail}");
+        assert_eq!(compiled.manifest.budget.as_ref().unwrap().reserved_safety, 30);
     }
 }
 

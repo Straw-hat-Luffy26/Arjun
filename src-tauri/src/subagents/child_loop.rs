@@ -116,6 +116,11 @@ pub struct ChildLoop {
     pub servers: Arc<ModelServers>,
     pub registry: Arc<ModelRegistry>,
     pub models_dir: PathBuf,
+    /// The one lease service. The worker holds the child's lease around this
+    /// loop; the loop asks the same service to serve the model, so admission
+    /// happens only under that lease — and the child's own model rounds, which
+    /// go through `context.refresh`, re-enter it rather than queue behind it.
+    pub scheduler: Arc<super::scheduling::ModelScheduler>,
 }
 
 impl ChildLoop {
@@ -160,26 +165,43 @@ impl ChildLoop {
             .cloned()
             .ok_or_else(|| format!("{model_id} is not in the model registry on this machine."))?;
 
-        // The endpoint. Admission is what places it against measured free VRAM,
-        // and on a card that cannot hold two models it is what evicts the other
-        // one — which is why the caller holds a `ModelLease` around this.
-        let endpoint = match self.servers.warm_endpoint(&entry.id) {
-            Some(warm) => warm,
-            None => {
-                let admitted =
-                    crate::serving::admission::admit(&self.servers, &entry, &self.models_dir)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                self.servers
-                    .endpoint_for(&entry, &self.models_dir, &admitted.plan)
-                    .await
-                    .map_err(|error| error.to_string())?
+        // The endpoint, served under the lease the worker already holds for
+        // this child. Loading without it could evict a model in the middle of
+        // somebody else's generation, which is why `ensure_served` refuses an
+        // owner that does not hold the card.
+        let rebind = match self.scheduler.ensure_served(&packet.child_id, &entry.id).await {
+            Ok(rebind) => rebind,
+            Err(crate::subagents::scheduling::SchedulingRefusal::LoadFailed { failure }) => {
+                // Honest about what happens next: the job's model was pinned at
+                // dispatch and nothing else is loaded in its place.
+                let decision = crate::serving::fallback::decide(
+                    &entry,
+                    &failure,
+                    crate::serving::fallback::RunPhase::PinnedJob,
+                    entry.roles.first().copied().unwrap_or(crate::registry::ModelRole::Reasoning),
+                    self.registry.all(),
+                );
+                return Err(decision.because().to_string());
             }
+            Err(refusal) => return Err(refusal.explain()),
         };
-        let served_window = endpoint
-            .context_tokens
-            .unwrap_or(entry.context_length)
-            .max(1);
+        let served_window = rebind.served_window.max(1);
+
+        // The child's own model rounds lease as this child, so they re-enter
+        // the worker's hold instead of waiting behind it.
+        self.scheduler.bind_run(
+            &packet.child_id,
+            crate::subagents::scheduling::RunBinding {
+                model_id: entry.id.clone(),
+                class: crate::subagents::scheduling::LeaseClass::Child,
+                parent: (!packet.parent_run_id.is_empty()).then(|| packet.parent_run_id.clone()),
+                eligible: packet
+                    .model_policy
+                    .as_ref()
+                    .map(|policy| policy.eligible_model_ids.clone())
+                    .unwrap_or_default(),
+            },
+        );
 
         // Registered before the loop is asked for anything, and removed however
         // this returns.
@@ -197,7 +219,13 @@ impl ChildLoop {
             "messageId": packet.child_id,
             "attemptId": packet.child_id,
             "agentId": packet.agent_id,
-            "definitionVersion": 0,
+            // The definition this child was dispatched under, so the per-round
+            // context boundary compiles for the pinned version and not for
+            // "version zero". An unpinned bundled profile has none, and says so.
+            "definitionVersion": packet.definition_version.unwrap_or(0),
+            // What this child does, so an activated procedure scoped to a
+            // capability reaches exactly the children it was written for.
+            "capability": packet.capability,
             "prompt": objective_prompt(packet),
             "systemPrompt": system_prompt(packet, policy, instructions),
             // Deliberately empty. A child receives an objective and references,
@@ -207,9 +235,9 @@ impl ChildLoop {
             "history": [],
             "historyDropped": 0,
             "model": {
-                "id": endpoint.served_model_id,
-                "provider": provider_label(endpoint.runtime),
-                "baseUrl": endpoint.base_url,
+                "id": rebind.served_model_id,
+                "provider": provider_label(entry.runtime),
+                "baseUrl": rebind.base_url,
                 "contextWindow": served_window,
                 "maxTokens": policy.limits.max_output_tokens,
                 "reasoning": false,
@@ -289,7 +317,7 @@ impl ChildLoop {
             completed,
             tool_calls,
             model_id: entry.id,
-            base_url: endpoint.base_url,
+            base_url: rebind.base_url,
             served_window,
             passages,
         })
@@ -361,6 +389,9 @@ impl Drop for Registered<'_> {
         if let Ok(mut passages) = self.owner.passages.lock() {
             passages.remove(&self.child_id);
         }
+        // The binding goes; the lease stays with the worker that took it, and
+        // is released when the worker's guard drops.
+        self.owner.scheduler.unbind_run(&self.child_id);
     }
 }
 

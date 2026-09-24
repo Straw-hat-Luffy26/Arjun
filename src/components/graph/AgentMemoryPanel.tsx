@@ -68,6 +68,8 @@ const KINDS: MemoryKind[] = [
   'toolObservation',
   'sourceRef',
   'artifactRef',
+  'preference',
+  'procedure',
 ];
 
 /** How far a local view reaches. Three is where a neighbourhood stops being local. */

@@ -338,6 +338,89 @@ pub async fn count_tokens(base_url: &str, text: &str) -> Option<u32> {
     u32::try_from(body.tokens.len()).ok()
 }
 
+/// Renders a chat request through the served model's own template and counts
+/// it with the served model's own tokenizer.
+///
+/// ## Why both steps are the server's
+///
+/// A request's cost is not the sum of its messages. The chat template wraps
+/// every turn in role markers, renders the tool schemas into the prompt in its
+/// own format, and may add a generation prompt — and every template does this
+/// differently. `POST /apply-template` is llama.cpp applying *this* model's
+/// template to *this* request, tools included; `POST /tokenize` then counts the
+/// result with *this* model's vocabulary, special tokens parsed. The number that
+/// comes back is the one the server will count when the request arrives, not an
+/// estimate of it.
+///
+/// Image parts are not in that number — the template renders a marker where the
+/// image goes and the projector's cost is decided later. The caller accounts for
+/// them separately and says which of them it could not measure.
+///
+/// `Err` when the server does not offer either endpoint (vLLM, an
+/// OpenAI-compatible proxy) or refuses the request. The caller then records that
+/// the request was *not* counted rather than substituting an estimate for a
+/// count.
+pub async fn count_rendered(base_url: &str, payload: &serde_json::Value) -> Result<u32, String> {
+    check_loopback(base_url).map_err(|outcome| outcome.explain(base_url))?;
+    let client = shared_client()?;
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+
+    // Only what the template reads. The sampling fields do not change the
+    // prompt, and `stream` would make the endpoint answer in a shape this does
+    // not parse.
+    let mut body = serde_json::Map::new();
+    for key in ["messages", "tools", "tool_choice", "chat_template_kwargs"] {
+        if let Some(value) = payload.get(key) {
+            body.insert(key.to_string(), value.clone());
+        }
+    }
+    let rendered = client
+        .post(format!("{root}/apply-template"))
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await
+        .map_err(|error| format!("apply-template: {}", describe_transport_error(&error)))?;
+    if !rendered.status().is_success() {
+        return Err(format!(
+            "apply-template answered {}; this server cannot render the request for counting",
+            rendered.status().as_u16()
+        ));
+    }
+    #[derive(Deserialize)]
+    struct Rendered {
+        prompt: String,
+    }
+    let prompt = rendered
+        .json::<Rendered>()
+        .await
+        .map_err(|error| format!("apply-template returned no prompt: {error}"))?
+        .prompt;
+
+    let counted = client
+        .post(format!("{root}/tokenize"))
+        .json(&serde_json::json!({ "content": prompt, "add_special": true }))
+        .send()
+        .await
+        .map_err(|error| format!("tokenize: {}", describe_transport_error(&error)))?;
+    if !counted.status().is_success() {
+        return Err(format!("tokenize answered {}", counted.status().as_u16()));
+    }
+    #[derive(Deserialize)]
+    struct Tokenized {
+        #[serde(default)]
+        tokens: Vec<serde_json::Value>,
+    }
+    let tokens = counted
+        .json::<Tokenized>()
+        .await
+        .map_err(|error| format!("tokenize returned no tokens: {error}"))?
+        .tokens;
+    u32::try_from(tokens.len()).map_err(|_| "the rendered request is too large to count".into())
+}
+
 /// Turns a transport error into something an operator can act on.
 fn describe_transport_error(error: &reqwest::Error) -> String {
     if error.is_timeout() {

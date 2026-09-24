@@ -36,6 +36,22 @@ IPC: no tool has its own Tauri command, and P01 added none. The model reaches
 tools only through the runtime's stdio RPC (`tool.catalogue`, `tool.authorize`,
 `tool.execute`). `check:ipc` passes at 172 commands, unchanged.
 
+### The model round around those steps (P03)
+
+Every model call, including the compactor's own summary call, is one *round*,
+bracketed by three more stdio RPCs (`agent_runtime::rounds`, runtime
+`context-refresh.ts` `RoundBoundary`):
+
+| Step | Where | What is decided |
+|---|---|---|
+| R1. Open | runtime `transformContext` (before compaction) → RPC `context.refresh` | The run's lease is taken from the one `ModelScheduler` (capacity one, whole process); its endpoint is re-bound (a restarted server is reported `cache: cold`); the four memory scopes are compiled at one cursor against the **served** window; the manifest is recorded (`context_compiled`). Mandatory state that cannot fit, a context that cannot be compiled, a load failure, or an unobtainable lease → `round_refused`, the card is given back, and the model is not called. |
+| R2. Count | provider `onPayload` → RPC `context.count` | The exact outgoing body is rendered by the served model's template and counted by its tokenizer; images are charged at the cost the server reported, or recorded unmeasured; the fit is judged against window − reply − safety; the projection is checked; `model_requested` is recorded. Overflow → `round_refused`. |
+| R3. Settle | the stream's `result()` → RPC `context.settle` | Lease released; the count reconciled against the server's reported usage; `model_responded` recorded. |
+
+`tool.authorize` (step 3) also releases the round: a tool call means the model
+finished generating, so no tool — including a delegation that needs the card
+for a child — ever waits on a lease its own run holds.
+
 ---
 
 ## 2. Every tool
@@ -123,7 +139,7 @@ Delegation-specific, found tracing `delegate_to_subagent`:
 | immutable definition version | `definition_version`, `definition_origin`, `instructions_sha256` | resolved once per dispatch (`subagents::definitions`) |
 | role capability | `capability` | `capability_for(output_schema)` |
 | task / run / attempt / job | `task_id`, `parent_run_id`, `attempt_id`, `job_id()` (= `idempotency_key`); `child_id` is one execution | attempt from the parent's checkpoint seed |
-| model policy | `model_policy`, `model_id` | definition binding + `certification::choose` decision; `within_eligible` computed |
+| model policy | `model_policy`, `model_id` | definition binding + `certification::choose` decision; `within_eligible` computed; the eligible set is **enforced at lease admission** (`SchedulingRefusal::OutsideEligible`, P03) |
 | skill hashes | `skills` | definition's `SkillBinding`s (name, version, sha-256) |
 | effective tools | `allowed_tools` | `InheritedPolicy::narrow_for` ∩ parent, then `enforce_mode` |
 | sharing policy | `shared_with_task`, `classification_ceiling` | definition + narrowing |
@@ -168,15 +184,18 @@ gateway's approval, runs in the exclusive lane whenever the child holds any
 write tool, and is reachable only through `Dispatch::writing()` — which no
 model-facing tool calls in this build (P05/P11).
 
-## 7. Known deviations, not fixed in P01
+## 7. Known deviations
+
+Opened by P01; a row a later phase closed says which phase and how.
 
 | Where | What | Owner |
 |---|---|---|
 | `knowledge.search_authorized` on the agent path | `detail: "citations"` is honoured by `LocalToolRunner::search` but not by `retrieval::record`, which the agent path uses — full passages come back. | P07 |
 | `artifact.create_pdf`, `artifact.create_table` (and the optional `classification` on the OOXML writers) | The classification label is taken from the model's arguments; §11.1 requires it be derived from the run. | P04 |
 | `media.extract_findings` | Declares `loopback` and 90 s, but reads text the ingest pipeline already extracted; no OCR runs at call time. | P06 |
-| every tool but delegation and the sandbox | `ToolSpec::timeout` bounds the runtime's *wait*; the Rust handler is not interrupted. | P03 |
-| `model_policy` | The definition's eligible set is recorded (`within_eligible`) and not enforced by routing. | P03 |
+| every tool but delegation and the sandbox | `ToolSpec::timeout` bounds the runtime's *wait*; the Rust handler is not interrupted. **Still open after P03**, deliberately: interrupting a side-effecting handler mid-effect leaves an effect nobody can account for (why `authorize` lets a running tool finish). P03 made sure no handler can hold the model lease while it runs (the round is released at `tool.authorize`), which was the part that could deadlock. A read-only-only deadline remains to do. | P04/P05 |
+| `model_policy` | ~~The definition's eligible set is recorded (`within_eligible`) and not enforced by routing.~~ **Closed in P03:** the worker's lease request carries the eligible ids and the scheduler refuses any other model (`a_model_outside_the_definitions_eligible_set_is_refused`). | — |
+| in-process generations of the external-tool gateway (`ai_engine::scheduler`) | Not taken through the P03 lease. Off by default and serves external clients, not agent work; loading a server model still unloads the in-process one through `admission::admit`. | P14 |
 | `skills` on the packet | Pinned and traced; the child loop does not load skills. | P05 |
 | `shared_with_task` | Carried on the packet; not enforced at publication (plan §3 finding 8). | P02 |
 | receipts | `ReceiptRef` refuses sequence 0; workers still publish no receipt (§3 finding 2). | P02 |

@@ -449,6 +449,12 @@ impl TaskSnapshot {
             | TaskEventType::ModelTransitionCommitted
             | TaskEventType::ModelTransitionFailed
             | TaskEventType::ModelTransitionRolledBack
+            // Per-round records a trace reads directly; the snapshot would only
+            // be holding a second copy of them.
+            | TaskEventType::ContextCompiled
+            | TaskEventType::ModelLeaseSuspended
+            | TaskEventType::ModelLeaseResumed
+            | TaskEventType::ModelLoadFailed
             // Paired with `context_compacted`, which is what is counted.
             | TaskEventType::CompactionStarted
             | TaskEventType::WaitStarted

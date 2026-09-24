@@ -104,11 +104,11 @@ impl InputRef {
 
 /// The routing a child was given, and the policy it was given it under.
 ///
-/// Recorded rather than enforced here. The definition's model binding is
-/// carried so a trace can show whether the model a child was routed to is one
-/// its definition allows (`within_eligible`); holding routing *to* that binding
-/// is the scheduler's (plan P03), and saying `true` without anything having
-/// checked it would be the kind of claim this record exists to prevent.
+/// Recorded here and enforced by the scheduler. The definition's model binding
+/// is carried so a trace can show whether the model a child was routed to is
+/// one its definition allows (`within_eligible`); the worker hands
+/// `eligible_model_ids` to `subagents::scheduling`, which refuses the child the
+/// GPU lease for a model outside it (`SchedulingRefusal::OutsideEligible`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelPolicy {

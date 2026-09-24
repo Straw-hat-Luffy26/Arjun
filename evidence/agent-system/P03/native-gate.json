@@ -1,0 +1,23 @@
+{
+  "gate": "P03 native: Spark -> OCR -> Qwen -> reviewer -> Spark",
+  "checkedAt": "2026-09-24T14:00:49.841Z",
+  "host": "vm",
+  "platform": "linux",
+  "models": {
+    "spark": "Spark-X2.5-4B-Q8_0",
+    "ocr": "unlimited-ocr-q6-k",
+    "qwen": "Qwen3.5-9B-Q4_K_S",
+    "reviewer": "NVIDIA-Nemotron3-Nano-4B-Q4_K_M"
+  },
+  "found": {
+    "modelsDir": "/root/.local/share/com.arjun.workbench/models"
+  },
+  "missing": [
+    "an NVIDIA GPU with nvidia-smi on PATH (the target is an RTX 5060, 8 GB)",
+    "llama-server (tried llama-server; set ARJUN_LLAMA_SERVER or put it on PATH)",
+    "a model registry at /root/.local/share/com.arjun.workbench/models/registry.json (set ARJUN_MODELS_DIR)"
+  ],
+  "command": "node scripts/p03-native-gate.mjs  (runs: cargo test --manifest-path src-tauri/Cargo.toml --test p03_native_chain -- --ignored --nocapture --test-threads=1)",
+  "note": "This is the serving, scheduling and context half of the native chain. The specialist roles are built in P06/P09/P10; the full native chain is P10's gate, repeated in P16.",
+  "status": "blocked"
+}

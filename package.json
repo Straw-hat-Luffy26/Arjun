@@ -31,6 +31,7 @@
     "fixtures:manifest": "node scripts/fixture-manifest.mjs",
     "fixtures:check": "node scripts/fixture-manifest.mjs --check",
     "baseline:agents": "node scripts/agent-baseline.mjs",
+    "test:p03:native": "node scripts/p03-native-gate.mjs",
     "test:baseline:agents": "cargo test --manifest-path src-tauri/Cargo.toml --test agent_baseline -- --nocapture --test-threads=1",
     "test:baseline": "cargo test --manifest-path src-tauri/Cargo.toml --test baseline",
     "rehearse": "node scripts/rehearse-no-wsl.mjs",

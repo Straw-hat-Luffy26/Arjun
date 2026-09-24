@@ -194,6 +194,7 @@ mod tests {
             },
         );
         manifest.graph = Some(GraphBinding {
+            requested_revision: None,
             graph_revision: 9,
             selected,
         });
@@ -221,11 +222,15 @@ mod tests {
                 item_id: visible.item_id.clone(),
                 revision: 1,
                 reason: "mandatory".into(),
+                scope: None,
+                precedence: None,
             },
             SelectedItem {
                 item_id: "mi-not-for-you".into(),
                 revision: 1,
                 reason: "recall".into(),
+                scope: None,
+                precedence: None,
             },
         ]);
 
@@ -246,6 +251,8 @@ mod tests {
             item_id: held.item_id.clone(),
             revision: 3,
             reason: "mandatory".into(),
+            scope: None,
+            precedence: None,
         }]);
 
         let (marked, _) = in_context_from(&manifest, &snapshot);
@@ -262,6 +269,8 @@ mod tests {
             item_id: held.item_id.clone(),
             revision: held.revision,
             reason: "mandatory".into(),
+            scope: None,
+            precedence: None,
         }]);
 
         let (marked, _) = in_context_from(&manifest, &snapshot);

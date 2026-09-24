@@ -36,7 +36,9 @@ export type MemoryKind =
   | 'openQuestion'
   | 'toolObservation'
   | 'sourceRef'
-  | 'artifactRef';
+  | 'artifactRef'
+  | 'preference'
+  | 'procedure';
 
 /** Mirrors `knowledge::graph::runtime_memory::EdgeKind`. */
 export type MemoryEdgeKind =

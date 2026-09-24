@@ -177,6 +177,7 @@ impl Journey {
             conflicts_with: Vec::new(),
             causal_parents: Vec::new(),
             idempotency_key: None,
+            applies_to: None,
             created_at: AT.to_string(),
             updated_at: AT.to_string(),
         }

@@ -624,6 +624,72 @@ pub enum AttachmentOcrEvent {
     },
 }
 
+/// Where one OCR page is sent, and the lease it is read under.
+///
+/// A page is heavy GPU work, so it holds the one lease every heavy consumer
+/// asks for — a chat round, a child's round, a vision call — for exactly as
+/// long as the page takes. Admission therefore never stops a server another
+/// generation is using, and a page never runs alongside one. Stopped with the
+/// turn: a Stop pressed while the page waits for the card ends the wait.
+///
+/// Without the lease service (a build that did not register it) the page is
+/// admitted directly, as it was before the service existed.
+async fn ocr_endpoint(
+    app: &AppHandle,
+    registry: &ModelRegistry,
+    servers: &ModelServers,
+    entry: &crate::registry::ModelEntry,
+    cancel: &crate::agent_runtime::cancellation::CancelToken,
+) -> Result<(OcrEndpoint, Option<crate::subagents::ServedLease>), String> {
+    if let Some(scheduler) =
+        tauri::Manager::try_state::<Arc<crate::subagents::ModelScheduler>>(app)
+    {
+        let owner = format!("ocr:{}", uuid::Uuid::new_v4());
+        let (rebind, lease) = scheduler
+            .serve(
+                crate::subagents::LeaseRequest::new(
+                    owner.as_str(),
+                    crate::subagents::LeaseClass::Ocr,
+                    entry.id.as_str(),
+                )
+                .cancelled_by(cancel.clone()),
+            )
+            .await
+            .map_err(|refusal| refusal.explain())?;
+        return Ok((
+            OcrEndpoint {
+                base_url: rebind.base_url,
+                served_model_id: rebind.served_model_id,
+            },
+            Some(lease),
+        ));
+    }
+    // Budgeted against free VRAM with the model's own layer count, and any
+    // other server released only if this one will not otherwise fit. See
+    // `serving::admission`.
+    let plan = crate::serving::admission::admit(servers, entry, registry.models_dir())
+        .await
+        .map_err(|error| error.to_string())?
+        .plan;
+    let endpoint = servers
+        .endpoint_for(entry, registry.models_dir(), &plan)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((
+        OcrEndpoint {
+            base_url: endpoint.base_url,
+            served_model_id: endpoint.served_model_id,
+        },
+        None,
+    ))
+}
+
+/// The two things an OCR request needs from an endpoint.
+struct OcrEndpoint {
+    base_url: String,
+    served_model_id: String,
+}
+
 /// Sends one already-stored image to the OCR model and returns what it read.
 ///
 /// This is the path verified end to end against the real model, so it is
@@ -665,17 +731,8 @@ async fn ocr_one_image(
         .ok_or_else(|| format!("{model_id} is not in the registry, so images cannot be read."))?
         .clone();
 
-    // Budgeted against free VRAM with the model's own layer count, and any
-    // other server released only if this one will not otherwise fit. See
-    // `serving::admission`.
-    let plan = crate::serving::admission::admit(&servers, &entry, registry.models_dir())
-        .await
-        .map_err(|error| error.to_string())?
-        .plan;
-    let endpoint = servers
-        .endpoint_for(&entry, registry.models_dir(), &plan)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Under the one GPU lease, held for this page only. See `ocr_endpoint`.
+    let (endpoint, _page_lease) = ocr_endpoint(app, registry, servers, &entry, cancel).await?;
 
     crate::serving::probe::check_loopback(&endpoint.base_url).map_err(|outcome| {
         format!(
@@ -1381,18 +1438,8 @@ pub async fn scan_page(
         })?
         .clone();
 
-    // Budgeted against free VRAM with the model's own layer count, and any
-    // other server released only if this one will not otherwise fit. See
-    // `serving::admission`.
-    let plan = crate::serving::admission::admit(&servers, &entry, registry.models_dir())
-        .await
-        .map_err(|error| error.to_string())?
-        .plan;
-
-    let endpoint = servers
-        .endpoint_for(&entry, registry.models_dir(), &plan)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Under the one GPU lease, held for this page only. See `ocr_endpoint`.
+    let (endpoint, _page_lease) = ocr_endpoint(&app, &registry, &servers, &entry, &token).await?;
 
     let _ = app.emit(
         "ocr:status",

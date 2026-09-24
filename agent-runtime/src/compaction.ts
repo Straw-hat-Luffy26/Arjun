@@ -134,6 +134,14 @@ export interface CompactionEvent {
   refinedExistingSummary: boolean;
   /** Raw tool results replaced by an evidence reference on this pass. */
   toolResultsCleared: number;
+  /**
+   * Which transcript messages the summary now stands in for, as positions in
+   * the run's own transcript (`from` inclusive, `to` exclusive), and the tool
+   * calls among them. The messages themselves stay in the run's record; this
+   * says exactly which of them the model is now reading about rather than
+   * reading.
+   */
+  sourceRange: { from: number; to: number; toolCalls: string[] };
   /** The ledger as it stood after the compaction. */
   ledger: ContextLedgerSnapshot;
   /**
@@ -357,7 +365,7 @@ function truncateMessageText(message: AgentMessage, roomTokens: number): AgentMe
 }
 
 /** One line the model can read, saying what the window could not hold. */
-function ceilingMarker(dropped: number, truncated: number): string {
+function ceilingMarker(dropped: number, truncated: number, droppedCalls: readonly string[] = []): string {
   const parts: string[] = [];
   if (dropped > 0) {
     parts.push(
@@ -369,8 +377,15 @@ function ceilingMarker(dropped: number, truncated: number): string {
   if (truncated > 0) {
     parts.push(`${truncated} message${truncated === 1 ? " was" : "s were"} shortened`);
   }
+  // Named, so the model can ask for exactly what it lost rather than guess.
+  const calls =
+    droppedCalls.length > 0
+      ? ` The removed messages included tool calls ${droppedCalls.slice(0, 8).join(", ")}` +
+        `${droppedCalls.length > 8 ? ` and ${droppedCalls.length - 8} more` : ""}; their results ` +
+        "are in the run's record and can be fetched again."
+      : "";
   return (
-    `[Context notice: ${parts.join(" and ")} because this model's context window could not ` +
+    `[Context notice: ${parts.join(" and ")}${calls ? "." + calls : ""} because this model's context window could not ` +
     "hold them. Do not assume what is missing agreed with you, and do not state anything you " +
     "can no longer see. If the answer depends on it, search or read it again — or say which " +
     "part you can no longer account for.]"
@@ -418,6 +433,22 @@ export function alignCutToPairs(messages: AgentMessage[], cut: number): number {
     if (pairingIsIntact(kept) || aligned === 0) return aligned;
     aligned -= 1;
   }
+}
+
+/**
+ * Where the group starting at `from` ends: the message itself, and — when it
+ * issued tool calls — every result that answers them, in the transcript order
+ * they arrived. Never past `limit`.
+ */
+export function groupEnd(messages: AgentMessage[], from: number, limit: number): number {
+  const issued = new Set(toolCallIdsIn(messages[from]!));
+  let end = from + 1;
+  while (end < limit && issued.size > 0) {
+    const answered = toolResultIdOf(messages[end]!);
+    if (answered === undefined || !issued.has(answered)) break;
+    end += 1;
+  }
+  return end;
 }
 
 /** How many trailing messages are never pruned, however stale they look. */
@@ -525,8 +556,26 @@ export function pruneStaleToolResults(
  * away from the summary it belongs beside, and so a model that follows the last
  * instruction it saw sees this after the summary rather than before it.
  */
-function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp: number): AgentMessage | undefined {
+function preservedMessage(
+  state: PreservedState,
+  notes: WorkingNotes,
+  timestamp: number,
+  source?: { summarised: number; toolCalls: readonly string[] },
+): AgentMessage | undefined {
   const lines: string[] = [];
+  if (source && source.summarised > 0) {
+    // The range the summary stands in for, so a model reading it knows it is
+    // reading *about* those messages — and which tool calls they held — rather
+    // than reading them.
+    lines.push(
+      `The summary stands in for the first ${source.summarised} message(s) of this run` +
+        (source.toolCalls.length > 0
+          ? `, including tool calls ${source.toolCalls.slice(0, 12).join(", ")}` +
+            `${source.toolCalls.length > 12 ? ` and ${source.toolCalls.length - 12} more` : ""}`
+          : "") +
+        ". Those messages are kept in the run's record, not deleted.",
+    );
+  }
   if (state.activePlan) lines.push(`Active plan: ${state.activePlan}`);
   if (state.policyDecisions?.length) {
     lines.push("Policy and approval decisions still in force:");
@@ -577,7 +626,13 @@ function preservedMessage(state: PreservedState, notes: WorkingNotes, timestamp:
  */
 export class RunCompactor {
   readonly #options: CompactorOptions;
-  readonly #settings: CompactionSettings;
+  #settings: CompactionSettings;
+  /**
+   * The model summaries are asked of, and whose window the ceiling is fitted
+   * to. Replaced by {@link RunCompactor.rebind} when Rust re-binds the round to
+   * a server that came back on another port or with another window.
+   */
+  #model: Model;
   readonly #notes: WorkingNotes;
   readonly #ledger: ContextLedger;
   #summary?: string;
@@ -596,6 +651,7 @@ export class RunCompactor {
 
   constructor(options: CompactorOptions) {
     this.#options = options;
+    this.#model = options.model;
     this.#settings = {
       ...settingsForWindow(
         options.model.contextTokens ?? options.model.contextWindow ?? 0,
@@ -612,6 +668,25 @@ export class RunCompactor {
 
   get compactions(): number {
     return this.#compactions;
+  }
+
+  /**
+   * Follows the round to the endpoint Rust bound it to.
+   *
+   * A server stopped to make room for a child comes back on a new port and,
+   * on a constrained card, possibly with a smaller window. A summary asked of
+   * the old base URL goes nowhere, and a ceiling fitted to the old window lets
+   * through a request the new one refuses — so both follow the rebind.
+   */
+  rebind(model: Model): void {
+    this.#model = model;
+    const window = model.contextTokens ?? model.contextWindow ?? 0;
+    this.#settings = {
+      ...settingsForWindow(window, model.maxTokens),
+      ...this.#options.settings,
+    };
+    this.#ledger.setWindow(window);
+    this.#ledger.set("reserve", this.#settings.reserveTokens);
   }
 
   /** The run's notes, so a caller can record into the same instance. */
@@ -656,10 +731,15 @@ export class RunCompactor {
     ) as unknown as AgentMessage;
 
     const timestamp = asEpoch(messages[this.#covered]?.timestamp) ?? Date.now();
+    const covered = alignCutToPairs(messages, this.#covered);
     const carried = preservedMessage(
       this.#options.preserved?.() ?? {},
       this.#notes,
       timestamp,
+      {
+        summarised: covered,
+        toolCalls: messages.slice(0, covered).flatMap((message) => toolCallIdsIn(message)),
+      },
     );
 
     // The cut is re-aligned here and not only where it was chosen, because the
@@ -724,7 +804,7 @@ export class RunCompactor {
    * would compact on every single turn.
    */
   async transform(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
-    const window = this.#options.model.contextTokens ?? this.#options.model.contextWindow ?? 0;
+    const window = this.#model.contextTokens ?? this.#model.contextWindow ?? 0;
 
     // Cheapest saving first, and it happens whether or not this turn compacts:
     // a passage whose marker is already durable is a second copy of something
@@ -802,7 +882,7 @@ export class RunCompactor {
     try {
       const result = await generateSummary(
         toSummarise,
-        this.#options.model,
+        this.#model,
         this.#settings.reserveTokens,
         this.#options.apiKey,
         undefined,
@@ -850,6 +930,11 @@ export class RunCompactor {
       ordinal: this.#compactions,
       refinedExistingSummary,
       toolResultsCleared: this.#cleared,
+      sourceRange: {
+        from: 0,
+        to: this.#covered,
+        toolCalls: working.slice(0, this.#covered).flatMap((message) => toolCallIdsIn(message)),
+      },
       ledger: this.#ledger.snapshot(),
       at: new Date().toISOString(),
     });
@@ -926,7 +1011,18 @@ export class RunCompactor {
     const noticeCost = Math.ceil(
       estimateTokens({
         role: "user",
-        content: [{ type: "text", text: ceilingMarker(1, 1) }],
+        // Sized for the longest notice this pass can write: eight named tool
+        // calls and a count of the rest, at a generous id length.
+        content: [
+          {
+            type: "text",
+            text: ceilingMarker(
+              1,
+              1,
+              Array.from({ length: 9 }, (_, index) => `call_${"x".repeat(40)}${index}`),
+            ),
+          },
+        ],
         timestamp: 0,
       } as AgentMessage) * drift,
     );
@@ -944,13 +1040,19 @@ export class RunCompactor {
     }
 
     let dropped = 0;
+    const droppedCalls: string[] = [];
     // Oldest first, from just after the preamble, and never into the protected
-    // tail. `alignCutToPairs` moves the cut forward off a tool result whose
-    // call would be left behind.
+    // tail — and a whole group at a time. An assistant turn that issued tool
+    // calls leaves together with every result that answers it: dropping the
+    // call alone would orphan its results, which the provider rejects, and
+    // this used to be handled by walking the cut *back* to keep the call — so
+    // on a tool-heavy transcript nothing past the first message could ever be
+    // dropped, and every remaining message was truncated instead.
     while (cost(kept) > target && preamble < protectedFrom) {
-      const cut = alignCutToPairs(kept, preamble + 1);
-      if (cut <= preamble || cut > protectedFrom) break;
+      const cut = groupEnd(kept, preamble, protectedFrom);
+      if (cut <= preamble || cut > protectedFrom || !pairingIsIntact(kept.slice(cut))) break;
       const removed = cut - preamble;
+      for (const message of kept.slice(preamble, cut)) droppedCalls.push(...toolCallIdsIn(message));
       kept.splice(preamble, removed);
       protectedFrom -= removed;
       dropped += removed;
@@ -975,7 +1077,7 @@ export class RunCompactor {
 
     if (dropped > 0 || truncated > 0) {
       // A drop nobody can see is indistinguishable from a model that forgot.
-      const marker = ceilingMarker(dropped, truncated);
+      const marker = ceilingMarker(dropped, truncated, droppedCalls);
       kept.splice(preamble, 0, {
         role: "user",
         content: [{ type: "text", text: marker }],

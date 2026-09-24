@@ -32,6 +32,7 @@
 //! gets the default for its runtime.
 
 pub mod admission;
+pub mod fallback;
 pub mod probe;
 pub mod reaper;
 // `transport` was removed. It held `trait ArjunTransport` with a

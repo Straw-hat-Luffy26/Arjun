@@ -296,6 +296,31 @@ pub(super) fn remember_outcome(
 /// authorisation path, which is the account that cannot be dropped. These two
 /// have no other source: the turn count and the compactions are only ever
 /// announced by the loop.
+/// The compaction's source range, copied field by field for the reason the
+/// rest of that payload is.
+fn source_range(range: Option<&Value>) -> Value {
+    let Some(range) = range else {
+        return Value::Null;
+    };
+    let calls: Vec<Value> = range
+        .get("toolCalls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(Value::as_str)
+                .take(256)
+                .map(|id| Value::String(id.chars().take(96).collect()))
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "from": range.get("from").and_then(Value::as_u64),
+        "to": range.get("to").and_then(Value::as_u64),
+        "toolCalls": calls,
+    })
+}
+
 pub(super) fn remember_loop_event(deps: &Arc<RuntimeDeps>, params: &Value) {
     let Some(run_id) = params.get("runId").and_then(Value::as_str) else {
         return;
@@ -329,6 +354,11 @@ pub(super) fn remember_loop_event(deps: &Arc<RuntimeDeps>, params: &Value) {
                     .get("toolResultsCleared")
                     .cloned()
                     .unwrap_or(Value::Null),
+                // Which transcript positions the summary now stands in for, and
+                // the tool-call ids among them: positions and opaque ids, never
+                // message text. Lets a reader say exactly which of the run's own
+                // records the model was reading *about* rather than reading.
+                "sourceRange": source_range(event.get("sourceRange")),
                 // Counts only. The ledger says how many tokens each section
                 // held, never what was in them, so it is safe in a record read
                 // more widely than the transcript it describes.

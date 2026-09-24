@@ -383,3 +383,135 @@ describe("a run that outgrows its window", () => {
     }
   });
 });
+
+/** A transcript of tool round trips, each call with its result. */
+function toolTranscript(rounds: number, charsEach: number): AgentMessage[] {
+  const messages: AgentMessage[] = [];
+  for (let i = 0; i < rounds; i++) {
+    messages.push(user(`ask ${i} ${"x".repeat(charsEach)}`));
+    messages.push({
+      role: "assistant",
+      content: [
+        { type: "text", text: "searching" },
+        { type: "toolCall", id: `call_${i}`, name: "search_documents", arguments: { query: "q" } },
+      ],
+      api: "openai-completions",
+      provider: "llama-cpp",
+      model: "qwen2.5-coder-7b",
+      stopReason: "toolUse",
+      timestamp: 1,
+    } as unknown as AgentMessage);
+    messages.push({
+      role: "toolResult",
+      toolCallId: `call_${i}`,
+      toolName: "search_documents",
+      content: [{ type: "text", text: `result ${i} ${"y".repeat(charsEach)}` }],
+      isError: false,
+      timestamp: 1,
+    } as unknown as AgentMessage);
+  }
+  messages.push(user("And the flange rating?"));
+  return messages;
+}
+
+describe("what compaction says it stands in for", () => {
+  it("names the range and the tool calls a summary replaced", async () => {
+    const events: Array<{ sourceRange: { from: number; to: number; toolCalls: string[] } }> = [];
+    const compactor = new RunCompactor({
+      model: model(8_192),
+      runtime: summariser(),
+      apiKey: "local",
+      preserved: () => ({ activePlan: "draft, then review" }),
+      onCompacted: (event) => events.push(event),
+    });
+    const projected = await compactor.transform(toolTranscript(30, 600));
+
+    expect(compactor.compactions).toBe(1);
+    const range = events[0]!.sourceRange;
+    expect(range.from).toBe(0);
+    expect(range.to).toBeGreaterThan(0);
+    expect(range.toolCalls.length).toBeGreaterThan(0);
+    expect(range.toolCalls[0]).toBe("call_0");
+    // Said to the model too, in the carried state beside the summary.
+    const text = JSON.stringify(projected);
+    expect(text).toContain(`stands in for the first ${range.to} message(s)`);
+    expect(text).toContain("call_0");
+    expect(text).toContain("kept in the run's record, not deleted");
+  });
+
+  it("names the tool calls the ceiling pass dropped", async () => {
+    const failing = {
+      completeSimple: vi.fn(async () => {
+        throw new Error("the summariser is unavailable");
+      }),
+    } as never;
+    const compactor = new RunCompactor({ model: model(8_192), runtime: failing, apiKey: "local" });
+    const projected = await compactor.transform(toolTranscript(30, 600));
+    const notice = JSON.stringify(projected);
+    expect(notice).toContain("Context notice");
+    expect(notice).toContain("The removed messages included tool calls call_0");
+    // Whole groups went, rather than every message being cut to fit.
+    expect(notice).not.toMatch(/\d+ messages were shortened/);
+  });
+
+  it("drops a tool call together with its results, and never orphans either", async () => {
+    const failing = {
+      completeSimple: vi.fn(async () => {
+        throw new Error("the summariser is unavailable");
+      }),
+    } as never;
+    const compactor = new RunCompactor({ model: model(8_192), runtime: failing, apiKey: "local" });
+    const messages = toolTranscript(30, 600);
+    const projected = await compactor.transform(messages);
+    expect(projected.length).toBeLessThan(messages.length);
+    const kept = projected.filter((m) => m.role === "assistant" || m.role === "toolResult");
+    const called = new Set(
+      kept.flatMap((m) =>
+        m.role === "assistant" && Array.isArray(m.content)
+          ? m.content.filter((b) => b.type === "toolCall").map((b) => (b as { id: string }).id)
+          : [],
+      ),
+    );
+    const answered = new Set(
+      kept
+        .filter((m) => m.role === "toolResult")
+        .map((m) => (m as unknown as { toolCallId: string }).toolCallId),
+    );
+    expect([...answered].every((id) => called.has(id))).toBe(true);
+    expect([...called].every((id) => answered.has(id))).toBe(true);
+  });
+});
+
+describe("a compactor following a re-bound endpoint", () => {
+  it("fits the next projection to the smaller window the server came back with", async () => {
+    // Started against a 32k window; the server was stopped for a child and
+    // came back with 8k. The compactor must stop certifying 32k-sized
+    // requests the moment it is told.
+    const compactor = new RunCompactor({
+      model: model(32_768),
+      runtime: summariser(),
+      apiKey: "local",
+    });
+    const messages = longTranscript(20, 1_600);
+    const roomy = await compactor.transform(messages);
+    expect(compactor.compactions).toBe(0);
+    expect(roomy.length).toBe(messages.length);
+
+    compactor.rebind({ ...model(8_192), baseUrl: "http://127.0.0.1:41001/v1" });
+    const tight = await compactor.transform(messages);
+    expect(estimateContextTokens(tight).tokens).toBeLessThanOrEqual(
+      8_192 - settingsForWindow(8_192, 2048).reserveTokens,
+    );
+    expect(compactor.ledger.snapshot().window).toBe(8_192);
+  });
+
+  it("asks the re-bound server for its summary, not the one the run started on", async () => {
+    const runtime = summariser();
+    const compactor = new RunCompactor({ model: model(8_192), runtime, apiKey: "local" });
+    compactor.rebind({ ...model(8_192), baseUrl: "http://127.0.0.1:41002/v1" });
+    await compactor.transform(longTranscript(40, 800));
+    const asked = (runtime as unknown as { completeSimple: { mock: { calls: unknown[][] } } })
+      .completeSimple.mock.calls[0]?.[0] as { baseUrl?: string } | undefined;
+    expect(asked?.baseUrl).toBe("http://127.0.0.1:41002/v1");
+  });
+});

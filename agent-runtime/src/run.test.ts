@@ -144,7 +144,15 @@ function coreStub(handlers: Record<string, (params: unknown) => unknown>) {
       // methods and would make a sequence assertion a statement about how many
       // rounds the model happened to take rather than about the order
       // authorisation and execution occur in.
-      const notAboutTools = new Set(["tool.catalogue", "context.refresh"]);
+      //
+      // `context.count` and `context.settle` are the other two halves of the
+      // same per-round boundary, and are filtered for the same reason.
+      const notAboutTools = new Set([
+        "tool.catalogue",
+        "context.refresh",
+        "context.count",
+        "context.settle",
+      ]);
       return calls.map((call) => call.method).filter((method) => !notAboutTools.has(method));
     },
   };
@@ -668,5 +676,120 @@ describe("a turn that ends having said nothing", () => {
     } finally {
       await stalled.close();
     }
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The round boundary: lease, re-bound endpoint, exact count, settle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What Rust answers a round it opened, pointing at `baseUrl`. */
+function openedRound(baseUrl: string, servedWindow = 8_192) {
+  return () => ({
+    graphRevision: 7,
+    manifestHash: "m-1",
+    mandatoryOverflowed: false,
+    blocks: [],
+    contentHashes: [],
+    omissions: [],
+    graph: { available: true },
+    endpoint: {
+      baseUrl,
+      modelId: "test-model",
+      servedWindow,
+      windowSource: "server",
+      warm: false,
+      restarted: true,
+      cache: "cold",
+    },
+    lease: { status: "held" },
+  });
+}
+
+/** A rejection with a wire code, the way the peer surfaces a Rust error. */
+async function wireError(code: string, message: string): Promise<never> {
+  const { RpcError } = await import("./peer.js");
+  throw new RpcError(code, message);
+}
+
+describe("the round boundary", () => {
+  beforeEach(async () => {
+    server = await modelServer([
+      [chunk({ role: "assistant", content: "" }), chunk({ content: "Done." }), chunk({}, "stop")],
+    ]);
+  });
+
+  it("sends the round to the endpoint Rust re-bound, not the one the run started with", async () => {
+    // The run is told a port nothing listens on; Rust re-binds it to the live
+    // server, as it does after a child's admission stopped and restarted it.
+    const core = coreStub({
+      "context.refresh": openedRound(server!.baseUrl),
+      "context.count": () => ({ fit: { fit: "fits" }, countedBy: "tokenizer", inputTokens: 40 }),
+      "context.settle": () => ({ released: true }),
+    });
+    const stale = request("http://127.0.0.1:9/v1");
+    const outcome = await startRun(core.peer, stale, () => {});
+    expect(outcome.outcome.kind).toBe("completed");
+    expect(server!.requests).toHaveLength(1);
+  });
+
+  it("opens, counts and settles every round, in that order, with the exact payload", async () => {
+    const core = coreStub({
+      "context.refresh": openedRound(server!.baseUrl),
+      "context.count": () => ({ fit: { fit: "fits" }, countedBy: "tokenizer", inputTokens: 40 }),
+      "context.settle": () => ({ released: true }),
+    });
+    await startRun(core.peer, request(server!.baseUrl), () => {});
+    // Settling is fire-and-forget after the stream ends; give it a tick.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const round = core.calls
+      .map((call) => call.method)
+      .filter((method) => method.startsWith("context."));
+    expect(round).toEqual(["context.refresh", "context.count", "context.settle"]);
+
+    // What was counted is the body that went out.
+    const counted = core.calls.find((call) => call.method === "context.count")?.params as {
+      payload: { messages: unknown[]; model: string };
+    };
+    expect(counted.payload.model).toBe("test-model");
+    expect(JSON.stringify(server!.requests[0])).toBe(JSON.stringify(counted.payload));
+  });
+
+  it("does not call the model when Rust refuses the counted request, and fails with Rust's sentence", async () => {
+    const core = coreStub({
+      "context.refresh": openedRound(server!.baseUrl),
+      "context.count": () =>
+        wireError("round_refused", "The request for this round is 9001 tokens, 2089 over the limit."),
+      "context.settle": () => ({ released: true }),
+    });
+    const outcome = await startRun(core.peer, request(server!.baseUrl), () => {});
+    expect(server!.requests).toHaveLength(0);
+    expect(outcome.outcome.kind).toBe("failed");
+    expect(outcome.outcome.detail).toContain("2089 over the limit");
+  });
+
+  it("fails the run, without calling the model, when Rust refuses to open the round", async () => {
+    const core = coreStub({
+      "context.refresh": () =>
+        wireError(
+          "round_refused",
+          "The mandatory state for this round needs 5000 tokens and the 4096-token window affords 1200.",
+        ),
+    });
+    const outcome = await startRun(core.peer, request(server!.baseUrl), () => {});
+    expect(server!.requests).toHaveLength(0);
+    expect(outcome.outcome.kind).toBe("failed");
+    expect(outcome.outcome.detail).toContain("4096-token window");
+  });
+
+  it("degrades, rather than failing, against a Rust side that does not know the boundary", async () => {
+    // No handlers: every context.* call is rejected as an unknown method would
+    // be. The round runs on what it had, as it did before the boundary existed.
+    const core = coreStub({});
+    const outcome = await startRun(core.peer, request(server!.baseUrl), () => {});
+    expect(outcome.outcome.kind).toBe("completed");
+    expect(server!.requests).toHaveLength(1);
   });
 });
