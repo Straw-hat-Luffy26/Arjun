@@ -149,6 +149,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         notebooks: Arc::new(
             sarathi_lib::knowledge::NotebookStore::open(dir.path()).expect("notebook store opens"),
         ),
+        jobs: Arc::default(),
         }),
         // Returned so the directory outlives the test; dropping it early would
         // delete the SQLite file out from under the runtime.
@@ -1600,4 +1601,306 @@ async fn a_model_reads_an_artifact_manifest_through_the_real_runtime() {
     let second = sent_text(&seen[1]);
     assert!(second.contains(&record.sha256), "the manifest did not reach the model: {second}");
     assert!(second.contains("\"stage\": \"candidate\""), "{second}");
+}
+
+/// P05: a coordinating model plans, delegates a step to a specialist, and reads
+/// the job back -- every call routed through the real Node runtime into Rust's
+/// `tool.authorize` / `tool.execute`, the job dispatched by the production
+/// `SubagentManager` to the production retriever worker over a real index, the
+/// plan and job persisted in the real event log.
+///
+/// Deterministic transport: the coordinating model is a fixture server that
+/// emits these tool calls in order. It stands where Spark X2.5 4B Q8 stands in
+/// the target deployment; no Spark weights were loaded and nothing here is a
+/// claim about how Spark behaves. The run is routed to a registry entry named
+/// `fixture-coordinator` for the same reason. The Spark qualification of these
+/// tools is the native gate recorded in the execution ledger.
+/// Everything a coordinator's run needs to delegate for real: an indexed
+/// document, a registry with the coordinator's entry, a memory graph that
+/// resolves receipts against the run's event log, the production workers, and
+/// the checkpoint seed that names the run's model. Shared by the fixture-driven
+/// and the Spark-driven P05 tests.
+fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
+    let (base, dir) = deps();
+    base.index
+        .index_document(
+            "commissioning-report.pdf",
+            sarathi_lib::policy::Classification::Internal,
+            &[sarathi_lib::knowledge::chunking::Chunk {
+                id: "chunk-1".into(),
+                document_sha256: "c".repeat(64),
+                ordinal: 0,
+                text: "The commissioning tag for the vessel is VX-7741-QRT. The seal torque is 47.5 \
+                       newton metres at ambient."
+                    .into(),
+                page: 4,
+                section_path: vec!["Commissioning".into()],
+                kind: sarathi_lib::knowledge::chunking::ChunkKind::Prose,
+                char_count: 96,
+            }],
+        )
+        .expect("the document is indexed");
+
+    // A registry with the coordinator in it, so a child's model is chosen
+    // against a real entry rather than asserted.
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::write(
+        models.join("registry.json"),
+        serde_json::json!({ "models": [{
+            "id": coordinator, "name": coordinator, "version": "1",
+            "license": "apache-2.0", "runtime": "llamaCpp", "roles": ["reasoning", "embedding"],
+            "modalities": ["text"], "quantization": "Q8_0", "parametersB": 4.1,
+            "contextLength": 32768, "weightsBytes": 1_000_000_u64, "supportsStructuredOutput": true,
+            "permittedClassifications": ["internal"], "path": "fixture.gguf", "enabled": true,
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let registry = Arc::new(sarathi_lib::registry::ModelRegistry::load(&models).expect("the registry loads"));
+    assert!(registry.find(coordinator).is_some());
+
+    let graph = Arc::new(
+        sarathi_lib::knowledge::graph::runtime_store::MemoryGraph::in_memory()
+            .expect("a graph")
+            .with_receipts(base.events.clone()),
+    );
+    let cancellations = Arc::new(sarathi_lib::agent_runtime::cancellation::RunCancellations::new());
+    let services = Arc::new(sarathi_lib::subagents::WorkerServices {
+        index: base.index.clone(),
+        graph: Some(graph.clone()),
+        events: base.events.clone(),
+        scheduler: Arc::new(sarathi_lib::subagents::ModelScheduler::new(
+            registry.clone(),
+            Arc::new(sarathi_lib::serving::ModelServers::new()),
+        )),
+        session: base.session.clone(),
+        child_loop: None,
+        cancellations: cancellations.clone(),
+    });
+    let profiles = sarathi_lib::subagents::load_profiles(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents"),
+    )
+    .profiles;
+    let mut manager = sarathi_lib::subagents::SubagentManager::new(profiles.clone(), base.events.clone())
+        .with_cancellations(cancellations);
+    for worker in sarathi_lib::subagents::SpecialistWorker::register_all(&profiles, services) {
+        manager = manager.with_worker(worker);
+    }
+    base.checkpoints.lock().unwrap().insert(
+        "run-1".into(),
+        sarathi_lib::agent_runtime::resume::CheckpointSeed {
+            attempt_id: "attempt-1".into(),
+            plan_hash: "plan".into(),
+            policy_hash: "policy".into(),
+            workspace_hash: "workspace".into(),
+            model_id: coordinator.into(),
+            committed_notes: Default::default(),
+            manifest: None,
+        },
+    );
+    let deps = Arc::new(RuntimeDeps {
+        memory_graph: Some(graph.clone()),
+        conversation_artifacts: base.conversation_artifacts.clone(),
+        registry: Some(registry),
+        index: base.index.clone(),
+        session: base.session.clone(),
+        workspaces: base.workspaces.clone(),
+        approvals: base.approvals.clone(),
+        calculations: base.calculations.clone(),
+        passages: base.passages.clone(),
+        produced: base.produced.clone(),
+        calls: base.calls.clone(),
+        plans: base.plans.clone(),
+        events: base.events.clone(),
+        skills: base.skills.clone(),
+        hooks: base.hooks.clone(),
+        memory: base.memory.clone(),
+        checkpoints: base.checkpoints.clone(),
+        emit: base.emit.clone(),
+        emit_durable: base.emit_durable.clone(),
+        subagents: Arc::new(manager),
+        multimodal: base.multimodal.clone(),
+        audit_health: base.audit_health.clone(),
+        documents: base.documents.clone(),
+        run_to_conversation: base.run_to_conversation.clone(),
+        notebooks: base.notebooks.clone(),
+        jobs: Arc::default(),
+    });
+
+    (deps, dir)
+}
+
+#[tokio::test]
+async fn a_coordinating_model_plans_delegates_and_reads_a_job_through_the_real_runtime() {
+    if !node_present() {
+        eprintln!("skipping: node is not on PATH");
+        return;
+    }
+    let (deps, _dir) = p05_world("fixture-coordinator");
+    let tool_call = |id: &str, name: &str, arguments: serde_json::Value| {
+        serde_json::json!({ "tool_calls": [{
+            "index": 0, "id": id, "type": "function",
+            "function": { "name": name, "arguments": arguments.to_string() }
+        }]})
+    };
+    let open = || sse(serde_json::json!({ "role": "assistant", "content": "" }), None);
+    let server = scripted_model_server(vec![
+        vec![open(), sse(tool_call("call_1", "task.plan_update", serde_json::json!({
+            "base_version": 0,
+            "operations": [
+                {"op": "set_goal", "text": "Report the vessel's commissioning tag with its source"},
+                {"op": "add_step", "id": "find", "title": "Find the tag", "kind": "delegate",
+                 "role": "knowledge-retriever", "acceptance": ["childCompleted", "memoryPublished"]},
+            ]
+        })), None), sse(serde_json::json!({}), Some("tool_calls"))],
+        vec![open(), sse(tool_call("call_2", "agent.delegate", serde_json::json!({
+            "step": "find", "role": "knowledge-retriever",
+            "objective": "commissioning tag for the vessel", "wait_seconds": 30,
+        })), None), sse(serde_json::json!({}), Some("tool_calls"))],
+        vec![open(), sse(tool_call("call_3", "agent.status", serde_json::json!({})), None), sse(serde_json::json!({}), Some("tool_calls"))],
+        vec![open(), sse(serde_json::json!({ "content": "The tag is VX-7741-QRT, from the commissioning report." }), Some("stop"))],
+    ])
+    .await;
+
+    let runtime = AgentRuntime::spawn(deps.clone(), Arc::new(|_| {}), bundle()).expect("runtime starts");
+    let _ = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "run-1",
+                "messageId": "p05-msg-1",
+                "prompt": "Delegate finding the vessel's commissioning tag to a specialist and report it.",
+                "systemPrompt": "Plan with task.plan_update, delegate with agent.delegate.",
+                "model": { "id": "fixture-coordinator", "provider": "sovereign-local", "baseUrl": server.base_url },
+            }),
+        )
+        .await
+        .expect("run.start resolves");
+    runtime.shutdown().await;
+
+    // What the model was offered and what reached it after each call.
+    let seen = server.seen.lock().unwrap().clone();
+    assert!(seen.len() >= 4, "the loop stopped early: {} request(s)", seen.len());
+    let offered: Vec<String> = seen[0]["tools"]
+        .as_array()
+        .map(|tools| tools.iter().filter_map(|t| t["function"]["name"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    for name in ["task.plan_update", "agent.delegate", "agent.status", "agent.cancel", "task.request_review"] {
+        assert!(offered.iter().any(|offered| offered == name), "{name} not offered: {offered:?}");
+    }
+    assert!(sent_text(&seen[1]).contains("Plan version 1 written"), "{}", sent_text(&seen[1]));
+    let after_delegate = sent_text(&seen[2]);
+    assert!(after_delegate.contains("knowledge-retriever"), "{after_delegate}");
+    assert!(after_delegate.contains("completed"), "{after_delegate}");
+    assert!(sent_text(&seen[3]).contains("find delegate"), "{}", sent_text(&seen[3]));
+
+    // The routed calls, from the durable record: each authorised and settled
+    // by Rust, in order.
+    let events = deps.events.events_since("run-1", 0).expect("readable").events;
+    let routed: Vec<String> = events
+        .iter()
+        .filter(|event| event.event_type == sarathi_lib::agent_runtime::events::TaskEventType::ToolSucceeded)
+        .filter_map(|event| event.payload["tool"].as_str().map(str::to_string))
+        .collect();
+    println!("P05 routed tool calls (tool_succeeded, in order): {routed:?}");
+    assert_eq!(routed, vec!["task.plan_update", "agent.delegate", "agent.status"]);
+    let children: Vec<&sarathi_lib::agent_runtime::events::TaskEvent> = events
+        .iter()
+        .filter(|event| event.event_type == sarathi_lib::agent_runtime::events::TaskEventType::SubagentStopped)
+        .collect();
+    assert_eq!(children.len(), 1);
+    println!("P05 child: {}", children[0].payload);
+
+    let plan = deps.events.latest_plan("run-1").expect("readable").expect("a plan");
+    let step = plan.step("find").expect("the step");
+    println!("P05 plan v{}: {}", plan.version, sarathi_lib::agent_runtime::task_plan::project(&plan));
+    assert_eq!(step.status, sarathi_lib::agent_runtime::task_plan::StepStatus::Completed, "{:?}", step.note);
+    let jobs = deps.events.jobs_for_run("run-1").expect("readable");
+    assert_eq!(jobs.len(), 1);
+    println!("P05 job: {}", serde_json::to_string(&jobs[0]).unwrap());
+    assert_eq!(jobs[0].definition_origin, "bundled-profile");
+}
+
+/// P05 against the real coordinator: the same run, with Spark X2.5 4B Q8 behind
+/// an OpenAI-compatible server instead of the fixture.
+///
+/// **Ignored unless asked for**, so an ordinary run never counts it as passed:
+/// without a Spark server nothing here executes, and the execution ledger
+/// records the gate as open with this command. Run explicitly without
+/// `ARJUN_SPARK_URL`, it fails and says why. With it, every call Spark makes goes through the
+/// real Node runtime into Rust's authorize/execute, and the test prints the
+/// routed calls from the durable record and asserts only what the product
+/// guarantees whatever the model chooses: every call it made was authorised
+/// and settled by Rust, a plan (if written) is valid and versioned, and no step
+/// is complete without a receipt.
+///
+/// ```text
+/// llama-server -m <Spark-X2.5-4B-Q8_0.gguf> --port 8080 -c 16384 --jinja
+/// ARJUN_SPARK_URL=http://127.0.0.1:8080/v1 ARJUN_SPARK_MODEL_ID=orchestrator.spark-x2-5-4b \
+///   cargo test --manifest-path src-tauri/Cargo.toml --test agent_runtime spark_ -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "needs a Spark X2.5 server: set ARJUN_SPARK_URL (see the doc comment)"]
+async fn spark_routes_the_orchestrator_tools_through_the_real_runtime() {
+    let url = std::env::var("ARJUN_SPARK_URL").expect(
+        "BLOCKED: ARJUN_SPARK_URL is not set, so no Spark server can be reached and nothing was \
+         executed. See this test's doc comment for the command.",
+    );
+    if !node_present() {
+        panic!("ARJUN_SPARK_URL is set but node is not on PATH, so the runtime cannot start");
+    }
+    let model_id = std::env::var("ARJUN_SPARK_MODEL_ID").unwrap_or_else(|_| "orchestrator.spark-x2-5-4b".into());
+    let (deps, _dir) = p05_world(&model_id);
+    let runtime = AgentRuntime::spawn(deps.clone(), Arc::new(|_| {}), bundle()).expect("runtime starts");
+    let outcome = runtime
+        .request(
+            "run.start",
+            serde_json::json!({
+                "runId": "run-1",
+                "messageId": "p05-spark-1",
+                "prompt": "Plan this with task.plan_update: one delegate step for the \
+                           knowledge-retriever role that finds the vessel's commissioning tag. \
+                           Then delegate that step with agent.delegate, read the job with \
+                           agent.status, and report the tag with its source.",
+                "systemPrompt": "You coordinate specialists. Plan with task.plan_update, delegate \
+                                 with agent.delegate, and only report what a job returned.",
+                "model": { "id": model_id, "provider": "sovereign-local", "baseUrl": url },
+            }),
+        )
+        .await;
+    runtime.shutdown().await;
+    println!("P05/Spark run.start: {outcome:?}");
+
+    let events = deps.events.events_since("run-1", 0).expect("readable").events;
+    let authorised: Vec<String> = events
+        .iter()
+        .filter(|event| event.event_type == sarathi_lib::agent_runtime::events::TaskEventType::ToolAuthorized)
+        .filter_map(|event| event.payload["tool"].as_str().map(str::to_string))
+        .collect();
+    let settled: Vec<String> = events
+        .iter()
+        .filter(|event| matches!(
+            event.event_type,
+            sarathi_lib::agent_runtime::events::TaskEventType::ToolSucceeded
+                | sarathi_lib::agent_runtime::events::TaskEventType::ToolFailed
+        ))
+        .filter_map(|event| event.payload["tool"].as_str().map(str::to_string))
+        .collect();
+    println!("P05/Spark authorised: {authorised:?}");
+    println!("P05/Spark settled:    {settled:?}");
+    assert_eq!(authorised.len(), settled.len(), "a call was authorised and never settled");
+    if let Some(plan) = deps.events.latest_plan("run-1").expect("readable") {
+        println!("P05/Spark plan v{}:\n{}", plan.version, sarathi_lib::agent_runtime::task_plan::project(&plan));
+        for step in &plan.steps {
+            if step.status == sarathi_lib::agent_runtime::task_plan::StepStatus::Completed {
+                assert!(!step.receipts.is_empty(), "{} is complete with no receipt", step.id);
+            }
+        }
+    } else {
+        println!("P05/Spark wrote no plan.");
+    }
+    for job in deps.events.jobs_for_run("run-1").expect("readable") {
+        println!("P05/Spark job: {}", serde_json::to_string(&job).unwrap());
+    }
 }

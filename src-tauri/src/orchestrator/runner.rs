@@ -87,7 +87,7 @@ fn short_sha(sha256: &str) -> String {
 /// `art-7@4`, which is how `artifact.list` shows it. The hash is optional,
 /// because `artifact.list` does not show one; an absent hash is recorded as
 /// empty, which no reader can mistake for a hash.
-fn delegation_inputs(call: &ToolCall) -> Result<Vec<crate::subagents::InputRef>, String> {
+pub(crate) fn delegation_inputs(call: &ToolCall) -> Result<Vec<crate::subagents::InputRef>, String> {
     use crate::subagents::InputRef;
 
     let strings = |key: &str| -> Vec<String> {
@@ -1258,6 +1258,16 @@ impl ToolRunner for LocalToolRunner<'_> {
             | ToolName::ArtifactEdit => Err(format!(
                 "{} is answered on the agent path, which knows the signed-in owner and the \
                  conversation.",
+                tool.as_str()
+            )),
+            // The run's plan and its jobs are keyed by the run and the owner,
+            // and this runner is rebuilt per call holding neither.
+            ToolName::TaskPlanUpdate
+            | ToolName::AgentDelegate
+            | ToolName::AgentStatus
+            | ToolName::AgentCancel
+            | ToolName::TaskRequestReview => Err(format!(
+                "{} is answered on the agent path, which holds the run's plan and jobs.",
                 tool.as_str()
             )),
             ToolName::SearchDocuments => self.search(call),

@@ -194,7 +194,9 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::ArtifactValidate
         | ToolName::ArtifactRender
         | ToolName::ArtifactDiff
-        | ToolName::ArtifactResolveEvidence => ToolClass::ReadOnly,
+        | ToolName::ArtifactResolveEvidence
+        // Reads the run's job table.
+        | ToolName::AgentStatus => ToolClass::ReadOnly,
         // Reversible: a notebook created by mistake can be deleted, a
         // rename can be renamed back, and a source taken out can be put
         // back - the document itself is never touched by any of them.
@@ -229,6 +231,16 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         // makes it more than `ReadOnly` here is that it consumes budget and
         // leaves a subagent record.
         ToolName::AgentDelegateReadonly => ToolClass::Reversible,
+
+        // P05. A new plan version, a job started or stopped, a review receipt:
+        // each is the run's own record in ARJUN's store, and none reaches
+        // outside the task by itself. A writer job's *children* write, and
+        // each of their writes is its own side-effecting call with its own
+        // intent and approval; starting the job is not one of them.
+        ToolName::TaskPlanUpdate
+        | ToolName::AgentDelegate
+        | ToolName::AgentCancel
+        | ToolName::TaskRequestReview => ToolClass::Reversible,
 
         // Files on disk outside the process. Findable, inspectable, and not to
         // be written twice.

@@ -1,0 +1,85 @@
+$ npm run runtime:typecheck
+exit 0
+
+$ npm run runtime:test
+ ✓ vendor/openclaw/packages/net-policy/src/ipv4.test.ts (2 tests) 4ms
+ ✓ vendor/openclaw/packages/normalization-core/src/promise-like.test.ts (2 tests) 4ms
+ ✓ vendor/openclaw/packages/ai/src/providers/simple-options.test.ts (4 tests) 4ms
+ ✓ vendor/openclaw/packages/normalization-core/src/mountinfo-path.test.ts (1 test) 3ms
+ Test Files  131 passed (131)
+      Tests  2352 passed (2352)
+exit 0
+
+$ npx tsc --noEmit -p tsconfig.json
+exit 0
+
+$ npm run test:ui
+ ✓ src/components/notebook/addOutcomes.test.ts (8 tests) 5ms
+ ✓ src/components/graph/claimLabel.test.ts (9 tests) 5ms
+ ✓ src/contexts/__tests__/ConversationContext.test.ts (2 tests) 3ms
+ ✓ src/components/graph/layout.test.ts (1 test) 3ms
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+exit 0
+
+$ npm run build
+egress gate: pass — one chokepoint, no unapproved hosts
+LoRA removal gate passed across 618 product files.
+✓ 4105 modules transformed.
+(!) /home/user/Arjun/src/services/agent.service.ts is dynamically imported by /home/user/Arjun/src/pages/Demo.tsx but also statically imported by /home/user/Arjun/src/components/chat/AssistantMessageCell.tsx, /home/user/Arjun/src/components/chat/ChatComposer.tsx, /home/user/Arjun/src/components/chat/ChatSurface.tsx, /home/user/Arjun/src/components/chat/ContextChip.tsx, /home/user/Arjun/src/components/chat/NotebookScopeControls.tsx, /home/user/Arjun/src/components/chat/notebookScope.ts, /home/user/Arjun/src/components/run/MilestoneGate.tsx, /home/user/Arjun/src/components/run/RunView.tsx, /home/user/Arjun/src/components/run/recovery.ts, /home/user/Arjun/src/components/run/runAdopt.ts, /home/user/Arjun/src/components/run/useRun.ts, /home/user/Arjun/src/contexts/ConversationContext.tsx, /home/user/Arjun/src/pages/Conversations.tsx, /home/user/Arjun/src/pages/Notebooks.tsx, /home/user/Arjun/src/pages/Tasks.tsx, dynamic import will not move module into another chunk.
+✓ built in 16.94s
+exit 0
+
+$ npm run runtime:build
+bundled 1096 modules -> dist/arjun-agent-runtime.mjs (1774 KiB)
+sha256 559367e19deb9b9184651f6120b7fa6d4e3acea9792b1808f8c206cf94891271
+exit 0
+
+$ npm run check:bundle:self
+exit 0
+
+$ npm run check:bundle
+exit 0
+
+$ npm run check:offline
+  Rust dependencies resolve from the local registry … ok
+  Node dependencies resolve from the npm cache … ok
+  TypeScript compiles … ok
+exit 0
+
+$ npm run check:ipc
+IPC contract OK: 177 commands (18 admin, 3 external, 136 frontend, 20 frontend-pending).
+exit 0
+
+$ npm run check:reachable
+Reachability OK: 196 module(s) reachable from the entry points, 1 reached only by tests.
+exit 0
+
+$ npm run check:egress
+egress gate: pass — one chokepoint, no unapproved hosts
+exit 0
+
+$ npm run check:no-lora
+LoRA removal gate passed across 618 product files.
+exit 0
+
+$ npm run check:deployment
+  ok  voice-sidecar ships as sidecars/voice_sidecar/voice_bridge.py
+  ok  node is spawned through deployment::program(), not a bare literal
+  ok  python is spawned through deployment::program(), not a bare literal
+  ok  llama-server is spawned through deployment::program(), not a bare literal
+  ok  office-renderer is spawned through deployment::program(), not a bare literal
+Deployment gate passed: everything the code resolves, the installer ships.
+exit 0
+
+$ npm run check:targets
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+warning: unused variable: `document_sha256`
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+229 |         (Error, Loading) => true,
+247 |         (Error, Loading) => true,
+exit 0
+
+$ npm run check:whitespace
+exit 0

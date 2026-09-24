@@ -38,12 +38,13 @@ function catalogue(): BudgetableTool[] {
  * A budget of `1` would also reach the smallest stage, but it reaches it by
  * amputating the catalogue down to one tool — which is a different question
  * from "how small can the whole catalogue be made". The budget has to sit
- * between the `minimal` size and the next stage up: measured at P04 (43 tools)
- * as 3,902 tokens at `minimal` and 4,399 at `schemaOnly`, so 4,000 compresses to
- * `minimal` and drops nothing. It was 3,000 at 33 tools.
+ * between the `minimal` size and the next stage up. Measured at P05 (48 tools)
+ * as 4,521 tokens at `minimal` and 5,089 at `schemaOnly`, so 4,800 compresses to
+ * `minimal` and drops nothing. It was 4,000 at 43 tools (P04: 3,902 / 4,399) and
+ * 3,000 at 33.
  */
 function minimalCatalogue(): BudgetableTool[] {
-  const fitted = fitToolsToBudget(catalogue(), 4_000);
+  const fitted = fitToolsToBudget(catalogue(), 4_800);
   if (fitted.report.stage !== "minimal" || fitted.report.dropped.length > 0) {
     throw new Error(
       `expected the whole catalogue at the smallest stage, got ${fitted.report.stage} with ` +
@@ -111,6 +112,10 @@ describe("the tool catalogue against a small window", () => {
    * last. So when a plan does permit everything and the window is 8k, what is
    * dropped must be that family, from the tail, and said — never a producer,
    * the sandbox or retrieval. Role-scoped loading (plan P03) is the remedy.
+   *
+   * P05 adds the five orchestrator tools *before* that family (4,521 tokens
+   * at `minimal` for 48 tools); at 8k the fitter now drops nine of the ten
+   * artifact tools and keeps every orchestrator tool, which this still pins.
    */
   it("drops only the P04 artifact family, from the tail, when the whole catalogue meets an 8k window", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");

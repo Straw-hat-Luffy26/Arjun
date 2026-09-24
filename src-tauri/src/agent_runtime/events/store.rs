@@ -228,7 +228,7 @@ impl TaskEventLog {
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, AppendError> {
+    pub(super) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, AppendError> {
         self.conn
             .lock()
             .map_err(|_| AppendError::Storage("the task event log is poisoned".to_string()))

@@ -67,6 +67,15 @@ pub struct CancelToken {
     notify: Arc<Notify>,
 }
 
+impl std::fmt::Debug for CancelToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancelToken")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
 impl Default for CancelToken {
     /// A token nothing will ever cancel. See [`CancelToken::never`].
     ///

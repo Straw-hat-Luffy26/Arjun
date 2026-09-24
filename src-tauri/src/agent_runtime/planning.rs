@@ -155,6 +155,27 @@ const ARTIFACT_WORK_WORDS: &[&str] = &[
     "template",
 ];
 
+/// Words that ask for work to be planned and handed out (P05).
+///
+/// A run whose request names specialists, delegation or coordination is asking
+/// for the orchestrator's tools by name. Deliberately narrow: an ordinary
+/// question ("what is the design pressure?") is one deterministic search and
+/// an answer, and offering it a plan and five delegation schemas spends the
+/// window on machinery the task does not need.
+const ORCHESTRATION_WORDS: &[&str] = &[
+    "delegate",
+    "specialist",
+    "specialists",
+    "subagent",
+    "sub-agent",
+    "coordinate",
+    "orchestrate",
+    "orchestration",
+    "step by step plan",
+    "multi-step",
+    "in parallel",
+];
+
 /// Words that mean a sandbox is wanted, and cannot mean anything else here.
 ///
 /// The additions are the vocabulary of building something that runs, chosen
@@ -645,6 +666,30 @@ pub fn derive(prompt: &str) -> DerivedPlan {
     // deliverable run unfinished for not promoting something nobody approved.
     if produces_document || produces_deck || mentions(&lower, MEMORY_WORDS) {
         permitted.push(ToolName::MemoryPromoteApproved);
+    }
+
+    // The orchestrator's tools (P05): a typed plan, delegation with status and
+    // cancellation, and a review request. Offered where the work has parts a
+    // specialist could own -- a deliverable, code, or a request that says so --
+    // and not on a question one search answers: simple deterministic work does
+    // not spawn agents, and five schemas are real room in a small window.
+    //
+    // Before the P04 family, so that under budget pressure the artifact tools
+    // go first: `task.request_review` runs the validation ladder itself, so a
+    // coordinator without `artifact.validate` in view can still gate on it.
+    if produces_document
+        || produces_deck
+        || produces_workbook
+        || writes_code
+        || mentions(&lower, ORCHESTRATION_WORDS)
+    {
+        permitted.extend([
+            ToolName::TaskPlanUpdate,
+            ToolName::AgentDelegate,
+            ToolName::AgentStatus,
+            ToolName::AgentCancel,
+            ToolName::TaskRequestReview,
+        ]);
     }
 
     // The shared artifact tools (P04): manifest, bounded reads, templates,

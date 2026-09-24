@@ -265,6 +265,19 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
             Runner,
             "LocalToolRunner::delegate_to_subagent, then SubagentManager::spawn",
         ),
+        // P05. On the agent path because each reads or writes the run's plan
+        // and job records, which are keyed by the run and the signed-in owner.
+        ToolName::TaskPlanUpdate => (AgentPath, "agent_runtime::delegation::plan_update"),
+        ToolName::AgentDelegate => (
+            AgentPath,
+            "agent_runtime::delegation::delegate, then SubagentManager::spawn",
+        ),
+        ToolName::AgentStatus => (AgentPath, "agent_runtime::delegation::status"),
+        ToolName::AgentCancel => (AgentPath, "agent_runtime::delegation::cancel"),
+        ToolName::TaskRequestReview => (
+            AgentPath,
+            "agent_runtime::delegation::request_review, then artifacts::validation and SubagentManager::spawn",
+        ),
     }
 }
 
@@ -280,7 +293,8 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         // The workbook form writes the calculations this task already ran, and
         // refuses rather than write an empty one (`argument_guidance`).
         ToolName::CreateXlsx => &[WorkspaceRoot, RunCalculations],
-        ToolName::AgentDelegateReadonly => &[SubagentWorker, ModelRegistry],
+        ToolName::AgentDelegateReadonly | ToolName::AgentDelegate => &[SubagentWorker, ModelRegistry],
+        ToolName::TaskRequestReview => &[SubagentWorker, ConversationArtifacts],
         ToolName::ExecuteCode => &[ContainerSandbox],
         ToolName::KnowledgeMultimodalRetrieve => &[MultimodalIndex],
         ToolName::ArtifactValidate | ToolName::ArtifactRender => &[ConversationArtifacts, PageRenderer],
@@ -318,7 +332,10 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         | ToolName::CreateTable
         | ToolName::ArtifactList
         | ToolName::ArtifactRead
-        | ToolName::ArtifactListTemplates => &[],
+        | ToolName::ArtifactListTemplates
+        | ToolName::TaskPlanUpdate
+        | ToolName::AgentStatus
+        | ToolName::AgentCancel => &[],
     }
 }
 
@@ -341,7 +358,10 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::CreateTable
         | ToolName::ArtifactEdit => Artifact,
         ToolName::ExecuteCode => Execution,
-        ToolName::AgentDelegateReadonly => ChildResult,
+        ToolName::AgentDelegateReadonly
+        | ToolName::AgentDelegate
+        | ToolName::AgentStatus
+        | ToolName::TaskRequestReview => ChildResult,
         ToolName::MemoryRecallAuthorized
         | ToolName::MemoryPromoteApproved
         | ToolName::ReadScopedFile
@@ -369,7 +389,9 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::ArtifactDiff
         | ToolName::ArtifactResolveEvidence
         // Publishing changes a version's stage and writes no file.
-        | ToolName::ArtifactRegisterVersion => Text,
+        | ToolName::ArtifactRegisterVersion
+        | ToolName::TaskPlanUpdate
+        | ToolName::AgentCancel => Text,
     }
 }
 
@@ -377,7 +399,10 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
 pub const fn cancellation_of(tool: ToolName) -> Cancellation {
     match tool {
         // Both are bounded where they run, not only where they are waited on.
-        ToolName::AgentDelegateReadonly | ToolName::ExecuteCode => Cancellation::RustDeadline,
+        ToolName::AgentDelegateReadonly
+        | ToolName::AgentDelegate
+        | ToolName::TaskRequestReview
+        | ToolName::ExecuteCode => Cancellation::RustDeadline,
         _ if is_side_effecting(tool) => Cancellation::AbandonWaitWithIntent,
         _ => Cancellation::AbandonWait,
     }

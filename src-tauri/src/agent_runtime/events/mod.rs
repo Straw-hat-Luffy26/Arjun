@@ -54,6 +54,7 @@ pub mod lease;
 pub mod machine;
 mod migrations;
 pub mod model;
+pub mod plans;
 pub mod projection;
 pub mod store;
 

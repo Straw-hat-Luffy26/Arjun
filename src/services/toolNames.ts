@@ -58,6 +58,12 @@ export const CANONICAL_TOOL_NAMES = [
   'artifact.resolve_evidence',
   'artifact.register_version',
   'artifact.edit',
+  // P05's orchestrator tools.
+  'task.plan_update',
+  'agent.delegate',
+  'agent.status',
+  'agent.cancel',
+  'task.request_review',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -144,6 +150,11 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'artifact.resolve_evidence': 'Checking what the citations rest on',
   'artifact.register_version': 'Publishing an artifact version',
   'artifact.edit': 'Editing part of an artifact',
+  'task.plan_update': 'Updating the task plan',
+  'agent.delegate': 'Handing a job to a specialist',
+  'agent.status': 'Checking on a specialist job',
+  'agent.cancel': 'Stopping a specialist job',
+  'task.request_review': 'Requesting an independent review',
 };
 
 /**

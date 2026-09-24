@@ -113,7 +113,10 @@ describe("host tools", () => {
     // Rust's `ToolName` enum is the authority; a name here that is absent
     // there is refused by the gateway regardless of what this declares.
     expect(names.slice().sort()).toEqual([
+      "agent.cancel",
+      "agent.delegate",
       "agent.delegate_readonly",
+      "agent.status",
       "artifact.create_approval_note",
       "artifact.create_briefing_deck",
       "artifact.create_calculation_workbook",
@@ -154,6 +157,8 @@ describe("host tools", () => {
       "notebook.rename",
       "sandbox.run_code",
       "sovereignty.get_evidence",
+      "task.plan_update",
+      "task.request_review",
       "workspace.read_text",
       "workspace.write_text",
     ]);

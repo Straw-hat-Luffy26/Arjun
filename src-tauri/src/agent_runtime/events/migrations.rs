@@ -126,6 +126,71 @@ const MIGRATIONS: &[Migration] = &[
             WHERE settled_at IS NULL;
     ",
     },
+    // P05: the orchestrator's plan and the jobs it dispatched.
+    //
+    // Plan versions are append-only for the reason task events are: a plan
+    // whose history can be rewritten cannot show that a step was once marked
+    // failed, and "the model cannot erase a completed receipt" would be a
+    // promise about one code path rather than about the file.
+    //
+    // Jobs are updated in place, guarded by status in `plans.rs`: a job moves
+    // queued -> running -> one ending, and an ending is never overwritten.
+    Migration {
+        name: "task_plans_and_jobs",
+        sql: "
+        CREATE TABLE IF NOT EXISTS task_plan_versions (
+            run_id       TEXT NOT NULL,
+            version      INTEGER NOT NULL,
+            author       TEXT NOT NULL,
+            reason       TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            body         TEXT NOT NULL,
+            body_sha256  TEXT NOT NULL,
+            PRIMARY KEY (run_id, version)
+        );
+
+        CREATE TRIGGER IF NOT EXISTS task_plan_versions_append_only_update
+        BEFORE UPDATE ON task_plan_versions
+        BEGIN
+            SELECT RAISE(ABORT, 'task_plan_versions is append-only: rows cannot be modified');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS task_plan_versions_append_only_delete
+        BEFORE DELETE ON task_plan_versions
+        BEGIN
+            SELECT RAISE(ABORT, 'task_plan_versions is append-only: rows cannot be deleted');
+        END;
+
+        CREATE TABLE IF NOT EXISTS delegated_jobs (
+            job_id              TEXT PRIMARY KEY,
+            run_id              TEXT NOT NULL,
+            step_id             TEXT NOT NULL,
+            role                TEXT NOT NULL,
+            mode                TEXT NOT NULL,
+            attempt             INTEGER NOT NULL,
+            child_id            TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            definition_id       TEXT NOT NULL DEFAULT '',
+            definition_version  INTEGER,
+            definition_origin   TEXT NOT NULL DEFAULT '',
+            model_id            TEXT,
+            parent_model_id     TEXT,
+            lease               TEXT NOT NULL DEFAULT '',
+            objective_sha256    TEXT NOT NULL,
+            deadline_at         TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            settled_at          TEXT,
+            result              TEXT,
+            result_hash         TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS delegated_jobs_run_idx
+            ON delegated_jobs(run_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS delegated_jobs_status_idx
+            ON delegated_jobs(status);
+    ",
+    },
 ];
 
 /// Applies every migration the database has not had, and returns the version

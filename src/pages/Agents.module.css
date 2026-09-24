@@ -429,3 +429,48 @@
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ── Delegated jobs (P05) ──────────────────────────────────────────────── */
+
+.jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  /* Five columns of identifiers do not fold well; a narrow window scrolls the
+   * table rather than the page. */
+  overflow-x: auto;
+}
+
+.jobHead,
+.jobRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(140px, 1.2fr) minmax(160px, 1.2fr) minmax(140px, 1.4fr) minmax(160px, 1.4fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.jobHead {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.jobRow[data-status='failed'],
+.jobRow[data-status='blocked'],
+.jobRow[data-status='interrupted'],
+.jobRow[data-status='timed_out'] {
+  border-left: 3px solid var(--status-warning, #fbbf24);
+}
+
+.jobRow[data-status='completed'] {
+  border-left: 3px solid var(--status-success, #4ade80);
+}

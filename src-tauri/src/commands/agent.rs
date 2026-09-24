@@ -160,6 +160,11 @@ pub struct DocumentsState(pub Arc<crate::agent_runtime::documents::DocumentStore
 /// both the correlation id and the run id.
 pub struct CancellationsState(pub Arc<crate::agent_runtime::cancellation::RunCancellations>);
 
+/// The orchestrator's live jobs (P05). Shared by the runtime's tool path, which
+/// starts and settles them, and `agent_steer_run`, which stops the ones a
+/// correction supersedes.
+pub struct JobsState(pub Arc<crate::agent_runtime::delegation::JobBoard>);
+
 /// Takes a finished turn out of the cancellation table, however it finished.
 ///
 /// A guard rather than a line at the end, for the reason every other guard in
@@ -859,6 +864,12 @@ fn runtime(
         run_to_conversation: Arc::clone(&state.run_to_conversation.0),
         conversation_artifacts: Arc::clone(&state.conversation_artifacts.0),
         notebooks: Arc::clone(state.notebooks),
+        // The managed board, so the commands that correct a run reach the same
+        // jobs this runtime started. A fresh one only where nothing is managed
+        // (a test app), which then has no command reaching it either.
+        jobs: tauri::Manager::try_state::<JobsState>(app)
+            .map(|jobs| Arc::clone(&jobs.0))
+            .unwrap_or_default(),
         emit_durable,
         // The same channel the loop's own events travel, so an operator sees
         // one sequence of what happened rather than two interleaved by luck.
@@ -3959,6 +3970,12 @@ async fn drive_run(
                     .as_ref()
                     .map(crate::artifacts::verifier::VerificationReport::is_ready),
                 has_answer: !answer.trim().is_empty(),
+                // The orchestrator's plan, read back from its durable versions.
+                task_plan: events
+                    .latest_plan(&run_id)
+                    .ok()
+                    .flatten()
+                    .map(|plan| crate::agent_runtime::task_plan::gate(&plan)),
             },
             finished_at,
         )
@@ -4890,15 +4907,17 @@ fn provider_label(runtime: crate::registry::Runtime) -> &'static str {
 /// failure.
 #[tauri::command]
 pub async fn agent_steer_run(
+    app: AppHandle,
     run_id: String,
     text: String,
     handle: State<'_, AgentRuntimeHandle>,
     session: State<'_, CurrentSession>,
+    events: State<'_, TaskEvents>,
 ) -> Result<bool, String> {
     // A correction is part of running a model. The matrix puts it under
     // `UseModel`. The orchestrator rejects no-longer-running runs, so
     // this is a sign-in + UseModel gate plus the runtime's own check.
-    require_permission(&session, Permission::UseModel)?;
+    let by = require_permission(&session, Permission::UseModel)?.user.id;
     if text.trim().is_empty() {
         return Err("A correction with no text would do nothing.".to_string());
     }
@@ -4916,10 +4935,37 @@ pub async fn agent_steer_run(
         .request("run.steer", json!({ "runId": run_id, "text": text }))
         .await
         .map_err(|error| error.to_string())?;
-    Ok(outcome
+    let steered = outcome
         .get("steered")
         .and_then(Value::as_bool)
-        .unwrap_or(false))
+        .unwrap_or(false);
+    // The loop has the correction for its next round. The orchestrator's plan
+    // gets it too, durably, and it propagates: jobs dispatched before it are
+    // stopped and their steps go back to pending, and it is published to the
+    // task's shared memory where every later round's context carries it.
+    if steered {
+        if let Some(jobs) = tauri::Manager::try_state::<JobsState>(&app) {
+            let graph = tauri::Manager::try_state::<
+                Arc<crate::knowledge::graph::runtime_store::MemoryGraph>,
+            >(&app);
+            let stopped = crate::agent_runtime::delegation::record_correction_in(
+                &events,
+                &jobs.0,
+                graph.as_ref().map(|graph| graph.inner().as_ref()),
+                &run_id,
+                &text,
+                &by,
+            );
+            if !stopped.is_empty() {
+                log::info!(
+                    "[orchestrator] run {run_id}: a correction stopped {} job(s): {}",
+                    stopped.len(),
+                    stopped.join(", ")
+                );
+            }
+        }
+    }
+    Ok(steered)
 }
 
 /// Protects named context entries from being reclaimed when the window fills.

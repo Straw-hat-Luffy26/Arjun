@@ -308,6 +308,59 @@ export interface AgentMutation {
   unchanged: boolean;
 }
 
+/** How a delegated job stands, as Rust's `JobStatus` spells it. */
+export type OrchestratorJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'blocked'
+  | 'failed'
+  | 'timed_out'
+  | 'cancelled'
+  | 'refused'
+  | 'interrupted';
+
+/**
+ * One job the main run's coordinator dispatched with `agent.delegate` (P05).
+ *
+ * The backend's record: the definition version the job was pinned to at
+ * dispatch, the model it was routed to, the lease decision it actually got, and
+ * the status the manager settled — never the coordinator's description of it.
+ */
+export interface OrchestratorJob {
+  jobId: string;
+  runId: string;
+  stepId: string;
+  role: string;
+  mode: 'readOnly' | 'writer';
+  attempt: number;
+  childId: string;
+  status: OrchestratorJobStatus;
+  definitionId: string;
+  definitionVersion: number | null;
+  definitionOrigin: string;
+  modelId: string | null;
+  parentModelId: string | null;
+  lease: string;
+  deadlineAt: string;
+  createdAt: string;
+  settledAt: string | null;
+  /** Counts, published ids, artifact versions and what was not done. */
+  result: {
+    summary?: string;
+    findings?: number;
+    evidenced?: number;
+    published?: string[];
+    artifacts?: string[];
+    missing?: string[];
+  } | null;
+  /** The step's status in the run's newest plan version. */
+  stepStatus: string | null;
+  stepNote: string | null;
+  planVersion: number | null;
+}
+
 export const agentRegistryService = {
   /** Every agent this session may see. */
   list(): Promise<AgentView[]> {
@@ -424,5 +477,13 @@ export const agentRegistryService = {
    */
   preview(agentId: string): Promise<AgentPreview> {
     return getBackendService().invoke<AgentPreview>('agent_preview', { agentId });
+  },
+
+  /**
+   * The coordinator's recent delegated jobs, newest first. Scoped by Rust to
+   * runs the signed-in person started; an administrator sees every run's.
+   */
+  orchestratorJobs(limit = 30): Promise<OrchestratorJob[]> {
+    return getBackendService().invoke<OrchestratorJob[]>('agent_orchestrator_jobs', { limit });
   },
 };

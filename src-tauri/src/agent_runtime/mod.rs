@@ -39,6 +39,7 @@ pub mod completion;
 pub mod context_compiler;
 pub mod context_manifest;
 pub mod conversations;
+pub mod delegation;
 pub mod doc_pipeline;
 pub mod documents;
 pub mod events;
@@ -56,6 +57,7 @@ pub mod resume;
 pub mod retrieval;
 pub mod stages;
 pub mod state_commit;
+pub mod task_plan;
 pub mod tasks;
 pub mod tool_policy;
 pub mod turn_context;
@@ -285,6 +287,9 @@ pub struct RuntimeDeps {
     /// asking. A graph is a summary of what a person documents say, so
     /// reaching one is an entitlement question, not a lookup.
     pub notebooks: Arc<crate::knowledge::NotebookStore>,
+    /// The jobs the orchestrator's `agent.delegate` has running, and the lock
+    /// its plan writes take. See [`delegation`].
+    pub jobs: Arc<delegation::JobBoard>,
 }
 
 impl RuntimeDeps {
@@ -1137,9 +1142,20 @@ fn capability_search(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, Wi
         "Metadata only. Ask for a skill by name to read its instructions.".to_string()
     };
 
+    // The specialist roles a delegation could reach, resolved now (P05's
+    // capability discovery). Listed only for a run that may delegate at all.
+    let agents = if permits.contains(&ToolName::AgentDelegate)
+        || permits.contains(&ToolName::AgentDelegateReadonly)
+    {
+        delegation::roles(deps)
+    } else {
+        Vec::new()
+    };
+
     Ok(json!({
         "skills": listed,
         "matched": matched,
+        "agents": agents,
         // Said explicitly so a caller does not have to infer it from the shape.
         "note": note,
     }))
@@ -1822,7 +1838,23 @@ fn decide(
         // same person the same question a second time.
         approval,
     };
-    Ok(ToolGateway::decide(&tool_call, &context))
+    let verdict = ToolGateway::decide(&tool_call, &context);
+    // A job for a role that writes is asked of a person, through the same
+    // queue a direct write uses. Escalated here, per call, because the same
+    // tool starts read-only jobs that need nobody's approval -- and only when
+    // nobody has been asked yet: `execute` re-decides as `Granted`.
+    if let GatewayVerdict::Allow { tool: ToolName::AgentDelegate, resolved_path } = &verdict {
+        if approval == ApprovalState::NotRequested {
+            if let Some(summary) = delegation::approval_needed(deps, call) {
+                return Ok(GatewayVerdict::NeedsApproval {
+                    tool: ToolName::AgentDelegate,
+                    summary,
+                    resolved_path: resolved_path.clone(),
+                });
+            }
+        }
+    }
+    Ok(verdict)
 }
 
 
@@ -2276,6 +2308,16 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             effect_key.as_deref(),
             &mut registered,
         ),
+        // The orchestrator's plan and delegation tools (P05). Answered here
+        // because each reads or writes the run's plan and job records, keyed
+        // by the run, and a job's child is narrowed from this run's grant.
+        ToolName::TaskPlanUpdate => delegation::plan_update(deps, &call, &session, &tool_call),
+        ToolName::AgentDelegate => delegation::delegate(deps, &call, &session, &tool_call).await,
+        ToolName::AgentStatus => delegation::status(deps, &call, &session, &tool_call).await,
+        ToolName::AgentCancel => delegation::cancel(deps, &call, &session, &tool_call),
+        ToolName::TaskRequestReview => {
+            delegation::request_review(deps, &call, &session, &tool_call).await
+        }
         ToolName::CreateChart => create_chart(deps, &call, &tool_call),
         ToolName::CreateDiagram => create_diagram(deps, &call, &tool_call, &mut written),
         ToolName::CreatePdf => create_pdf(deps, &call, &tool_call, &mut written),
@@ -2430,6 +2472,21 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             done.base.as_ref(),
             recorded.clone(),
         );
+    }
+    // The plan the coordinator was just shown goes into the task's shared
+    // memory on this call's receipt, so the next round's compiled context
+    // carries it (goal, constraints, plan, decisions, open questions).
+    if outcome.is_ok()
+        && matches!(
+            tool,
+            ToolName::TaskPlanUpdate
+                | ToolName::AgentDelegate
+                | ToolName::AgentStatus
+                | ToolName::AgentCancel
+                | ToolName::TaskRequestReview
+        )
+    {
+        delegation::publish_plan(deps, &session, &call.run_id, tool, recorded.clone());
     }
     record_call(
         deps,
@@ -3097,6 +3154,17 @@ fn inherited_policy_for(
 /// been dead. Quarantined skills are now filtered out before they reach here,
 /// because `skill.load` refuses them and offering one only earns a refusal.
 fn render_capabilities(value: &Value) -> String {
+    let roles = value
+        .get("agents")
+        .and_then(Value::as_array)
+        .map(|roles| delegation::render_roles(roles))
+        .unwrap_or_default();
+    let mut out = render_skill_cards(value);
+    out.push_str(&roles);
+    out
+}
+
+fn render_skill_cards(value: &Value) -> String {
     let cards = value.get("skills").and_then(Value::as_array);
     let Some(cards) = cards.filter(|cards| !cards.is_empty()) else {
         // Said plainly. A model told nothing came back asks a different next

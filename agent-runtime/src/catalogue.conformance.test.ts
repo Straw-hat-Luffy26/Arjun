@@ -83,6 +83,11 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "artifact.resolve_evidence",
   "artifact.register_version",
   "artifact.edit",
+  "task.plan_update",
+  "agent.delegate",
+  "agent.status",
+  "agent.cancel",
+  "task.request_review",
 ]);
 
 /**
@@ -180,6 +185,11 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["artifact.resolve_evidence", true],
   ["artifact.register_version", false],
   ["artifact.edit", false],
+  ["task.plan_update", false],
+  ["agent.delegate", false],
+  ["agent.status", true],
+  ["agent.cancel", false],
+  ["task.request_review", false],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

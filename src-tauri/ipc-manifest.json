@@ -62,6 +62,11 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "agent_orchestrator_jobs": {
+      "owner": "agent-admin",
+      "consumer": "frontend",
+      "note": "Called from src/. The coordinator's recent delegated jobs (P05), owner-scoped."
+    },
     "agent_export_artifact": {
       "owner": "agent",
       "consumer": "frontend",

@@ -5,7 +5,8 @@ Delivered by plan prompt **P01**. The machine-readable authority is
 generated from [`src-tauri/src/orchestrator/contract.rs`](../../src-tauri/src/orchestrator/contract.rs)
 and held byte-equal to it by `orchestrator::contract::tests::the_published_contract_is_current`.
 This page is the human reading of that file at the P01 working tree, extended by
-P04 (ten artifact tools, §2 and §8); where the two disagree, the JSON is right and
+P04 (ten artifact tools, §2 and §8) and P05 (five orchestrator tools, §2, §6 and §9);
+where the two disagree, the JSON is right and
 this page is stale.
 
 Regenerate the JSON after changing any tool:
@@ -50,6 +51,8 @@ the same, with the pending intent promoted to `unknown` rather than retried;
 
 | Tool | Accepted spellings | Required | Optional | Mode / effect | Approval | Route → handler | Prerequisites | Output | Cancel | Timeout s |
 |---|---|---|---|---|---|---|---|---|---|---|
+| `agent.cancel` | — | job | reason | write / reversible | automatic | A → `delegation::cancel` | — | text | wait | 15 |
+| `agent.delegate` | — | step, role, objective | deliverable, allowed_tools[], memory_items[], after_revision, documents[], files[], expressions[], artifacts[], deadline_seconds, wait_seconds | write / reversible | automatic for a read-only role; **person** for a role that writes (escalated per call in the runtime's `decide`, and the handler refuses a writer call with no recorded approval) | A → `delegation::delegate` → `SubagentManager::spawn` (background job) | worker@cat, model registry@h | child result | deadline | 120 |
 | `agent.delegate_readonly` | — | profile, task | documents[], files[], expressions[], artifacts[], deliverable, after_revision | read / reversible | automatic | R → `delegate_to_subagent` → `SubagentManager::spawn` | worker@cat, model registry@h | child result | deadline | 120 |
 | `artifact.create_approval_note` | create_docx | path | template, content, sections, title, classification | write / side-effecting | automatic | A → `artifacts::create_docx_with_evidence` | workspace@gw | artifact | wait+intent | 120 |
 | `artifact.create_briefing_deck` | create_pptx | path, content | — | write / side-effecting | automatic | A → `artifacts::create_pptx` | workspace@gw | artifact | wait+intent | 120 |
@@ -90,7 +93,10 @@ the same, with the pending intent promoted to `unknown` rather than retried;
 | `notebook.remove_source` | — | document | notebook | write / reversible | automatic | A → `notebook_remove_source` | — | text | wait | 10 |
 | `notebook.rename` | — | name | notebook | write / reversible | automatic | A → `notebook_rename` | — | text | wait | 10 |
 | `sandbox.run_code` | execute_code | language, source | — | write / irreversible | person | R → `execute_code` | container sandbox@h | execution | deadline | 60 |
+| `agent.status` | — | — | job, wait_seconds | read / read-only | automatic | A → `delegation::status` | — | child result | wait | 120 |
 | `sovereignty.get_evidence` | — | — | — | read / read-only | automatic | R → `sovereignty_evidence` | — | text | wait | 5 |
+| `task.plan_update` | — | base_version, operations[] | — | write / reversible | automatic | A → `delegation::plan_update` | — | text | wait | 10 |
+| `task.request_review` | — | step | criteria, artifacts[] | write / reversible | automatic | A → `delegation::request_review` → `artifacts::validation` + `SubagentManager::spawn` | worker@cat, conversation@h | child result | deadline | 120 |
 | `workspace.read_text` | read_scoped_file | path | fromLine, maxLines | read / read-only | automatic | R → `read` | workspace@gw | text | wait | 15 |
 | `workspace.write_text` | write_scoped_file | path, content | — | write / side-effecting | person | R → `write` | workspace@gw | artifact | wait+intent | 30 |
 
@@ -176,8 +182,16 @@ always sends `ReadOnly`: a role declared as writing is refused, and any write
 tool an edited read-only role holds is withheld and recorded as refused.
 `Writer` never widens (narrowing runs first), leaves every effect to the
 gateway's approval, runs in the exclusive lane whenever the child holds any
-write tool, and is reachable only through `Dispatch::writing()` — which no
-model-facing tool calls in this build (P05/P11).
+write tool, and is reachable only through `Dispatch::writing()`.
+
+**P05:** `agent.delegate` is the one model-facing caller of `Dispatch::writing()`,
+and only for a job whose role is declared writing or whose `allowed_tools` names
+a write tool. Such a call is escalated to a person in the runtime's `decide`
+(the same `ApprovalQueue`, standing approvals and `approval_requested` /
+`approval_decided` events as a direct write), and the handler refuses a writer
+job whose tool call has no `approval_decided{approved: true}` in the event log.
+A request for a tool the role is not given is refused without asking anybody.
+`agent.delegate_readonly` is unchanged and still refuses every writing role.
 
 ## 7. Known deviations, not fixed in P01
 
@@ -188,11 +202,11 @@ model-facing tool calls in this build (P05/P11).
 | `media.extract_findings` | Declares `loopback` and 90 s, but reads text the ingest pipeline already extracted; no OCR runs at call time. | P06 |
 | every tool but delegation and the sandbox | `ToolSpec::timeout` bounds the runtime's *wait*; the Rust handler is not interrupted. | P03 |
 | `model_policy` | The definition's eligible set is recorded (`within_eligible`) and not enforced by routing. | P03 |
-| `skills` on the packet | Pinned and traced; the child loop does not load skills. | P05 |
+| `skills` on the packet | Pinned and traced; the child loop does not load skills. **Still open after P05**, which did not need it. | P06–P13 (each role's loop) |
 | `shared_with_task` | **Closed in P02**: enforced at publication (task scope or the agent's private scratch). | — |
 | receipts | **Closed in P02**: each finding carries the receipt of its own call, resolved against the event log before admission. | — |
-| `SubagentManager::recall` | A replayed result is rebuilt with schema `retrieval` whatever the original was. | P02/P05 |
-| idempotency key | Derived from the dispatch key as given, so the same agent named by role key and by `ag-` id yields two keys. | P05 |
+| `SubagentManager::recall` | A replayed result is rebuilt with schema `retrieval` whatever the original was. **P05:** a job never counts a replay as its own success — `delegation::settle` reports it failed with "findings from the earlier run" missing. The rebuild itself is unchanged. | P02 |
+| idempotency key | Derived from the dispatch key as given, so the same agent named by role key and by `ag-` id yields two keys. **Closed for `agent.delegate`** (P05): a job is keyed on its plan step and attempt (`Dispatch::scoped_to`), and a step names exactly one role. Still true of `agent.delegate_readonly`. | — |
 | `artifact.create_flowchart` | Resolved by Rust, unknown to the runtime's alias table. | — |
 | `src/services/toolNames.ts` | The UI label table lacks 12 tools; they display their wire name. (P04's ten were added with labels.) | P14 |
 | `artifact.create_approval_note` `sections`, `artifact.create_calculation_workbook` `sheets` | The gateway now accepts them as lists (P04 fixed `Object`, which refused every composed call); the TypeScript catalogue still does not offer them, so a model reaches only the templates. | P09 / P13 |
@@ -213,3 +227,22 @@ path. `artifact.register_version` is the only one a person approves.
 | Render | `artifacts::render` | LibreOffice (office/SVG → PDF) and PyMuPDF (`render_pages.py`, PDF → PNG + text + blank flag), qualified series recorded; anything else is `unavailable`. Handles: `render:<id>/page:<n>`. |
 | Graph | `agent_runtime::artifact_tools::link_to_graph` | An `ArtifactRef` node on the producing call's own receipt, `depends_on` its memory dependencies, so P02's staleness reaches it. |
 | Publication | `register_version stage=final` | Rechecks every dependency and the template now, requires an accepted validation of these bytes, then a person. |
+
+## 9. The orchestrator contract (P05)
+
+The coordinating model is the model of the **main run** (Spark X2.5 4B Q8 in the
+target deployment). It is not an agent in the registry and no profile holds these
+tools, so there is no nested orchestrator and no child that can delegate.
+
+| Concept | Where | Contract |
+|---|---|---|
+| Plan | `agent_runtime::task_plan` | Goal, constraints, corrections, typed steps (`direct` / `delegate` / `review`) with dependencies (acyclic, checked), acceptance (`childCompleted`, `artifactAccepted`, `reviewPassed`, `memoryPublished`, `toolSucceeded:<tool>`), inputs (`art-…@N`, `mi-…#rN`, `step:<id>`, `doc:<sha256>`), status, outputs, receipts and a repair budget (default 2, at most 3 attempts; the same failure twice is no progress). 16 steps at most. |
+| Who writes what | `task_plan::apply_patch` / `job_*` / `review_settled` / `correction_recorded` | The model patches against the version it read (stale → refused with the current plan). It cannot write a status or a receipt; a completed step cannot be edited, skipped or removed; a completed step reopens only after a later correction, keeping its receipts. The backend settles steps from job results, claimed tool receipts (checked against the event log) and reviews. |
+| Storage | `events::plans` (migration `task_plans_and_jobs`) | `task_plan_versions`: one row per version, consecutive, append-only by trigger, body hashed. `delegated_jobs`: one row per job, `queued → running → one ending`, first ending stands; a restart marks live rows `interrupted` and settles their steps (reader: failed, reopenable; writer: blocked for a person). |
+| Job | `delegation::delegate` | Pending delegate step, prerequisites complete, memory items present at their revision and usable, attempts left, fewer than 2 of the run's jobs running. Definition resolved from the registry at dispatch (id, version, origin recorded) and pinned into the packet by the manager. Child id pre-assigned; key scoped to step + attempt; deadline the shorter of the call's (≤ 600 s) and the definition's; waits for the graph revision its prerequisites' results landed at. |
+| Settlement | `delegation::settle`, `task_plan::job_settled` | `completed` counts only with a finding that cites a source or rests on a receipt (an admitted publication), or an artifact; otherwise `partial`. `blocked`/`refused` → blocked (a role with no worker is blocked by name before anything runs); `failed`/`timed_out` → failed; `cancelled` → cancelled, or back to pending uncharged when a correction superseded it. |
+| Stop and correction | `SubagentManager::stop_signal`, `delegation::record_correction_in` | A job stops on its own token, its child id, its run's cancellation or its run's durable ending, with one step's grace. A person's steer (`agent_steer_run`) is recorded on the plan, published to the task's memory as an operator `Correction`, and stops every running job. |
+| Context | `delegation::publish_plan` | After each orchestrator call, goal, constraints, plan projection, decisions and open questions are committed to the task's memory scope on that call's receipt, so `context.refresh` carries them as mandatory blocks every round. Artifacts are referenced by version, never inlined. |
+| Completion | `completion::verify` | With a plan: `taskplan.steps_accepted` (every step complete by receipt or skipped with a reason), `taskplan.no_job_running`, `taskplan.independent_review` (a step asking for review or an accepted artifact has a passed review receipt). Without a plan (simple work): not applicable. |
+| Review | `delegation::request_review` | Backend first (P04 ladder for every artifact, currency for every published item), then an independent reviewer role that did not produce the work, bounded at 40 s. |
+| Lease | `delegation::lease_decision` | Recorded per job. **P03's parent-lease suspension is not built**: a child on another model is serialised by `subagents::scheduling` and the coordinator's model is not suspended; the record says so. |

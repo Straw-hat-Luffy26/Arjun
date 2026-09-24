@@ -626,6 +626,24 @@ pub fn run() {
                 Ok(_) => {}
                 Err(error) => log::error!("[TASKS] interrupted runs could not be closed off: {error}"),
             }
+            // Jobs the orchestrator dispatched that the last process was still
+            // running. Each is marked interrupted and its plan step settled: a
+            // reader's step can be reopened, a writer's needs a person, because
+            // what it did before the process went away is unknown (P05).
+            let interrupted_jobs =
+                agent_runtime::delegation::recover_interrupted_jobs(&task_events);
+            if !interrupted_jobs.is_empty() {
+                info!(
+                    "[TASKS] {} delegated job(s) were interrupted by the last shutdown: {}",
+                    interrupted_jobs.len(),
+                    interrupted_jobs.join(", ")
+                );
+            }
+            // The orchestrator's live jobs, shared by the runtime's tool path
+            // and the commands that stop or correct a run.
+            app.manage(commands::agent::JobsState(std::sync::Arc::new(
+                agent_runtime::delegation::JobBoard::default(),
+            )));
             let subagent_events = std::sync::Arc::clone(&task_events);
             // The same log again, for the workers. Cloned before the manage below
             // takes ownership of the original.
@@ -928,6 +946,11 @@ pub fn run() {
                 );
             }
 
+            // Watching the stop table, so a stopped task stops its children --
+            // and a stopped job its child -- even when a worker does not look.
+            subagent_manager = subagent_manager.with_cancellations(std::sync::Arc::clone(
+                &app.state::<commands::agent::CancellationsState>().0,
+            ));
             app.manage(std::sync::Arc::new(subagent_manager) as commands::agent::Subagents);
 
             // The deployment's own record of its agents.
@@ -1376,6 +1399,7 @@ pub fn run() {
             commands::agent_admin::agent_skill_catalog,
             commands::agent_admin::agent_preview,
             commands::agent_admin::agent_dependents,
+            commands::agent_admin::agent_orchestrator_jobs,
             commands::agent_admin::agent_test_run,
             commands::registry::registry_review_model,
             commands::agents::agent_model_transition_begin,

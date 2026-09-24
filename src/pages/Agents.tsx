@@ -19,6 +19,7 @@ import {
   type AgentState,
   type AgentView,
   type MemoryScope,
+  type OrchestratorJob,
   type OutputSchema,
   RUNNABLE_SCHEMAS,
   type SkillOption,
@@ -155,9 +156,17 @@ export const Agents: React.FC = () => {
   const [busy, setBusy] = useState(false);
   /** Where the open agent stands with respect to its model. */
   const [transition, setTransition] = useState<TransitionStatus | null>(null);
+  /** What the main run's coordinator delegated, as the backend recorded it. */
+  const [jobs, setJobs] = useState<OrchestratorJob[] | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const load = useCallback(async () => {
+    // Read beside the registry and never in its way: a deployment whose job
+    // table cannot be read still lists and edits its agents, and says so.
+    void agentRegistryService
+      .orchestratorJobs()
+      .then(setJobs)
+      .catch(() => setJobs(null));
     try {
       const [found, colors] = await Promise.all([
         agentRegistryService.list(),
@@ -517,6 +526,8 @@ export const Agents: React.FC = () => {
           ))}
         </ul>
       )}
+
+      <OrchestratorJobs jobs={jobs} />
 
       {draft && selected && (
         <section className={styles.editor} aria-label={`Editing ${draft.displayName}`}>
@@ -1028,6 +1039,83 @@ const Transition: React.FC<{ status: TransitionStatus }> = ({ status }) => {
     </section>
   );
 };
+
+/**
+ * What the main run's coordinator handed to these agents (P05).
+ *
+ * The coordinator is the model of the chat run itself — Spark X2.5 4B Q8 in
+ * the target deployment — not an agent in the list above: it plans with
+ * `task.plan_update` and hands plan steps to the agents here with
+ * `agent.delegate`. Each row is the backend's record of one job: the definition
+ * version it was pinned to when it was dispatched, the model it was routed to,
+ * what happened to the card, and the status the manager settled. A step counts
+ * as done only when its receipts say so; a job's own "completed" is shown next
+ * to the step's status so the two can be told apart.
+ */
+const OrchestratorJobs: React.FC<{ jobs: OrchestratorJob[] | null }> = ({ jobs }) => (
+  <section className={styles.dryRun} aria-label="Delegated jobs">
+    <h3 className={styles.previewTitle}>
+      <ArrowLeftRight size={14} aria-hidden /> Jobs the coordinator delegated
+    </h3>
+    <p className={styles.hint}>
+      Plan steps the main run handed to these agents. A writer job waited for a person&apos;s
+      approval; a step is complete only when its receipts, and any review it asked for, say so.
+    </p>
+    {jobs === null ? (
+      <p className={styles.quiet}>The job record could not be read.</p>
+    ) : jobs.length === 0 ? (
+      <p className={styles.quiet}>No jobs have been delegated yet.</p>
+    ) : (
+      <ul className={styles.jobs} aria-label="Delegated jobs">
+        <li className={styles.jobHead} aria-hidden>
+          <span>Job</span>
+          <span>Step</span>
+          <span>Agent (pinned definition)</span>
+          <span>Job status</span>
+          <span>Model and card</span>
+        </li>
+        {jobs.map((job) => (
+          <li key={job.jobId} className={styles.jobRow} data-status={job.status}>
+            <span className={styles.rowMain}>
+              <span className={styles.rowName}>{job.jobId}</span>
+              <span className={styles.hint}>
+                attempt {job.attempt} · {job.mode === 'writer' ? 'writer (approved)' : 'read-only'} ·{' '}
+                {when(job.createdAt)}
+              </span>
+            </span>
+            <span className={styles.rowMain}>
+              <span>
+                {job.stepId} {job.planVersion !== null && <span className={styles.hint}>plan v{job.planVersion}</span>}
+              </span>
+              <span className={styles.hint}>
+                {job.stepStatus ?? 'no plan step'}
+                {job.stepNote ? ` — ${job.stepNote}` : ''}
+              </span>
+            </span>
+            <span className={styles.rowMain}>
+              <span>{job.role}</span>
+              <span className={styles.hint}>
+                {job.definitionId} · {job.definitionVersion !== null ? `v${job.definitionVersion}` : 'no version'} ·{' '}
+                {job.definitionOrigin}
+              </span>
+            </span>
+            <span className={styles.rowMain}>
+              <span>{job.status.replace('_', ' ')}</span>
+              {job.result?.summary && <span className={styles.hint}>{job.result.summary}</span>}
+              {job.result?.missing && job.result.missing.length > 0 && (
+                <span className={styles.hint}>not done: {job.result.missing.join('; ')}</span>
+              )}
+            </span>
+            <span className={styles.rowMain}>
+              <span>{job.modelId ?? '—'}</span>
+              <span className={styles.hint}>{job.lease}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+);
 
 /** The dry run, shown as declared against effective. */
 const Preview: React.FC<{ preview: AgentPreview }> = ({ preview }) => (

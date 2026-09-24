@@ -88,6 +88,12 @@ export const CANONICAL_TOOL_NAMES = [
   "artifact.resolve_evidence",
   "artifact.register_version",
   "artifact.edit",
+  // P05's orchestrator plan and delegation tools.
+  "task.plan_update",
+  "agent.delegate",
+  "agent.status",
+  "agent.cancel",
+  "task.request_review",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];

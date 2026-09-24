@@ -130,6 +130,7 @@ pub(super) fn deps_with(
         notebooks: Arc::new(
             crate::knowledge::NotebookStore::in_memory().expect("notebook store opens"),
         ),
+        jobs: Arc::default(),
     });
     (deps, dir)
 }
@@ -767,7 +768,10 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
     assert_eq!(
         names,
         vec![
+            "agent.cancel",
+            "agent.delegate",
             "agent.delegate_readonly",
+            "agent.status",
             "artifact.create_approval_note",
             "artifact.create_briefing_deck",
             "artifact.create_calculation_workbook",
@@ -808,6 +812,8 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "notebook.rename",
             "sandbox.run_code",
             "sovereignty.get_evidence",
+            "task.plan_update",
+            "task.request_review",
             "workspace.read_text",
             "workspace.write_text",
         ]

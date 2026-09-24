@@ -34,7 +34,8 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P02 | Shared memory correctness and authority | **Complete for the graph, receipts, versions, outbox, sharing and the sixth legacy store**; cutover of the other five legacy writers and graph-backed agent recall remain open — see below |
 | P03 | Context compiler, GPU scheduling and continuation | Not started |
 | P04 | Shared artifact, evidence and validation tools | **Complete for portable code, the production path and a real render on a Linux machine**; the render/acceptance gate on the Windows target stays open until LibreOffice is provisioned there — see below |
-| P05–P16 | — | Not started |
+| P05 | Orchestrator and delegation tools | **Complete for portable code and the production path with a fixture coordinator**; the Spark-driven run and P03's parent-lease suspension are open gates — see below |
+| P06–P16 | — | Not started |
 
 ---
 
@@ -780,3 +781,159 @@ handoff (still not started; P05 and P06 need it). Begin at `agent_runtime/mod.rs
 `context.refresh` and the 8k tool-budget pressure recorded as P04-OBS-1: role-
 scoped tool loading is what lets the artifact family, the producers and the
 sandbox share a small window.
+
+---
+
+# P05 — The Spark orchestrator and delegation tools
+
+Worked on 2026-09-24 on branch `claude/hopeful-brahmagupta-1eol9d` from HEAD
+`fe3ff44` (P04), in the same **Linux cloud container** — not the Windows host and
+not the target machine. **P03 is not started**, and §11.3 lists it as a P05
+prerequisite: P05 was implemented ahead of it at the user's request, and the one
+P05 requirement that needs P03 (parent-lease suspension) is recorded open rather
+than imitated. Raw output: `evidence/agent-system/P05/` (index in its
+`README.md`).
+
+## Found before, or while, building it
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | `agent.delegate_readonly` holds the model's loop for the whole child: nothing could ask how a child was doing or stop it, and a stopped run's child ran on until its own deadline — the manager's timeout was its only stop. | `orchestrator/runner.rs`, `subagents/manager.rs` | Jobs run in the background (`agent.delegate` + `agent.status`/`agent.cancel`); the manager races every child against its token, its id and its run in the stop table, and the run's durable ending, with one step's grace. |
+| 2 | A retry of a failed child under the same idempotency key is answered "already attempted and did not succeed, so it was not started again", and the key depends only on run, role, objective and inputs — so no step could have a repair budget. | `manager.rs` `spawn`, `recall` | `Dispatch::scoped_to`: a job's key includes its plan step and attempt. The unscoped key every other caller computes is unchanged. |
+| 3 | A child's id was minted inside `spawn`, so nobody could name — or stop — a child while it ran. | `manager.rs` | `Dispatch::as_child`. |
+| 4 | `ChildResult::describe` calls a *completed* child's findings "partial" whenever it carries a detail note, and a completed retrieval always does (where it published). | `subagents/result.rs` | Left as is (other callers); job summaries are built from the counts. |
+| 5 | The calculation checker's findings cite no passage; its grounding is its publications, admitted on the engine's receipts. `ChildResult.receipts` stays empty for the mechanical workers. | `subagents/worker.rs` | A step counts admitted publications as receipt-backed grounding. `completion::children.contract_honoured` still calls such a child uncited — recorded, not changed here. |
+| 6 | The writer escalation first asked a person about a request the handler would refuse (a role asking for a tool it is not given), and the run waited for an approval nobody should give. Found as a hanging test. | `delegation::approval_needed` | A refusable request is not escalated; the handler refuses it by name. |
+| 7 | The retriever's mechanical fallback ANDs every query term: a natural-language objective finds nothing, a short phrase finds the passage. | `worker.rs` `retrieve` | Recorded; P07's to improve. The tests use short phrases, as the worker tests do. |
+| 8 | The artifact reviewer's fallback resolves an artifact id as a workspace path, so it cannot open a conversation artifact: an independent review of a real deliverable does not pass in this build. | `worker.rs` `review` | Recorded and pinned by a test; the Deliverable Reviewer is P10. |
+| 9 | Every tool's timeout is capped at 120 s (`every_tool_has_a_time_limit`). | `orchestrator/tools.rs` | Waits capped at 100 s; a job that outlives the wait keeps running and is reported running, never abandoned. |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| **One coordinator, in the main run** | The coordinating model is the model of the chat run itself (Spark X2.5 4B Q8 in the target deployment). It plans, delegates, watches, stops and gates with five ordinary tool calls through the same gateway, plan budget, approval queue and event log as every other call. No second orchestrator; no profile holds these tools, so a child cannot delegate. | `agent_runtime/delegation.rs` (new) |
+| **Typed durable plan** | Goal, constraints, operator corrections, typed steps (`direct` / `delegate` / `review`) with dependencies (acyclic), acceptance criteria, exact input references, status, outputs, receipts and a repair budget; decisions with the evidence they rest on; open questions. Patches are validated against the version the model read; strict per-operation fields. The model cannot write a status or a receipt; a completed step cannot be edited, skipped or removed, and reopens only after a later correction, keeping its receipts. | `agent_runtime/task_plan.rs` (new) |
+| **Storage** | Migration `task_plans_and_jobs`: `task_plan_versions` (consecutive, append-only by trigger, body hashed and re-checked on read) and `delegated_jobs` (`queued → running → one ending`, the first ending stands). | `events/plans.rs` (new), `events/migrations.rs` |
+| **Jobs** | `agent.delegate`: pending delegate step, prerequisites complete, required memory items present at their revision and usable, attempts left, fewer than 2 running for the run. Definition resolved from the registry at dispatch and recorded (id, version, origin); child's model chosen by `certification::choose` against the registry; inputs from the call and the step (`step:<id>` resolves to the producer's artifact outputs); graph-revision handoff from prerequisites' results; deadline the shorter of the call's (≤ 600 s) and the definition's; allowed tools a subset of the role's and of the run's. | `delegation.rs`, `subagents/manager.rs` |
+| **Writer jobs under the existing approvals** | A job whose role writes, or whose `allowed_tools` names a write tool, is escalated to a person in the runtime's `decide` — same queue, standing approvals and events as a direct write — and the handler refuses a writer job whose call has no recorded approval. `Dispatch::writing()` has exactly this one model-facing caller; `agent.delegate_readonly` is unchanged. | `agent_runtime/mod.rs` `decide`, `delegation.rs` |
+| **Settlement** | From the manager's status and the payload, never the child's words: `completed` needs a cited or receipt-backed finding or an artifact (else `partial`); artifacts must validate to `accepted` where asked; `blocked` / `refused` → blocked (a role with no worker is blocked by name before anything runs); `failed` / `timed_out` → failed; the same failure twice → blocked for no progress; attempts exhausted → blocked; a job a correction superseded → pending, uncharged. | `task_plan::job_settled`, `delegation::settle` |
+| **Status, cancel, review** | `agent.status` (bounded wait, findings with citations, published ids, what was not done, the plan). `agent.cancel` (this run's jobs only). `task.request_review`: P04's ladder on every artifact output (or named version), currency of every published item, then an independent reviewer role that did not produce the work, 40 s bound; verdict recorded as a review receipt. | `delegation.rs` |
+| **Stop, correction, crash** | A person's steer (`agent_steer_run`) is recorded on the plan, published to the task's memory as an operator `Correction`, and stops every running job; their steps go back to pending, uncharged. The run's cancellation and its durable ending stop its jobs. At start, `recover_interrupted_jobs` marks the last process's live jobs `interrupted` and settles their steps: a reader's failed and reopenable, a writer's blocked for a person. | `delegation.rs`, `commands/agent.rs`, `lib.rs` |
+| **Shared memory and context** | After each orchestrator call, goal, constraints, the plan projection, decisions and open questions are committed to the task scope on that call's own receipt (admitted), so `context.refresh` carries them as mandatory blocks every round. Artifacts are referenced by version, never inlined. | `delegation::publish_plan`, `mod.rs` |
+| **Capability discovery** | `capability.search` (the canonical tool) now also lists the delegable roles: resolved definition id/version/origin, whether a worker exists, whether it writes, output schema, model role, time limit. | `mod.rs` `capability_search`, `delegation::roles` |
+| **Completion** | With a plan: `taskplan.steps_accepted`, `taskplan.no_job_running`, `taskplan.independent_review`. Without one (a simple question) they do not appear, and the orchestrator's tools are not offered (`planning::derive`). | `completion.rs`, `commands/agent.rs`, `planning.rs` |
+| **Five tools, end to end** | `task.plan_update`, `agent.delegate`, `agent.status`, `agent.cancel`, `task.request_review`: `ToolName` + spec + contract + `class_of` + runner refusal + agent-path arms + TS catalogue (closed schemas, six-clause descriptions) + `tool-names.ts` + conformance + budget + UI labels; `tool-contract.json` regenerated. | `orchestrator/{tools,contract,runner}.rs`, `agent_runtime/{mod,tool_policy,planning}.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| **Agents page** | "Jobs the coordinator delegated": each job with its step's status, the definition version it was pinned to, mode, status, what was not done, model and lease decision. New read-only command `agent_orchestrator_jobs`, owner-scoped (administrators see all). | `commands/agent_admin.rs`, `lib.rs`, `ipc-manifest.json`, `src/services/agentRegistry.service.ts`, `src/pages/Agents.{tsx,module.css}` |
+
+## Contract decisions
+
+1. **The model proposes; receipts decide.** A plan version written by the model
+   can add and edit pending work; only a settled job, a claimed tool receipt
+   (checked against the event log) or a review changes a step's status.
+2. **A dependency waits by refusal, not by blocking.** Delegating a step whose
+   prerequisites are not complete is refused with what it waits on, and costs no
+   attempt; the coordinator waits with `agent.status`.
+3. **An incomplete draft is never success.** A child that says "completed" with
+   nothing cited is `partial`; an artifact must validate to `accepted` where the
+   step asks; a replayed result from an earlier process is reported as such.
+4. **Retries are bounded twice.** At most three attempts, and the same failure
+   twice blocks the step even with attempts left. A correction's cancellation is
+   not charged.
+5. **Writer jobs are approved like writes.** Escalated per call in `decide`,
+   verified again in the handler; the read-only alias never reaches it.
+6. **Simple work stays simple.** The five tools are permitted only for
+   deliverables, code or requests that ask for delegation; a one-search
+   question is not offered them and has no plan criteria.
+7. **Lease suspension is recorded, not simulated.** Each job records what
+   happened to the card (`lease`); a child on another model is serialised by
+   `subagents::scheduling` and the coordinator's model is not suspended until
+   P03 exists.
+8. **Context follows the receipts.** The plan reaches the coordinator's context
+   through the graph at the version its last orchestrator call returned; a job
+   that settles in the background reaches it at the next such call
+   (`agent.status`), not spontaneously.
+
+## Tests
+
+| What the prompt names | Test |
+|---|---|
+| dependent two-specialist plan | `agent_runtime::delegation::tests::a_dependent_two_specialist_plan_runs_in_order_on_receipts` — the dependent step is refused first (no attempt used); the production retriever over a real index, then the production calculation checker waiting (`atLeast`) for the retriever's graph revision; both steps completed by receipt; goal, constraint and plan admitted in the task's memory; the completion verifier passes the plan criterion |
+| one failed child | `…::a_failed_child_fails_its_step_then_blocks_it_and_the_run_is_reported_unfinished` — the production code worker (writer, approved) fails for want of a model runtime; retried once it fails the same way; the step is blocked for no progress with an attempt left, a third try is refused, and the verifier reports the run unfinished naming the step |
+| denial of writer tools | `…::writer_jobs_need_a_person_and_never_come_through_the_read_only_alias` (the alias refuses a writing role; a rejected approval starts nothing; a writer call reaching the handler without a recorded approval is refused; `allowed_tools` cannot widen a read-only role), `…::a_writer_job_is_escalated_to_a_person_by_the_gateway_path` |
+| mid-flight correction | `…::a_correction_mid_flight_stops_the_job_and_reopens_its_step_uncharged` (the running job is stopped, the step is pending with no attempt charged, the correction is in the plan and admitted in memory as a person's); `task_plan::tests::a_correction_reopens_a_completed_step_and_keeps_its_receipts` |
+| duplicate delegation retry | `…::a_duplicate_delegation_starts_no_second_job` (a second call while running and after completion: one job, one child each) |
+| cancel | `…::agent_cancel_stops_a_running_job_and_the_step_can_be_reopened`, `…::stopping_the_run_stops_its_running_jobs` |
+| crash/resume | `…::a_restart_marks_the_running_job_interrupted_and_the_step_is_retried_fresh` (durable log on disk; the next process marks the job interrupted and fails the reader's step; reopened, attempt 2 runs under a fresh key and completes); `events::plans::tests::a_job_settles_once_and_a_restart_interrupts_only_live_ones`; `task_plan::tests::an_interrupted_writer_needs_a_person_and_an_interrupted_reader_can_be_retried` |
+| incomplete capability status without fictitious success | `…::a_role_with_no_worker_is_reported_blocked_and_never_as_done` (capability search says "no worker in this build"; the job is blocked by name; no child started); `…::a_coordinators_own_deliverable_is_not_complete_until_an_independent_review_passes` (a real note, a real receipt, the P04 ladder, and a reviewer role that cannot yet read conversation artifacts: the review does not pass and the step is not complete) |
+| review on published findings | `…::a_review_of_published_findings_rechecks_them_before_the_step_completes`, `…::a_review_step_settles_the_steps_it_reviewed` |
+| inputs scoped like the P04 tools | `…::an_artifact_from_another_conversation_is_not_reviewed_or_read` (the same person's note from another conversation is refused as a review target and as a step input) |
+| simple work spawns nothing | `…::a_simple_question_is_not_offered_the_orchestrator` |
+| the plan's own rules | `task_plan::tests::*` (15: versions, cycles, strict ops, receipts only, claims checked against the log, partial, no progress, bounded attempts, corrections, interruption, one start per step, gate, round trip) |
+| storage | `events::plans::tests::*` (3: consecutive versions and conflicts, append-only triggers, one ending per job) |
+| **routed tool calls under the production driver** | `tests/agent_runtime.rs::a_coordinating_model_plans_delegates_and_reads_a_job_through_the_real_runtime` — a fixture coordinator's `task.plan_update` → `agent.delegate` → `agent.status` through the real Node bundle into Rust's authorize/execute; the production retriever; plan, job and child in the durable record (`log_production_driver.txt`). **Deterministic transport, not Spark.** |
+| with Spark | `tests/agent_runtime.rs::spark_routes_the_orchestrator_tools_through_the_real_runtime` — `#[ignore]`d; **not run here** (no weights, no server). See "Unverified". |
+
+**Seen failing.** With the handler's approval check, the citation rule, the
+dependency check, the manager's stop race and the correction refund each
+disabled in turn, the test guarding it failed; restored, it passes
+(`log_mutation.txt`).
+
+## Measured
+
+**P05-OBS-1 — the catalogue at 48 tools.** 4,521 estimated tokens at the
+smallest compression stage (5,089 at `schemaOnly`), against an 8k tool budget of
+about 3,686. The five P05 tools sit before the P04 family, so when a plan
+permits everything at 8k the fitter drops nine of the ten artifact tools and
+keeps every orchestrator tool (`tool-budget.test.ts`). No plan permits
+everything; P04-OBS-1's remedy (P03 role-scoped loading) stands.
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2832 passed, 2 failed**, 3 ignored — the same two Windows-path tests that fail at `20061fc` (P04's record); `log_lib_full.txt` |
+| focused suites (`log_focused_rust.txt`) | task_plan 15, delegation 15, events 127, completion 10, planning 25, tool_policy 6, orchestrator tools 28 / contract 5 / gateway 23, subagents 103; `agent_runtime::tests` 83 + the pre-existing Windows-path failure |
+| `npm run test:integration` | **65 passed**, 2 ignored (the Spark test, and `seed_local_accounts` as before) |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; 131 files, **2352** tests |
+| `npx tsc --noEmit`, `npm run test:ui` | pass; 43 files, 618 tests |
+| `npm run build`, `runtime:build`, `check:bundle`, `check:bundle:self`, `check:offline` | pass |
+| `check:ipc`, `check:reachable`, `check:egress`, `check:no-lora`, `check:deployment`, `check:targets`, `check:whitespace` | pass — **177** commands (+1), 196 modules |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (P04's CRLF fixture hashes), 31 blocked — no case is P05's |
+| Agents page | rendered in Chromium from a throwaway entry with Tauri's `invoke` stubbed by job records the backend produced in the tests (`agents-page-jobs-panel.png`). The UI suite has no DOM environment by design; gstack (`/design-review`, `/qa`) is not installed here and was not installed. |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **Spark X2.5 4B Q8 driving these tools** | Not run: no weights and no `llama-server` in this container. The production path is proven with a fixture coordinator only; nothing here says how Spark plans or whether it calls the tools well. | On the target: `llama-server -m <Spark-X2.5-4B-Q8_0.gguf> --port 8080 -c 16384 --jinja`, then `ARJUN_SPARK_URL=http://127.0.0.1:8080/v1 ARJUN_SPARK_MODEL_ID=orchestrator.spark-x2-5-4b cargo test --manifest-path src-tauri/Cargo.toml --test agent_runtime spark_ -- --ignored --nocapture` |
+| **Parent-lease suspension for model-switched children** | P03 is not built. A child routed to another model is serialised on the card by `subagents::scheduling`; the coordinator's model stays loaded, and each job's `lease` says so. On an 8 GB card that is the spill P03 exists to prevent. | P03 |
+| Independent review of a real deliverable | The artifact-reviewer fallback cannot open a conversation artifact, so a review of a produced note does not pass here (pinned by a test). | P10 |
+| Background settlement and context | A job that settles between the coordinator's calls reaches its compiled context at its next orchestrator call, through the plan published on that call's receipt. | P03 (context refresh) |
+| `completion::children.contract_honoured` | Still calls a calculation check uncited, although its findings rest on admitted receipts; the plan criterion does not. | P08 |
+| Skills in the child loop | Pinned on the packet, not loaded. | P06–P13 |
+| Windows target, installed app | Not run there; not rebuilt or redeployed. | P16 |
+
+## P05 close-out
+
+- **Implemented** — a typed, versioned, append-only plan changed only by
+  validated patches and settled only by receipts; background jobs with pinned
+  definitions, bounded retries, no-progress detection, concurrency limits,
+  deadlines, prerequisite and memory waits; writer jobs under the existing
+  approvals; status, cancel and independent review; correction, stop and crash
+  propagation; plan publication to shared memory; completion from backend
+  criteria.
+- **Wired** — the five tools through every layer P01 lists; `decide`
+  escalation; steer and startup recovery in the commands; the manager's stop
+  table in `lib.rs`; `capability.search`; the Agents page and one read-only
+  command.
+- **Tested** — the table above, on the production `authorize` → `execute` path,
+  with the production workers, and across the real Node process boundary;
+  mutation-checked.
+- **Unverified or blocked** — the Spark-driven run; P03's lease suspension.
+- **Remaining** — nothing else in P05's scope.
+
+**Exact next step:** P03 — context assembly, model scheduling and durable
+handoff: the parent-lease suspension P05 records as open (`delegation::lease_decision`
+names the seam), role-scoped tool loading for P05-OBS-1, and context refresh
+for jobs that settle between rounds.

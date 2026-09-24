@@ -1,0 +1,12 @@
+$ cargo test --manifest-path src-tauri/Cargo.toml --test agent_runtime a_coordinating_model -- --nocapture
+     Running tests/agent_runtime.rs (target/debug/deps/agent_runtime-e6ab37dc075af3a6)
+running 1 test
+P05 routed tool calls (tool_succeeded, in order): ["task.plan_update", "agent.delegate", "agent.status"]
+P05 child: {"childId":"3dc0797f-3617-47cd-91c9-91283011ff8b","complete":true,"confidence":1.0,"evidenced":1,"findings":1,"modelId":"fixture-coordinator","profile":"knowledge-retriever","published":["mi-0588277b-85cc-4337-ab56-eabaee152eea"],"resultHash":"af8996b3b857aaf1c40b9d6237bd54bebfec53b73e1e2b17b0d1de2b05a1ebed","status":"completed","turnsUsed":1,"uncertainty":0}
+P05 plan v3: Plan v3 — goal: Report the vessel's commissioning tag with its source
+- find delegate [knowledge-retriever]: Find the tag — completed (attempts 1/2)
+    last receipt: job job-f988aab7c88f completed — knowledge-retriever finished — 1 finding(s), 1 citing a source, 1 published
+    outputs: mi-0588277b-85cc-4337-ab56-eabaee152eea#r1
+P05 job: {"jobId":"job-f988aab7c88f","runId":"run-1","stepId":"find","role":"knowledge-retriever","mode":"readOnly","attempt":1,"childId":"3dc0797f-3617-47cd-91c9-91283011ff8b","status":"completed","definitionId":"knowledge-retriever","definitionVersion":null,"definitionOrigin":"bundled-profile","modelId":"fixture-coordinator","parentModelId":"fixture-coordinator","lease":"shares the coordinator's model fixture-coordinator; no second model is loaded","objectiveSha256":"300da34fce04684a1811aef367f291a4ac36ca3f7fc014200428f417618fdc13","deadlineAt":"2026-09-24T18:07:46.919364966+00:00","createdAt":"2026-09-24T18:06:46.919373232+00:00","settledAt":"2026-09-24T18:06:46.935972872+00:00","result":{"artifacts":[],"artifactsAccepted":null,"evidenced":1,"findings":1,"graphRevision":3,"kept":[{"evidence":["commissioning-report.pdf — Commissioning, page 4"],"statement":"commissioning-report.pdf — Commissioning, page 4 bears on this question."}],"missing":[],"published":["mi-0588277b-85cc-4337-ab56-eabaee152eea#r1"],"status":"completed","subagentStoppedSeq":7,"summary":"knowledge-retriever finished — 1 finding(s), 1 citing a source, 1 published","superseded":false},"resultHash":"af8996b3b857aaf1c40b9d6237bd54bebfec53b73e1e2b17b0d1de2b05a1ebed"}
+test a_coordinating_model_plans_delegates_and_reads_a_job_through_the_real_runtime ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.56s

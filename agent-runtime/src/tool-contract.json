@@ -5,6 +5,127 @@
     {
       "aliases": [],
       "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::delegation::cancel",
+      "maxResponseBytes": 4096,
+      "name": "agent.cancel",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "reason"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "job"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 15
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "rustDeadline",
+      "effect": "reversible",
+      "handler": "agent_runtime::delegation::delegate, then SubagentManager::spawn",
+      "maxResponseBytes": 12288,
+      "name": "agent.delegate",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "deliverable"
+        },
+        {
+          "kind": "list",
+          "name": "allowed_tools"
+        },
+        {
+          "kind": "list",
+          "name": "memory_items"
+        },
+        {
+          "kind": "integer",
+          "name": "after_revision"
+        },
+        {
+          "kind": "list",
+          "name": "documents"
+        },
+        {
+          "kind": "list",
+          "name": "files"
+        },
+        {
+          "kind": "list",
+          "name": "expressions"
+        },
+        {
+          "kind": "list",
+          "name": "artifacts"
+        },
+        {
+          "kind": "integer",
+          "name": "deadline_seconds"
+        },
+        {
+          "kind": "integer",
+          "name": "wait_seconds"
+        }
+      ],
+      "output": "childResult",
+      "permission": "searchKnowledge",
+      "prerequisites": [
+        {
+          "checkedAt": "catalogue",
+          "requires": "subagentWorker"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "modelRegistry"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "step"
+        },
+        {
+          "kind": "text",
+          "name": "role"
+        },
+        {
+          "kind": "text",
+          "name": "objective"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
       "cancellation": "rustDeadline",
       "effect": "reversible",
       "handler": "LocalToolRunner::delegate_to_subagent, then SubagentManager::spawn",
@@ -66,6 +187,39 @@
         "safeToRetry": true
       },
       "route": "runner",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::delegation::status",
+      "maxResponseBytes": 12288,
+      "name": "agent.status",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "job"
+        },
+        {
+          "kind": "integer",
+          "name": "wait_seconds"
+        }
+      ],
+      "output": "childResult",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 120
     },
@@ -1601,6 +1755,86 @@
       "route": "runner",
       "sideEffecting": false,
       "timeoutSeconds": 5
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::delegation::plan_update",
+      "maxResponseBytes": 8192,
+      "name": "task.plan_update",
+      "network": "none",
+      "optional": [],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "integer",
+          "name": "base_version"
+        },
+        {
+          "kind": "list",
+          "name": "operations"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "rustDeadline",
+      "effect": "reversible",
+      "handler": "agent_runtime::delegation::request_review, then artifacts::validation and SubagentManager::spawn",
+      "maxResponseBytes": 12288,
+      "name": "task.request_review",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "criteria"
+        },
+        {
+          "kind": "list",
+          "name": "artifacts"
+        }
+      ],
+      "output": "childResult",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "catalogue",
+          "requires": "subagentWorker"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "step"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
     },
     {
       "aliases": [

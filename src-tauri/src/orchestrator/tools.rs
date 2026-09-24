@@ -234,6 +234,20 @@ pub enum ToolName {
     ArtifactRegisterVersion,
     /// A targeted edit that keeps every other part of the file as it was.
     ArtifactEdit,
+    // -- P05: the orchestrator's plan and its delegation tools. ------------
+    /// A patch to the run's typed plan, against the version the model read.
+    TaskPlanUpdate,
+    /// A narrowly scoped job for a specialist, bound to a plan step. A role
+    /// that writes waits for a person's approval (escalated in Rust); a
+    /// read-only role starts without asking.
+    AgentDelegate,
+    /// Where a dispatched job stands, optionally waiting a bounded time.
+    AgentStatus,
+    /// Stops a dispatched job.
+    AgentCancel,
+    /// Backend acceptance checks and an independent reviewer over a step's
+    /// outputs.
+    TaskRequestReview,
 }
 
 impl ToolName {
@@ -281,6 +295,11 @@ impl ToolName {
         ToolName::ArtifactResolveEvidence,
         ToolName::ArtifactRegisterVersion,
         ToolName::ArtifactEdit,
+        ToolName::TaskPlanUpdate,
+        ToolName::AgentDelegate,
+        ToolName::AgentStatus,
+        ToolName::AgentCancel,
+        ToolName::TaskRequestReview,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -329,6 +348,11 @@ impl ToolName {
             ToolName::ArtifactResolveEvidence => "artifact.resolve_evidence",
             ToolName::ArtifactRegisterVersion => "artifact.register_version",
             ToolName::ArtifactEdit => "artifact.edit",
+            ToolName::TaskPlanUpdate => "task.plan_update",
+            ToolName::AgentDelegate => "agent.delegate",
+            ToolName::AgentStatus => "agent.status",
+            ToolName::AgentCancel => "agent.cancel",
+            ToolName::TaskRequestReview => "task.request_review",
         }
     }
 
@@ -390,6 +414,12 @@ impl ToolName {
             | ToolName::ArtifactResolveEvidence
             | ToolName::ArtifactRegisterVersion
             | ToolName::ArtifactEdit => None,
+            // Introduced namespaced by P05.
+            ToolName::TaskPlanUpdate
+            | ToolName::AgentDelegate
+            | ToolName::AgentStatus
+            | ToolName::AgentCancel
+            | ToolName::TaskRequestReview => None,
         }
     }
 
@@ -531,7 +561,9 @@ impl ToolName {
             | ToolName::ArtifactValidate
             | ToolName::ArtifactRender
             | ToolName::ArtifactDiff
-            | ToolName::ArtifactResolveEvidence => true,
+            | ToolName::ArtifactResolveEvidence
+            // Reads the job table; waiting is not writing.
+            | ToolName::AgentStatus => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -552,6 +584,12 @@ impl ToolName {
             // Publishing a version and writing a new one.
             | ToolName::ArtifactRegisterVersion
             | ToolName::ArtifactEdit => false,
+            // Each changes the run's plan or its jobs: a new plan version, a
+            // worker started or stopped, a review receipt recorded.
+            ToolName::TaskPlanUpdate
+            | ToolName::AgentDelegate
+            | ToolName::AgentCancel
+            | ToolName::TaskRequestReview => false,
         }
     }
 
@@ -603,6 +641,11 @@ impl ToolName {
             ToolName::ArtifactResolveEvidence => "check what an artifact's citations rest on",
             ToolName::ArtifactRegisterVersion => "register an artifact version as a candidate or publish it as final",
             ToolName::ArtifactEdit => "change named parts of an artifact, keeping the rest as it is",
+            ToolName::TaskPlanUpdate => "change the task's plan",
+            ToolName::AgentDelegate => "hand a scoped job to a specialist agent",
+            ToolName::AgentStatus => "check on a delegated job",
+            ToolName::AgentCancel => "stop a delegated job",
+            ToolName::TaskRequestReview => "have a step's outputs checked and independently reviewed",
         }
     }
 
@@ -648,6 +691,22 @@ impl ToolName {
                 "`artifact` names the exact version being edited (art-…@N). `edits` is a list of ",
                 "{locator, find, replace}; locators come from artifact.read_version. `find` must ",
                 "occur once inside that unit; omit it to replace a unit held in one run.",
+            )),
+            ToolName::TaskPlanUpdate => Some(concat!(
+                "`base_version` is the plan version you last read (0 to create the plan). ",
+                "`operations` is a list of {op, ...}: set_goal{text} (creation only), ",
+                "add_constraint{text}, add_step{id, title, kind: direct|delegate|review, role, ",
+                "depends_on, acceptance, inputs, max_attempts}, update_step, skip_step{id, reason}, ",
+                "reopen_step{id, reason}, claim_receipt{id, event_seq}, record_decision{text, ",
+                "evidence}, add_question{text}, resolve_question{id, answer}. You cannot mark a ",
+                "step done: receipts do.",
+            )),
+            ToolName::AgentDelegate => Some(concat!(
+                "`step` is a delegate step in the plan whose prerequisites are complete; `role` ",
+                "and `objective` say who and what. Optional: `deliverable`, `allowed_tools` (a ",
+                "subset of the role's), `memory_items` (mi-…#rN that must exist first), ",
+                "`documents`, `files`, `expressions`, `artifacts`, `deadline_seconds` and ",
+                "`wait_seconds` (at most 100; 0 returns at once with a job id for agent.status).",
             )),
             ToolName::ArtifactRegisterVersion => Some(concat!(
                 "`stage` is \"final\" to publish an exact version (art-…@N) whose latest ",
@@ -1582,6 +1641,97 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             needs_approval: false,
             // A child runs a whole loop of its own.
             timeout: Duration::from_secs(120),
+            ..defaults(name)
+        },
+        // -- P05 ------------------------------------------------------------
+        ToolName::TaskPlanUpdate => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "base_version", kind: Integer },
+                ArgumentSpec { name: "operations", kind: List },
+            ],
+            // The plan is this run's own record, versioned and append-only.
+            // Changing it reaches nothing outside the task and cannot mark
+            // anything done, so nobody is asked.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::AgentDelegate => ToolSpec {
+            // The floor, as for the read-only form: the child's own
+            // entitlement is re-derived from the inherited policy.
+            permission: SearchKnowledge,
+            arguments: &[
+                ArgumentSpec { name: "step", kind: Text },
+                ArgumentSpec { name: "role", kind: Text },
+                ArgumentSpec { name: "objective", kind: Text },
+            ],
+            optional_arguments: &[
+                ArgumentSpec { name: "deliverable", kind: Text },
+                ArgumentSpec { name: "allowed_tools", kind: List },
+                ArgumentSpec { name: "memory_items", kind: List },
+                ArgumentSpec { name: "after_revision", kind: Integer },
+                ArgumentSpec { name: "documents", kind: List },
+                ArgumentSpec { name: "files", kind: List },
+                ArgumentSpec { name: "expressions", kind: List },
+                ArgumentSpec { name: "artifacts", kind: List },
+                ArgumentSpec { name: "deadline_seconds", kind: Integer },
+                ArgumentSpec { name: "wait_seconds", kind: Integer },
+            ],
+            // Automatic *as a class*, and escalated per call: the runtime's
+            // `decide` asks a person before any job whose role writes
+            // (`agent_runtime::delegation::approval_needed`), through the same
+            // approval queue a direct write uses, and the handler refuses a
+            // writer job whose call carries no approval. A read-only job starts
+            // without asking, as `agent.delegate_readonly` does.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            // Bounded in Rust below this: `wait_seconds` is capped at 100 and
+            // a job that outlives the wait is reported running, not abandoned.
+            timeout: Duration::from_secs(120),
+            max_response_bytes: 12 * 1024,
+            ..defaults(name)
+        },
+        ToolName::AgentStatus => ToolSpec {
+            permission: UseModel,
+            arguments: &[],
+            optional_arguments: &[
+                ArgumentSpec { name: "job", kind: Text },
+                ArgumentSpec { name: "wait_seconds", kind: Integer },
+            ],
+            // `wait_seconds` is capped at 100 in the handler.
+            timeout: Duration::from_secs(120),
+            max_response_bytes: 12 * 1024,
+            ..defaults(name)
+        },
+        ToolName::AgentCancel => ToolSpec {
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "job", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "reason", kind: Text }],
+            // Stopping work is always permitted to whoever started it.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            timeout: Duration::from_secs(15),
+            max_response_bytes: 4 * 1024,
+            ..defaults(name)
+        },
+        ToolName::TaskRequestReview => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "step", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "criteria", kind: Text },
+                ArgumentSpec { name: "artifacts", kind: List },
+            ],
+            // Validation rungs and a read-only reviewer: nothing it does writes
+            // a deliverable, so nobody is asked.
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            // The validation ladder is bounded in Rust by the renderer's own
+            // ceiling, and the reviewer child by a 40-second deadline.
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            max_response_bytes: 12 * 1024,
             ..defaults(name)
         },
         ToolName::SovereigntyGetEvidence => ToolSpec {

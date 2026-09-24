@@ -951,3 +951,61 @@ mod tests {
         assert_eq!(first.definition_version, second.definition_version);
     }
 }
+
+/// One job the orchestrator dispatched, as the Agents page shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorJobView {
+    #[serde(flatten)]
+    pub job: crate::agent_runtime::events::plans::JobRecord,
+    /// The step's status in the newest plan version, and its note.
+    pub step_status: Option<String>,
+    pub step_note: Option<String>,
+    pub plan_version: Option<u32>,
+}
+
+/// The coordinator's recent delegated jobs (P05).
+///
+/// Read from the durable job table and each run's newest plan version, so what
+/// the page shows is what the backend recorded -- the definition version each
+/// job was pinned to, its lease decision, its settled status -- and not a
+/// progress line. Scoped to runs the signed-in person started; an
+/// administrator sees every run's jobs, as the Tasks screen does.
+#[tauri::command]
+pub async fn agent_orchestrator_jobs(
+    limit: Option<u32>,
+    session: State<'_, CurrentSession>,
+    events: State<'_, crate::commands::agent::TaskEvents>,
+) -> Result<Vec<OrchestratorJobView>, String> {
+    let signed_in = require_session(&session)?;
+    let administrator = signed_in.user.roles.contains(&crate::identity::Role::Administrator);
+    let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
+    let mut plans: std::collections::HashMap<String, Option<crate::agent_runtime::task_plan::TaskPlan>> =
+        std::collections::HashMap::new();
+    let mut owners: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for job in events.recent_jobs(limit * 2)? {
+        let owner = owners
+            .entry(job.run_id.clone())
+            .or_insert_with(|| events.snapshot(&job.run_id).ok().flatten().map(|snapshot| snapshot.actor))
+            .clone();
+        if !administrator && owner.as_deref() != Some(signed_in.user.id.as_str()) {
+            continue;
+        }
+        let plan = plans
+            .entry(job.run_id.clone())
+            .or_insert_with(|| events.latest_plan(&job.run_id).ok().flatten())
+            .clone();
+        let step = plan.as_ref().and_then(|plan| plan.step(&job.step_id).cloned());
+        out.push(OrchestratorJobView {
+            step_status: step.as_ref().map(|step| step.status.as_str().to_string()),
+            step_note: step.and_then(|step| step.note),
+            plan_version: plan.map(|plan| plan.version),
+            job,
+        });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}

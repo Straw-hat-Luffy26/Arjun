@@ -1,0 +1,39 @@
+M1 writer job without a recorded approval is refused
+  mutated: src/agent_runtime/delegation.rs
+  test: agent_runtime::delegation::tests::writer_jobs_need_a_person
+  exit: 101
+  test agent_runtime::delegation::tests::writer_jobs_need_a_person_and_never_come_through_the_read_only_alias ... FAILED
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.94s
+  restored: exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.53s
+
+M2 a completed child with nothing cited is not accepted
+  mutated: src/agent_runtime/task_plan.rs
+  test: agent_runtime::task_plan::tests::a_completed_status_with_nothing_cited_is_partial_not_done
+  exit: 101
+  test agent_runtime::task_plan::tests::a_completed_status_with_nothing_cited_is_partial_not_done ... FAILED
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.29s
+  restored: exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.00s
+
+M3 a dependent step waits for its prerequisite
+  mutated: src/agent_runtime/delegation.rs
+  test: agent_runtime::delegation::tests::a_dependent_two_specialist
+  exit: 101
+  test agent_runtime::delegation::tests::a_dependent_two_specialist_plan_runs_in_order_on_receipts ... FAILED
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.58s
+  restored: exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.27s
+
+M4 a stopped job is stopped even when its worker does not look
+  mutated: src/subagents/manager.rs
+  test: agent_runtime::delegation::tests::agent_cancel_stops
+  exit: 101
+  test agent_runtime::delegation::tests::agent_cancel_stops_a_running_job_and_the_step_can_be_reopened ... FAILED
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 10.40s
+  restored: exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 2.31s
+
+M5 an attempt a correction superseded is not charged
+  mutated: src/agent_runtime/task_plan.rs
+  test: agent_runtime::task_plan::tests::a_job_superseded_by_a_correction_is_not_charged
+  exit: 101
+  test agent_runtime::task_plan::tests::a_job_superseded_by_a_correction_is_not_charged ... FAILED
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.26s
+  restored: exit 0 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2832 filtered out; finished in 0.00s

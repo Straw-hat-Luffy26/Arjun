@@ -123,8 +123,8 @@ impl SpawnRefusal {
             }
             SpawnRefusal::NeedsWriterDelegation { key, isolation } => format!(
                 "{key} is declared {isolation}: it writes files or runs code, so a read-only \
-                 delegation cannot start it. Writer delegation needs a person's approval and \
-                 is not offered to the model in this build. Nothing was started."
+                 delegation cannot start it. A job for a role that writes goes through \
+                 agent.delegate, which asks a person first. Nothing was started."
             ),
         }
     }
@@ -232,6 +232,21 @@ pub struct Dispatch {
     /// Which attempt at the parent run is sending this child. Empty when the
     /// parent has no checkpoint yet.
     pub attempt_id: String,
+    /// The child's id, when the caller must be able to name it -- and stop it
+    /// -- before it finishes. Generated here when absent.
+    pub child_id: Option<String>,
+    /// What else the work is keyed on, beyond the run, role, objective and
+    /// inputs. A plan step and its attempt number, for a job: the same
+    /// objective under two steps is two pieces of work, and a retry of a
+    /// failed attempt must not be answered with the failure it is retrying.
+    /// Empty keeps the key every existing caller computes.
+    pub key_scope: String,
+    /// Stops the child when cancelled. Watched alongside the run's own stop, so
+    /// either ends it.
+    pub cancel: Option<crate::agent_runtime::cancellation::CancelToken>,
+    /// A deadline tighter than the definition's own limit. Never looser: the
+    /// shorter of the two applies.
+    pub deadline: Option<std::time::Duration>,
 }
 
 /// What a delegation lets a child do to the world.
@@ -321,7 +336,40 @@ impl Dispatch {
         self.attempt_id = attempt_id.into();
         self
     }
+
+    /// Gives the child an id chosen by the caller.
+    pub fn as_child(mut self, child_id: impl Into<String>) -> Self {
+        self.child_id = Some(child_id.into());
+        self
+    }
+
+    /// Keys the work on `scope` as well. See [`Dispatch::key_scope`].
+    pub fn scoped_to(mut self, scope: impl Into<String>) -> Self {
+        self.key_scope = scope.into();
+        self
+    }
+
+    /// Lets the caller stop the child.
+    pub fn stoppable(mut self, token: crate::agent_runtime::cancellation::CancelToken) -> Self {
+        self.cancel = Some(token);
+        self
+    }
+
+    /// Bounds the child more tightly than its definition does.
+    pub fn within(mut self, deadline: std::time::Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
 }
+
+/// How long a stopped child is given to finish on its own before it is
+/// abandoned. A worker checks its stop between steps, so this is the length of
+/// one step, not a second deadline.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How often a running child's stop signals are looked at. The run's stop is a
+/// table lookup rather than a notification, so it is polled.
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// The Rust side of subagents.
 pub struct SubagentManager {
@@ -342,6 +390,9 @@ pub struct SubagentManager {
     exclusive: Arc<Mutex<()>>,
     /// Idempotency key to slot.
     slots: Mutex<BTreeMap<String, Slot>>,
+    /// The table a person's Stop lands in. Watched while a child runs, so a
+    /// stopped task stops its children even when a worker does not look.
+    cancellations: Option<Arc<crate::agent_runtime::cancellation::RunCancellations>>,
 }
 
 impl SubagentManager {
@@ -357,7 +408,24 @@ impl SubagentManager {
             readers: Arc::new(Semaphore::new(MAX_CONCURRENT_READERS)),
             exclusive: Arc::new(Mutex::new(())),
             slots: Mutex::new(BTreeMap::new()),
+            cancellations: None,
         }
+    }
+
+    /// Watches `cancellations` for the parent run and for each child.
+    pub fn with_cancellations(
+        mut self,
+        cancellations: Arc<crate::agent_runtime::cancellation::RunCancellations>,
+    ) -> Self {
+        self.cancellations = Some(cancellations);
+        self
+    }
+
+    /// The stop table this manager watches, when it was given one.
+    pub fn cancellations(
+        &self,
+    ) -> Option<Arc<crate::agent_runtime::cancellation::RunCancellations>> {
+        self.cancellations.clone()
     }
 
     /// Reads each dispatch's definition from `source` rather than from the
@@ -475,7 +543,16 @@ impl SubagentManager {
         dispatch: &Dispatch,
     ) -> Result<Spawned, SpawnRefusal> {
         let run_id = inherited_run_id(inherited);
-        let key = super::packet::derive_idempotency_key(&run_id, profile_name, objective, &inputs);
+        let key = if dispatch.key_scope.is_empty() {
+            super::packet::derive_idempotency_key(&run_id, profile_name, objective, &inputs)
+        } else {
+            super::packet::derive_idempotency_key(
+                &run_id,
+                profile_name,
+                &format!("{objective}\u{1e}{}", dispatch.key_scope),
+                &inputs,
+            )
+        };
 
         // The slot is taken before anything else, so a second attempt at this
         // work waits here rather than starting a second child.
@@ -502,7 +579,11 @@ impl SubagentManager {
         // is wasteful and for anything with an effect is the duplicate this
         // ledger exists to prevent. So the intent goes on disk first, keyed the
         // same way, through the same table every side-effecting tool uses.
-        let child_id = uuid::Uuid::new_v4().to_string();
+        let child_id = dispatch
+            .child_id
+            .clone()
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         // Resolved exactly once for this child, and what is resolved is copied
         // into the packet below. Nothing after this line reads the registry, so
         // an edit saved while this child runs cannot change what it runs under.
@@ -518,7 +599,7 @@ impl SubagentManager {
         let policy = enforce_mode(&resolved, policy, dispatch.mode)?;
         let profile = resolved.profile.clone();
 
-        if let Some(recalled) = self.recall(&run_id, &key, objective) {
+        if let Some(recalled) = self.recall(&run_id, &key, objective, dispatch.mode) {
             *held = Some(recalled.clone());
             return Ok(Spawned::Existing(recalled));
         }
@@ -590,8 +671,40 @@ impl SubagentManager {
             _writer = Some(self.exclusive.clone().lock_owned().await);
         }
 
-        let budget = std::time::Duration::from_secs(policy.limits.max_duration_seconds.max(1));
-        let outcome = tokio::time::timeout(budget, worker.run(&packet, &policy)).await;
+        let defined = std::time::Duration::from_secs(policy.limits.max_duration_seconds.max(1));
+        let budget = dispatch.deadline.map_or(defined, |deadline| deadline.min(defined));
+        let mut work = Box::pin(tokio::time::timeout(budget, worker.run(&packet, &policy)));
+
+        // Raced against every way this child can be stopped: its own token, its
+        // id in the stop table, and the run it belongs to. A worker checks its
+        // stop between steps; this is what makes a stop hold when one step is
+        // long, or when the worker does not look at all.
+        let stopped = tokio::select! {
+            outcome = &mut work => Err(outcome),
+            reason = self.stop_signal(dispatch, &run_id, &child_id) => Ok(reason),
+        };
+        let outcome = match stopped {
+            Err(outcome) => outcome,
+            Ok(reason) => {
+                if let Some(table) = &self.cancellations {
+                    table.cancel(&child_id);
+                }
+                // One step's grace. A worker that finishes the work it was on
+                // is reported as it finished; one that does not is cancelled.
+                match tokio::time::timeout(STOP_GRACE, &mut work).await {
+                    Ok(Ok(Ok(finished))) if finished.status.is_complete() => Ok(Ok(finished)),
+                    _ => Ok(Ok(ChildResult::ended(
+                        &child_id,
+                        &profile.name,
+                        ChildStatus::Cancelled,
+                        profile.required_schema,
+                        Vec::new(),
+                        reason,
+                        0,
+                    ))),
+                }
+            }
+        };
 
         let result = match outcome {
             Ok(Ok(mut produced)) => {
@@ -647,24 +760,65 @@ impl SubagentManager {
         Ok(Spawned::Fresh(result))
     }
 
+    /// Resolves when this child has been told to stop, with the reason.
+    async fn stop_signal(&self, dispatch: &Dispatch, run_id: &str, child_id: &str) -> String {
+        let mut polls: u32 = 0;
+        loop {
+            // The run's durable ending, looked at about once a second: a job
+            // the coordinator left running when its run finished has nobody
+            // left to report to, and is stopped rather than orphaned.
+            if polls % 20 == 0 && self.events.ending(run_id).is_some() {
+                return "the run it belonged to ended before it finished".to_string();
+            }
+            polls = polls.wrapping_add(1);
+            if dispatch.cancel.as_ref().is_some_and(|token| token.is_cancelled()) {
+                return "it was stopped by the run that dispatched it before it finished"
+                    .to_string();
+            }
+            if let Some(table) = &self.cancellations {
+                if table.is_cancelled(run_id) {
+                    return "the task it belonged to was stopped before it finished".to_string();
+                }
+                if table.is_cancelled(child_id) {
+                    return "it was stopped before it finished".to_string();
+                }
+            }
+            match &dispatch.cancel {
+                Some(token) => {
+                    tokio::select! {
+                        _ = token.cancelled() => {}
+                        _ = tokio::time::sleep(STOP_POLL) => {}
+                    }
+                }
+                None => tokio::time::sleep(STOP_POLL).await,
+            }
+        }
+    }
+
     /// What the durable ledger already knows about this piece of work.
     ///
     /// `None` means "go ahead", and the intent has been recorded. `Some` is an
     /// answer from a previous attempt — a settled result to hand back, or a
     /// refusal for the two cases where carrying on would be wrong.
-    fn recall(&self, run_id: &str, key: &str, objective: &str) -> Option<ChildResult> {
+    fn recall(
+        &self,
+        run_id: &str,
+        key: &str,
+        objective: &str,
+        mode: DelegationMode,
+    ) -> Option<ChildResult> {
         use crate::agent_runtime::events::EffectLookup;
 
         let fingerprint = crate::agent_runtime::events::args_fingerprint(&json!({
             "objective": objective,
         }));
-        match self.events.begin_effect(
-            run_id,
-            key,
-            ToolName::AgentDelegateReadonly.as_str(),
-            &fingerprint,
-            key,
-        ) {
+        // Recorded under the tool that can do what this child may do, so the
+        // effect ledger says a writer was started when one was.
+        let tool = match mode {
+            DelegationMode::ReadOnly => ToolName::AgentDelegateReadonly,
+            DelegationMode::Writer => ToolName::AgentDelegate,
+        };
+        match self.events.begin_effect(run_id, key, tool.as_str(), &fingerprint, key) {
             // Never seen. The intent is now on disk and the child may start.
             EffectLookup::Fresh => None,
             // Done before. The recorded ending, rebuilt as a typed result so

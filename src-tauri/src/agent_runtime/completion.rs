@@ -183,6 +183,14 @@ pub struct CompletionInputs {
     /// it was asked for, with evidence or artifacts behind it, and did it
     /// publish anything a later step can actually read. See [`ChildOutcome`].
     pub children: Vec<ChildOutcome>,
+    /// The orchestrator's plan as it stood at the end, when the run kept one
+    /// (P05). `None` for a run that never planned -- a simple question needs
+    /// no plan, and is not failed for lacking one.
+    ///
+    /// The plan's statuses are written only from receipts (settled jobs,
+    /// claimed tool events, reviews), so reading them here is reading the
+    /// backend's record, not the coordinator's account of its work.
+    pub task_plan: Option<super::task_plan::PlanGate>,
 }
 
 /// What one delegated worker came back with, as the parent sees it.
@@ -520,6 +528,72 @@ pub fn verify(
         });
     }
 
+    // -- The orchestrator's plan ------------------------------------------
+    //
+    // "Done" is the plan's steps settled by receipts and, where a deliverable
+    // is involved, an independent review that passed -- never the coordinator
+    // saying it finished.
+    if let Some(gate) = &inputs.task_plan {
+        let unsettled: Vec<&String> = gate
+            .unfinished
+            .iter()
+            .filter(|step| !step.contains("(running)"))
+            .collect();
+        criteria.push(Criterion {
+            criterion_id: "taskplan.steps_accepted".into(),
+            status: if unsettled.is_empty() {
+                CriterionStatus::Passed
+            } else {
+                CriterionStatus::Failed
+            },
+            evidence: if unsettled.is_empty() {
+                format!(
+                    "{} of {} plan step(s) complete by receipt at plan version {}",
+                    gate.completed, gate.steps, gate.version
+                )
+            } else {
+                format!(
+                    "plan version {} is unfinished: {}",
+                    gate.version,
+                    unsettled.iter().map(|step| step.as_str()).collect::<Vec<_>>().join("; ")
+                )
+            },
+        });
+        criteria.push(Criterion {
+            criterion_id: "taskplan.no_job_running".into(),
+            status: if gate.running.is_empty() {
+                CriterionStatus::Passed
+            } else {
+                CriterionStatus::Unknown
+            },
+            evidence: if gate.running.is_empty() {
+                "no delegated job was still running".into()
+            } else {
+                format!(
+                    "step(s) {} still had a job running when the run ended",
+                    gate.running.join(", ")
+                )
+            },
+        });
+        criteria.push(Criterion {
+            criterion_id: "taskplan.independent_review".into(),
+            status: match (gate.needs_review, gate.reviewed) {
+                (false, _) => CriterionStatus::NotApplicable,
+                (true, true) => CriterionStatus::Passed,
+                (true, false) => CriterionStatus::Failed,
+            },
+            evidence: match (gate.needs_review, gate.reviewed) {
+                (false, _) => "no step asks for a review or an accepted artifact".into(),
+                (true, true) => "every step that asks for review has a passed review receipt".into(),
+                (true, false) => {
+                    "a step asks for review or an accepted artifact and no independent review \
+                     passed"
+                        .into()
+                }
+            },
+        });
+    }
+
     // A run holding an undecided approval has not finished; it stopped.
     criteria.push(Criterion {
         criterion_id: "approvals.none_pending".into(),
@@ -625,6 +699,7 @@ mod tests {
             artifacts: vec![("approval-note.docx".into(), true)],
             grounding_ready: Some(true),
             has_answer: true,
+            task_plan: None,
         }
     }
 

@@ -1072,6 +1072,135 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       source: Type.String({ description: "The complete program.", minLength: 1 }),
     }),
   },
+  // ── P05: the orchestrator's plan and delegation tools ───────────────────
+  //
+  // Before the P04 family, so under a tight budget the artifact tools are
+  // dropped first: `task.request_review` runs the validation ladder itself.
+  {
+    name: "task.plan_update",
+    label: "Update the task plan",
+    readOnly: false,
+    description:
+      "Creates or changes this task's plan: goal, constraints, typed steps with dependencies " +
+      "and acceptance, decisions with their evidence, open questions. " +
+      "Use it first on multi-part work, and whenever the plan must change. " +
+      "Do not use it to mark work done: steps are settled only by receipts — a finished job, " +
+      "a claimed tool receipt (claim_receipt), a passed review. " +
+      "Effects: writes the next plan version; completed steps and their receipts cannot be " +
+      "edited, skipped or removed. " +
+      "Limits: 16 steps, 3 attempts per step; base_version must be the version you last read. " +
+      "If it is refused: nothing changed; read the plan it returns and patch that version.",
+    parameters: closed({
+      base_version: Type.Integer({ minimum: 0, description: "The plan version you read; 0 creates the plan." }),
+      operations: Type.Array(
+        Type.Object(
+          { op: Type.String({ description: "set_goal, add_constraint, add_step, update_step, skip_step, reopen_step, claim_receipt, record_decision, add_question or resolve_question." }) },
+          { additionalProperties: true },
+        ),
+        { minItems: 1, maxItems: 24, description: "Each {op, ...fields}; see the tool's argument notes." },
+      ),
+    }),
+  },
+
+  {
+    name: "agent.delegate",
+    label: "Delegate a job to a specialist",
+    readOnly: false,
+    description:
+      "Hands one plan step to a specialist role as a scoped job: objective, deliverable, " +
+      "allowed tools, memory it needs and a deadline. " +
+      "Use it for a delegate step whose prerequisites are complete; capability.search lists " +
+      "the roles and whether each is ready. " +
+      "Do not use it for a question one search answers, or to retry a step without reopening it. " +
+      "Effects: starts a worker narrowed from your own grant. A role that writes waits for a " +
+      "person's approval first; a read-only role does not. " +
+      "Limits: 2 jobs running per task; deadline at most 600 s; wait_seconds at most 100. " +
+      "If it fails, blocks or times out: the step says so; reopen it, change the approach, or " +
+      "report the task unfinished — never present an unfinished job as done.",
+    parameters: closed({
+      step: Type.String({ minLength: 1, description: "The plan step this job is for." }),
+      role: Type.String({ minLength: 1, description: "The specialist role, as capability.search lists it." }),
+      objective: Type.String({ minLength: 1, description: "What the job must establish. It cannot see your conversation." }),
+      deliverable: Type.Optional(Type.String({ description: "What counts as done." })),
+      allowed_tools: Type.Optional(Type.Array(Type.String(), { description: "A subset of the role's tools." })),
+      memory_items: Type.Optional(Type.Array(Type.String(), { description: 'Memory that must exist first: "mi-…#r3".' })),
+      after_revision: Type.Optional(Type.Integer({ minimum: 0, description: "Wait for this shared-memory graph revision." })),
+      documents: Type.Optional(Type.Array(Type.String(), { description: "Documents by documentSha256." })),
+      files: Type.Optional(Type.Array(Type.String(), { description: "Workspace files by relative path." })),
+      expressions: Type.Optional(Type.Array(Type.String(), { description: "Figures to re-derive, with units." })),
+      artifacts: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              id: Type.String({ minLength: 1, description: 'The artifact id, e.g. "art-7@4".' }),
+              revision: Type.Optional(Type.Integer({ minimum: 1 })),
+              sha256: Type.Optional(Type.String()),
+            },
+            { additionalProperties: false },
+          ),
+          { description: "Artifacts at exact revisions." },
+        ),
+      ),
+      deadline_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 600 })),
+      wait_seconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 100, description: "0 returns at once with a job id." })),
+    }),
+  },
+
+  {
+    name: "agent.status",
+    label: "Check a delegated job",
+    readOnly: true,
+    description:
+      "Reports this task's jobs — status, the definition version each ran under, findings with " +
+      "their citations, published memory, what was not done — and the plan. " +
+      "Use it to wait for a running job or to re-read the plan before patching it. " +
+      "Do not use it to poll in a tight loop; pass wait_seconds instead. " +
+      "Effects: none; it only reads. " +
+      "Limits: this task's jobs only; waits at most 100 s. " +
+      "If it names no job: this task dispatched none.",
+    parameters: closed({
+      job: Type.Optional(Type.String({ description: "One job id; omit for all of this task's jobs." })),
+      wait_seconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
+    }),
+  },
+
+  {
+    name: "agent.cancel",
+    label: "Stop a delegated job",
+    readOnly: false,
+    description:
+      "Stops one running job; its step becomes cancelled and can be reopened. " +
+      "Use it when a job is no longer needed or is going the wrong way. " +
+      "Do not use it to undo a finished job — its receipts stay. " +
+      "Effects: the child is stopped within a few seconds and recorded as cancelled. " +
+      "Limits: this task's running jobs only. " +
+      "If it reports the job already ended: nothing was stopped; read agent.status.",
+    parameters: closed({
+      job: Type.String({ minLength: 1, description: "The job id." }),
+      reason: Type.Optional(Type.String()),
+    }),
+  },
+
+  {
+    name: "task.request_review",
+    label: "Request an independent review",
+    readOnly: false,
+    description:
+      "Runs the backend acceptance checks on a step's outputs — format-aware validation of " +
+      "each artifact, currency of each published memory item — then an independent reviewer " +
+      "role, and records the verdict on the plan. " +
+      "Use it before calling a deliverable finished; a step that asks for review is not " +
+      "complete until one passes. " +
+      "Do not use it on a step whose work is not done. " +
+      "Effects: records validations and a review receipt; changes no deliverable. " +
+      "Limits: the reviewer cannot review work its own role produced. " +
+      "If it does not pass: fix the named problem or report the task unfinished.",
+    parameters: closed({
+      step: Type.String({ minLength: 1, description: "The step to review." }),
+      criteria: Type.Optional(Type.String({ description: "What the reviewer should hold it to." })),
+      artifacts: Type.Optional(Type.Array(Type.String(), { description: 'Exact versions to review: "art-7@4".' })),
+    }),
+  },
   // ── P04: the shared artifact, evidence and validation tools ────────────
   //
   // At the end on purpose: with no plan-ordered list to follow, the budget
