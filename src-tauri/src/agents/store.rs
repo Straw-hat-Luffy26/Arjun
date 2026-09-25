@@ -1037,6 +1037,57 @@ mod tests {
         assert!(after.instructions.contains("Document & Vision Analyst"));
     }
 
+    /// P07 extends the shipped knowledge retriever. The same real upgrade as
+    /// the extractor's: 1.0.0 as it shipped, configured, then 1.1.0 — one
+    /// agent, the next version, the settings kept, the retrieval tools granted.
+    #[test]
+    fn the_knowledge_retriever_upgrade_keeps_its_identity_and_its_settings() {
+        use crate::orchestrator::tools::ToolName;
+        let sha = |text: &str| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes()));
+        let old_text = include_str!("testdata/knowledge-retriever-1.0.0.md");
+        let new_text = include_str!("../../../agents/knowledge-retriever.md");
+        let old = crate::subagents::profile::compile(old_text, "knowledge-retriever", &sha(old_text))
+            .expect("1.0.0 compiles");
+        let new = crate::subagents::profile::compile(new_text, "knowledge-retriever", &sha(new_text))
+            .expect("1.1.0 compiles");
+        assert_eq!(old.name, new.name, "the upgrade renamed the agent");
+
+        let (registry, _dir) = registry();
+        let imported = registry.import_bundled(&old).expect("imports 1.0.0");
+        let mut configured = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+        configured.display_name = "SOP finder".into();
+        configured.color = AGENT_PALETTE[2].into();
+        registry
+            .update(&admin(), &imported.agent_id, imported.definition_version, configured)
+            .expect("configured");
+        let before = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+
+        let upgraded = registry.import_bundled(&new).expect("imports 1.1.0");
+        assert_eq!(upgraded.agent_id, imported.agent_id, "a second agent was created");
+        assert_eq!(upgraded.definition_version, before.definition_version + 1);
+        let after = registry
+            .get(&upgraded.agent_id, Visibility::Administrator)
+            .expect("reads");
+        assert_eq!(after.display_name, "SOP finder");
+        assert_eq!(after.color, AGENT_PALETTE[2]);
+        for tool in [
+            ToolName::SearchDocuments,
+            ToolName::KnowledgeHybridSearch,
+            ToolName::LoadMoreEvidence,
+            ToolName::KnowledgeSourceVersion,
+            ToolName::KnowledgeRerank,
+            ToolName::MemoryNeighbours,
+        ] {
+            assert!(after.allowed_tools.contains(&tool), "{} was not granted", tool.as_str());
+        }
+        assert!(after.denied_tools.contains(&ToolName::WriteScopedFile), "the writer denial was lost");
+        assert!(after.instructions.contains("Deterministically"));
+    }
+
     #[test]
     fn a_registry_survives_a_restart() {
         let dir = tempfile::tempdir().expect("temp dir");

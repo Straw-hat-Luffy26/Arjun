@@ -1,0 +1,519 @@
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Grounding`
+  --> src/artifacts/production.rs:29:39
+   |
+29 | use super::verifier::{self, Evidence, Grounding, VerificationReport};
+   |                                       ^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+  --> src/ai_engine/request_context.rs:34:36
+   |
+34 | use std::sync::atomic::{AtomicU64, Ordering};
+   |                                    ^^^^^^^^
+
+warning: unused import: `RoutingPreference`
+  --> src/ai_engine/vision_bridge.rs:52:45
+   |
+52 | use crate::registry::{ModelEntry, Modality, RoutingPreference, Runtime};
+   |                                             ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RawBox`
+  --> src/ai_engine/ocr_stream.rs:31:34
+   |
+31 | use super::ocr_spans::{OcrEvent, RawBox, SpanParser};
+   |                                  ^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1888:9
+     |
+1888 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `from_connections` is never used
+  --> src/sovereignty/observer.rs:55:8
+   |
+46 | impl ObservationReport {
+   | ---------------------- associated function in this implementation
+...
+55 |     fn from_connections(connections: Vec<ObservedConnection>) -> Self {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `is_loopback_addr` is never used
+  --> src/sovereignty/observer.rs:70:4
+   |
+70 | fn is_loopback_addr(addr: &std::net::IpAddr) -> bool {
+   |    ^^^^^^^^^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib) generated 74 warnings (run `cargo fix --lib -p sarathi` to apply 51 suggestions)
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.19s
+     Running tests/retrieval_live.rs (target/debug/deps/retrieval_live-05406b6f2b697d9c)
+
+running 2 tests
+test labelled_retrieval_on_the_target ... ignored, target machine: needs a qualified embedding model
+test qualify_every_installed_embedding_model ... ignored, target machine: needs the installed embedding models and llama-server
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

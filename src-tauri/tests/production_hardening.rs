@@ -222,16 +222,29 @@ fn lexical_and_semantic_retrieval_are_distinguishable() {
         "a keyword hit must be labelled as one"
     );
 
-    // Semantic: the same chunk reached through a stored vector.
-    let vector = vec![1.0f32, 0.0, 0.0, 0.0];
+    // Semantic: the same chunk reached through a stored vector, in a space
+    // keyed by the model's identity.
+    use sarathi_lib::knowledge::embedding::{EmbeddingIdentity, MULTILINGUAL_E5_SMALL};
+    use sarathi_lib::knowledge::index::SearchScope;
+    let identity = EmbeddingIdentity::new("test-embedder", &MULTILINGUAL_E5_SMALL, &"e".repeat(64));
+    index.register_space(&identity).expect("the space registers");
+    let space = identity.space_key();
+    let pending = index
+        .passages_needing_embeddings(&space, 5)
+        .expect("the work list reads");
+    let mut vector = vec![0.0f32; 384];
+    vector[0] = 1.0;
     let stored = index
-        .store_vectors("test-embedder", &[("chunk-1".to_string(), vector.clone())])
+        .store_embeddings(&space, &pending[0].chunk_id, &pending[0].body, &[vector.clone()])
         .expect("vectors store");
-    assert_eq!(stored, 1, "the vector must actually be stored");
+    assert!(stored, "the vector must actually be stored");
 
-    let semantic = index
-        .search_vectors(&session, "test-embedder", &vector, 5)
-        .expect("vector search runs");
+    let semantic: Vec<_> = index
+        .search_dense(&session, &space, &vector, 5, &SearchScope::default())
+        .expect("vector search runs")
+        .into_iter()
+        .map(|hit| hit.result)
+        .collect();
     assert!(
         !semantic.is_empty(),
         "a chunk with a stored vector must be reachable by vector search"
@@ -277,8 +290,14 @@ fn a_semantic_search_with_no_vectors_finds_nothing_rather_than_falling_back() {
         )
         .expect("indexed");
 
+    use sarathi_lib::knowledge::embedding::{EmbeddingIdentity, MULTILINGUAL_E5_SMALL};
+    use sarathi_lib::knowledge::index::SearchScope;
+    let never_ran = EmbeddingIdentity::new("an-embedder-that-never-ran", &MULTILINGUAL_E5_SMALL, &"f".repeat(64));
+    index.register_space(&never_ran).expect("the space registers");
+    let mut query = vec![0.0f32; 384];
+    query[0] = 1.0;
     let nothing = index
-        .search_vectors(&admin(), "an-embedder-that-never-ran", &[1.0, 0.0, 0.0], 5)
+        .search_dense(&admin(), &never_ran.space_key(), &query, 5, &SearchScope::default())
         .expect("the search runs");
     assert!(
         nothing.is_empty(),

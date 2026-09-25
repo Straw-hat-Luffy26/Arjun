@@ -444,10 +444,22 @@ async fn a_child_receives_only_the_tools_the_parent_and_profile_agree_on() {
         .await
         .expect("spawned");
 
-    // The retriever declares one tool, so that is all it gets — even though the
-    // parent could have given it eight.
-    let reported = &spawned.result().findings[0].statement;
-    assert_eq!(reported, "knowledge.search_authorized");
+    // The retriever (1.1.0) declares its six read tools, so that is all it
+    // gets — even though the parent holds every tool there is.
+    let reported: std::collections::BTreeSet<&str> =
+        spawned.result().findings[0].statement.split(',').collect();
+    let declared: std::collections::BTreeSet<&str> = [
+        "knowledge.search_authorized",
+        "knowledge.hybrid_search",
+        "knowledge.load_evidence_region",
+        "knowledge.source_version",
+        "knowledge.rerank",
+        "memory.neighbours",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(reported, declared);
+    assert!(reported.len() < ToolName::ALL.len());
 }
 
 #[test]
@@ -1000,4 +1012,54 @@ fn the_result_hash_covers_the_status_as_well_as_the_findings() {
         "c", "p", ChildStatus::TimedOut, SchemaKind::Retrieval, findings, "late", 1,
     );
     assert_ne!(completed.result_hash, timed_out.result_hash);
+}
+
+// == P07: an embedding model is never a conversational child =============
+
+fn certified(model_id: &str) -> crate::model_recommendation::certified_catalog::PackageCertification {
+    let scores: serde_json::Map<String, serde_json::Value> = [
+        "instructionFollowing", "reasoningQuality", "hallucinationRate", "codingAbility",
+        "mathematicalReasoning", "jsonReliability", "toolCallingAccuracy",
+        "memoryEngineCompatibility", "contextWindowRetention", "responseStability",
+        "chatTemplateCorrectness", "bosEosStopTokenCompliance", "reasoningTagLeakageFilter",
+        "streamingParserStability", "runtimeProcessStability", "restartStatePersistence",
+    ]
+    .iter()
+    .map(|key| (key.to_string(), serde_json::json!(99.0)))
+    .collect();
+    serde_json::from_value(serde_json::json!({
+        "packageId": model_id, "modelId": model_id, "modelName": model_id, "quantLabel": "Q8_0",
+        "backend": "llama.cpp", "tier": "Certified", "confidenceScore": 99.0,
+        "runtimeProfileId": "p", "numericScores": scores,
+        "provenance": {"createdBy": "t", "certifiedBy": "t", "generatedWith": "t",
+                       "runnerVersion": "t", "profileHash": "t", "signature": "t",
+                       "generatedAt": "2026-09-25T00:00:00Z"},
+        "quirksAndNotes": ""
+    }))
+    .expect("a certification record")
+}
+
+/// A certified, cheaper embedding model scoring 99 on everything is still not
+/// chosen as a child's model — for the embedding role or any other.
+#[test]
+fn a_certified_embedding_model_is_never_a_childs_conversational_model() {
+    let embedder = crate::registry::tests::entry("embed-small", 0.6, vec![ModelRole::Embedding]);
+    let ocr = crate::registry::tests::entry("ocr-small", 1.0, vec![ModelRole::DocumentOcr]);
+    let embed_cert = certified("embed-small");
+    let ocr_cert = certified("ocr-small");
+    for role in [ModelRole::Embedding, ModelRole::DocumentOcr, ModelRole::Reasoning] {
+        let decision = certification::choose(
+            role,
+            "model-parent",
+            &[(&embedder, Some(&embed_cert)), (&ocr, Some(&ocr_cert))],
+        );
+        assert_ne!(decision.model_id, "embed-small", "{role:?}: {}", decision.reason);
+    }
+    // The cheaper path still works where it is meant to.
+    let ocr_decision = certification::choose(
+        ModelRole::DocumentOcr,
+        "model-parent",
+        &[(&embedder, Some(&embed_cert)), (&ocr, Some(&ocr_cert))],
+    );
+    assert_eq!(ocr_decision.model_id, "ocr-small");
 }

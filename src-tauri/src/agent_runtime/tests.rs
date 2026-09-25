@@ -42,13 +42,14 @@ pub(super) fn deps_with(
         crate::artifacts::conversation_store::ConversationArtifacts::open(dir.path())
             .expect("the artifact store opens"),
     );
+    let index = Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens"));
     let deps = Arc::new(RuntimeDeps {
         memory_graph: None,
         conversation_artifacts,
         // No registry in these tests: a delegation then refuses by name
         // rather than inventing a model, which is the behaviour under test.
         registry: None,
-        index: Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens")),
+        index: index.clone(),
         session,
         workspaces,
         approvals: Arc::new(ApprovalQueue::new()),
@@ -134,6 +135,10 @@ pub(super) fn deps_with(
         extraction: Arc::new(crate::extraction::service::ExtractionService::without_models(
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
+        )),
+        retrieval: Arc::new(crate::knowledge::service::RetrievalService::lexical_only(
+            index.clone(),
+            "no embedding model in this test",
         )),
     });
     (deps, dir)
@@ -805,10 +810,14 @@ fn the_catalogue_is_exactly_the_tools_the_gateway_knows() {
             "document.render_regions",
             "document.search",
             "knowledge.build_graph",
+            "knowledge.hybrid_search",
             "knowledge.load_evidence_region",
             "knowledge.multimodal_retrieve",
+            "knowledge.rerank",
             "knowledge.search_authorized",
+            "knowledge.source_version",
             "media.extract_findings",
+            "memory.neighbours",
             "memory.promote_approved",
             "memory.recall_authorized",
             "notebook.add_source",

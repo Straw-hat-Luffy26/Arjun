@@ -77,6 +77,21 @@ pub enum InputRef {
     /// revision travel, and B reads the item itself through the graph under its
     /// own clearance. See [`super::graph_io`].
     GraphItem { item_id: String, revision: u64 },
+    /// What a retrieval job may read, pinned when it was queued (P07).
+    ///
+    /// The index clock at queue time and the parent's notebook selection. A
+    /// job that waits behind a model swap reads the corpus it was queued
+    /// against: a document added meanwhile is not read, a version superseded
+    /// meanwhile is read and flagged, and a source withdrawn or revoked
+    /// meanwhile is not read — authorisation is always checked when the job
+    /// runs, never carried from when it was queued.
+    RetrievalScope {
+        pinned_revision: i64,
+        #[serde(default)]
+        notebook_id: Option<String>,
+        #[serde(default)]
+        source_sha256s: Vec<String>,
+    },
 }
 
 impl InputRef {
@@ -95,6 +110,13 @@ impl InputRef {
                 revision,
                 ..
             } => format!("artifact {artifact_id} revision {revision}"),
+            InputRef::RetrievalScope { pinned_revision, notebook_id, source_sha256s } => match notebook_id {
+                Some(notebook) => format!(
+                    "retrieval scope at index revision {pinned_revision}, notebook {notebook} ({} source(s))",
+                    source_sha256s.len()
+                ),
+                None => format!("retrieval scope at index revision {pinned_revision}"),
+            },
             InputRef::GraphItem { item_id, revision } => {
                 format!("shared memory item {item_id} revision {revision}")
             }

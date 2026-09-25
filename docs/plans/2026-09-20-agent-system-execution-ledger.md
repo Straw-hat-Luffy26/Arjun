@@ -36,7 +36,8 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P04 | Shared artifact, evidence and validation tools | **Complete for portable code, the production path and a real render on a Linux machine**; the render/acceptance gate on the Windows target stays open until LibreOffice is provisioned there — see below |
 | P05 | Orchestrator and delegation tools | **Complete for portable code and the production path with a fixture coordinator**; the Spark-driven run and P03's parent-lease suspension are open gates — see below |
 | P06 | Document & Vision Analyst with Unlimited-OCR | **Complete for portable code and the production path with deterministic OCR transport**; every real-model read and the vision probe are the open target gate — see below |
-| P07–P16 | — | Not started |
+| P07 | Knowledge Retriever and local retrieval tools | **Complete for portable code and the production path, keyword retrieval measured and semantic retrieval through deterministic transport**; qualifying and measuring a real embedding model is the open target gate — see below |
+| P08–P16 | — | Not started |
 
 ---
 
@@ -1104,3 +1105,222 @@ quarter-degree steps).
 (`tests/extraction_live.rs`, command above) and record the scores; then P03 —
 context assembly, model scheduling and durable handoff (role-scoped tool loading
 for P06-OBS-1, `--image-max-tokens`, parent-lease suspension).
+
+---
+
+# P07 — The Knowledge Retriever and local retrieval tools
+
+Worked on 2026-09-25 on branch `claude/hopeful-brahmagupta-1eol9d` from HEAD
+`dd740ab` (P06), in the same **Linux cloud container**. It is neither the
+Windows host nor the target machine.
+
+No embedding weights and no `llama-server` exist here, and nothing was
+downloaded. The target has two embedding models installed and registered but
+never measured:
+
+- `Qwen3-Embedding-0.6B-Q8_0` (qwen3, SHA-256 `06507c7b…`);
+- `nomic-embed-text-v2-moe.Q8_0` (nomic-bert-moe, 512 context).
+
+`multilingual-e5-small` is not installed anywhere. Per the prompt ("unless the
+existing deployment already has a suitable verified provider"), none of the
+three is *verified*. So P07 pins a profile for each and ships the qualification
+that verifies whichever the machine has. The semantic half stays off until that
+qualification passes.
+
+**P03 is not started.** The context compiler P07 extends is the one P02 left in
+`agent_runtime/context_compiler.rs`. Raw output: `evidence/agent-system/P07/`
+(index in its `README.md`).
+
+## Found before, or while, building it
+
+Traced from production entry points (`lib.rs`, the command layer, the runtime
+dispatcher and the worker), not from comments:
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | **Nothing wrote the index in production.** `ingest_collection`, `CollectionStore`, `documents::DocumentService`, `index_document`, `supersede` and `invalidate_source` had no production caller. A shipped build could only ever search an empty index. | `knowledge/ingest.rs`, `documents/`, `lib.rs` | The knowledge connector: `CollectionStore` is managed, and `knowledge_collection_save` / `_remove` / `_sync` are commands. `sync_collection` reads a folder through the real document sidecar, versions each source, withdraws what disappeared and tells the memory graph. It has a UI panel. |
+| 2 | A file removed from a collection was reported "retired" but kept answering. | `knowledge/ingest.rs` | `retire_source(Withdrawn)` removes it from every search; its versions stay traceable; `invalidate_source` runs on its memory. |
+| 3 | A collection's `restricted_to_roles` was stored and never enforced in search. | `knowledge/index.rs` | `Clearance::clause` is one authorisation clause used by every read: classification, plus the collection being enabled, plus the role restriction. |
+| 4 | `chunk_vectors` was keyed by chunk id alone, so a second embedding model silently overwrote the first model's vectors, and a query could be compared against vectors of another model or width. | `knowledge/index.rs` | `vector_spaces` + `chunk_embeddings` keyed by space, chunk and window. A space's key includes the profile, the weights hash, the dimension, the pooling and the profile version. Search reads only the space of the embedder asking. |
+| 5 | `plan_launch` had no `--embedding`, so an embedding GGUF would be served as a chat model. | `serving/mod.rs` | Embedding-only entries are launched with `--embedding --pooling <profile's>` and one slot, without the reasoning flags. |
+| 6 | `CHEAPER_ELIGIBLE` included `Embedding`, and the retriever's profile says `model-role: embedding`. A certified embedding model could therefore have been routed to as the retriever's *conversational* child. | `subagents/certification.rs` | Only `DocumentOcr` is eligible, and `choose` skips embedding-only entries. The retriever's child runs on the coordinator's model; the embedding endpoint is a service called inside the worker. |
+| 7 | `sanitise_fts` ANDs every token, so a natural-language question ("What stops the charge pump from cavitating?") matched nothing. | `knowledge/index.rs` | Hybrid keyword search runs an all-terms pass and then an any-term pass without stopwords. `search_authorized` keeps its all-terms contract. |
+| 8 | The context compiler was lexical over memory only; nothing retrieved project knowledge per round. | `agent_runtime/context_compiler.rs` | `compile_with_knowledge`: `context.refresh` searches the run's pinned scope and compiles the hits as evidence blocks with markers and omissions. |
+| 9 | The legacy `documents::DocumentStore` created a table named `documents` in the same database as the multimodal index's `documents`. Their schemas differ, so the connector failed at first use. | `documents/store.rs` | Renamed to `collection_documents`. |
+| 10 | The sidecar refused `.txt`, `.md` and `.html` without a PDF engine, so a folder of SOPs in plain text could not be read. | `sidecars/document_sidecar/router.py` | Plain-text branch: form-feed pages, HTML reduced to text, and empty pages flagged for review. |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| **Embedding provider** | Pinned profiles, each with architecture, dimension, pooling, query/passage prefixes, `max_tokens` 512 and `window_chars` 900: `multilingual-e5-small` (bert, 384, mean, `query: ` / `passage: `), `nomic-embed-text-v2-moe` (768, mean, `search_query: ` / `search_document: `), `Qwen3-Embedding-0.6B` (1024, last-token, an instruction on the query, none on the passage). A profile is matched from the GGUF architecture and name; an unrecognised model has no profile and is not used. Vectors are L2-normalised by us, not trusted to the server. A passage over the window is split; a window the server refuses as too large is halved, up to 3 times, and otherwise recorded as a failure. The client refuses a non-loopback endpoint. | `knowledge/embedding.rs` |
+| **Qualification** | Four checks on the machine's own endpoint: width and finiteness; determinism; a full window accepted; and labelled ordering ≥ 0.9 over 12 bundled probes (8 English, 4 Hindi questions against English passages). The record carries the identity, the measured relevant and distractor means, and a **dense floor** (their midpoint). It is stored in `retrieval/embedding-qualification.json` and is void when the weights hash, profile or dimension differ. | `knowledge/embedding.rs`, `knowledge/qualification_probes.json` |
+| **Provider states** | `unavailable` (no embedding-only model) / `unqualified` (one found, not measured or failed) / `qualified`. Only `qualified` enables the semantic half. `ServedEmbeddings` serves the model named by `ARJUN_EMBEDDING_MODEL`, or the only embedding-only entry, on CPU through the existing `GpuOffloadPlan` at the profile's context. | `knowledge/provider.rs` |
+| **Index identity and reindexing** | `register_space`; `passages_needing_embeddings`; `store_embeddings` refuses a passage whose text changed since it was read; failures recorded per passage. `reindex()` is resumable and cancellable, and runs in batches in the background at startup when qualified. Vectors of two models never meet. | `knowledge/index.rs`, `knowledge/service.rs` |
+| **Versions, revocation, pins** | `source_versions` per logical path: added / revised / unchanged. A revision supersedes the previous version, which stays readable only to a pin taken before it. `retire_source`: withdrawn (file gone) or revoked (never readable again, even under a pin). `index_clock` gives each change a revision. A queued job is pinned to the clock when queued: later versions are invisible to it, versions superseded after the pin are still read *and flagged*, and withdrawn or revoked ones are never read. | `knowledge/index.rs`, `knowledge/service.rs` |
+| **Hybrid search** | Authorised in SQL first. Keyword search (all-terms, then any-term) and dense search run over the authorised set only. Fused by reciprocal rank (k = 60), with a deterministic tie-break (fused score, then chunk id), then deduplicated by chunk and by normalised text. A dense hit below the qualification's floor casts no vote. Each hit carries a 480-character excerpt around the query's terms, its source path, version and status, page, region, method (`keyword`, `semantic`, `keyword+semantic`), scores labelled for what they are (keyword rank, cosine, fused rank score), and an evidence handle `ev:<chunk>`. Coverage reports the mode, why it is degraded, partial coverage, and no-answer explicitly. | `knowledge/hybrid.rs` |
+| **Rerank** | `LexicalProximityReranker`: a bounded local reranker (at most 24 candidates) over hits already returned in this run, by marker. It is labelled as lexical proximity, not a model. | `knowledge/hybrid.rs`, `agent_runtime/retrieval_tools.rs` |
+| **Graph neighbours** | `neighbourhood(start, authorised, depth ≤ 2, max_items, kinds)`: breadth-first inside the reader's authorised set, so a hidden item is neither returned nor walked through. `source_revised` marks claims on a superseded source stale and propagates. | `knowledge/graph/runtime_store.rs` |
+| **Notebook scope** | A run scoped to a notebook reads it only if the person owns it (otherwise it gets the same "that notebook does not exist"). Its sources are searched by keyword and fused (`nb:` handles); a source removed from the notebook is counted, not read. | `knowledge/service.rs` |
+| **Tools** | New `knowledge.hybrid_search`, `knowledge.rerank`, `knowledge.source_version` and `memory.neighbours` through every P01 layer: enum, spec, contract (Agent path; hybrid_search produces evidence), read-only class, runner refusal, plan order, dispatcher, TS catalogue, names, evidence list, conformance, budget, and UI labels. `tool-contract.json` regenerated. `source_version` says the same thing for hidden and for nonexistent. | `orchestrator/{tools,contract,runner,grammar}.rs`, `agent_runtime/{mod,retrieval_tools,planning,tool_policy}.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| **The agent** | `knowledge-retriever` 1.1.0: same name and id; the six retrieval tools granted; how it runs in its instructions. Its worker always runs the deterministic retrieval, with or without a model loop. It searches the packet's pinned scope and publishes one `knowledge.hybrid_search` receipt, a coverage observation, and a fact per passage citing path, version, status and excerpt. Passages above its classification ceiling are counted, not published. A retrieval job finishes directly: no model is needed to return passages. | `agents/knowledge-retriever.md`, `subagents/worker.rs`, `subagents/packet.rs`, `agent_runtime/delegation.rs` |
+| **The context compiler** | `context.refresh` searches the run's pinned scope for the round's question and records markers. It compiles up to 4 knowledge evidence blocks (method, version, status, scores, handle), with omissions when they do not fit. Project-scoped memory is read when the run has a project. The child's uncertainty now reaches the parent's delegation result. | `agent_runtime/{context_compiler,mod,retrieval,delegation}.rs` |
+| **Admin** | `knowledge_collections`, `_collection_save` / `_remove` (policy permission), `_collection_sync` / `_reindex` (upload permission), `knowledge_retrieval_status`, `knowledge_embedding_qualify` (import permission). The Knowledge page shows what retrieval actually runs here and why, and lists the collections. | `commands/retrieval.rs`, `lib.rs`, `ipc-manifest.json`, `src/services/retrieval.service.ts`, `src/pages/{KnowledgeCollectionsPanel,Knowledge}.tsx` |
+
+## Contract decisions
+
+1. **An embedding endpoint is a service, never a child model.** It is served
+   with `--embedding` on CPU, is never eligible for routing, and is called
+   inside the worker.
+2. **Semantic only when measured here.** Keyword retrieval is always
+   available. The semantic half runs only for a model whose exact identity
+   passed qualification on this machine. Every response says which mode ran
+   and, when degraded, why ("keyword only because …").
+3. **Filter before scoring.** Authorisation is one SQL clause applied before
+   either half scores anything. Counts, coverage, versions and graph
+   neighbours are computed inside the authorised set. A hidden and a
+   nonexistent record read the same.
+4. **Scores are labelled for their purpose.** Keyword rank, cosine and fused
+   rank score are each named. None is presented as a confidence or a
+   probability.
+5. **A floor, not a rank.** A dense hit below the measured floor casts no
+   vote. Without it, the nearest vector always "answers", and no-answer
+   becomes impossible.
+6. **Pins are taken when work is queued.** A later revision is invisible to
+   the job. A revoked item is invisible even to a pin.
+7. **Deterministic retrieval can finish a job.** Spark/Nemotron query
+   planning is not used: no planner is qualified. A retrieval job returns
+   its passages without a model loop.
+8. **Order under pressure.** The four retrieval tools are listed after the P05
+   orchestrator tools and before P06's page tools and P04's artifact family.
+
+## Tests
+
+| What the prompt names | Test (`agent_runtime::retrieval_tests` unless noted) |
+|---|---|
+| paraphrased versus literal | `a_literal_query_is_found_by_keyword_and_a_paraphrase_only_by_meaning`: the literal tag first by keyword; the paraphrase unreachable by keyword and found as `semantic` |
+| multilingual | `a_hindi_question_reaches_the_english_passage_through_the_semantic_half` (the fixture transport's concept lexicon covers the Hindi terms; what a real model does is the target gate) |
+| stale SOP | `a_revised_sop_answers_its_old_version_is_flagged_and_claims_on_it_go_stale`: Rev B answers as v2 current; v1 is readable only under an earlier pin, flagged superseded; graph claims on v1 go stale |
+| conflicting source | `two_current_sources_that_disagree_are_both_returned_with_their_own_sources`: the vendor letter and the manual, both cited, neither chosen |
+| no answer | `a_question_nothing_answers_is_said_to_have_no_answer`: no passages and `no_answer` set, even with a qualified model (the floor) |
+| oversized source | `an_oversized_passage_is_embedded_in_windows_and_found_by_its_last_one`: a 2,174-character manual; the fixture server refuses over 700 characters; the answer in the last window is found |
+| denied notebook | `a_run_scoped_to_someone_elses_notebook_does_not_read_it_and_says_so` |
+| revoked item | `a_restricted_collection_and_a_revoked_document_are_neither_retrieved_nor_disclosed`: no hit, no count, no version, no neighbour; `source_version` reads identically for hidden and nonexistent |
+| exact citations | `a_hybrid_passage_is_cited_exactly_by_marker_and_reranked_locally`; every e2e assertion checks path, version and page against the fixture |
+| **another agent consumes it through the production path** | `a_retrieval_job_is_pinned_when_queued_and_its_findings_reach_the_parents_next_round`: `agent.delegate` → the production knowledge-retriever → its receipt and facts in the graph → the parent's next `context.refresh` compiles the same passage, while a revision made after queueing is invisible to the job |
+| ceiling | `a_passage_above_the_retrievers_ceiling_is_counted_not_published` (added after mutation M8 went uncaught) |
+| graph traversal | `memory_neighbours_walks_only_what_the_reader_may_see` |
+| unqualified model | `an_unqualified_model_is_not_used_and_the_search_says_why` |
+| connector | `the_connector_reads_a_real_folder_into_versioned_authorised_passages`; `knowledge::ingest::tests::a_removed_document_stops_answering_…`, `…a_revised_file_supersedes_its_previous_version` |
+| P00 pack | `the_packs_sop_question_retrieves_both_sections_it_must_cite` |
+| measured against labels | `labelled_retrieval_measurement` (below) |
+| identity kept | `agents::store::tests::the_knowledge_retriever_upgrade_keeps_its_identity_and_its_settings` |
+| serving and routing | `serving::tests::an_embedding_model_is_served_as_one_and_only_as_one`; `subagents::tests` (an embedding model is never a child's model) |
+| compiler | `agent_runtime::context_compiler::knowledge_tests` (3) |
+| target | `tests/retrieval_live.rs`: two `#[ignore]`d gates; **not run here** |
+
+**Seen failing** (`log_mutation.txt`), each caught:
+
+- the collection restriction dropped from the shared clause;
+- the query prefix not applied;
+- the dense floor ignored;
+- the pin ignored;
+- a revision not retiring its predecessor;
+- an embedding model eligible as a child;
+- the compiler not given the round's knowledge;
+- a withdrawn file still answering;
+- an embedding model served without `--embedding`.
+
+M8, passages above the worker's ceiling being published, was **not caught** on
+the first run. A test was added, and the second run catches it. Writing that
+test also showed the child's uncertainty never reached the parent's result,
+and that is now fixed.
+
+## Measured
+
+**P07-OBS-1: labelled retrieval**, 9 cases (`knowledge/testdata/retrieval/labels.json`),
+10-document corpus, K = 5:
+
+| Method | Recall@5 | MRR | No-answer | Label |
+|---|---|---|---|---|
+| keyword, all terms (`search_authorized`) | 0.25 | 0.25 | 1/1 | deterministic test |
+| keyword, any term (hybrid without a model) | 0.75 | 0.625 | 1/1 | deterministic test |
+| hybrid via fixture transport | 1.0 | 0.9375 | 1/1 | **deterministic transport — not a quality claim about any model** |
+
+The any-term keyword row is the fallback retrieval this build actually gives
+today on the target, where no model is qualified. The hybrid row shows only
+that fusion, floor and windowing do what they claim when given vectors that
+order correctly. How a real model orders them is `labelled_retrieval_on_the_target`.
+
+**P07-OBS-2: the catalogue at 56 tools** is 5,350 estimated tokens at
+`minimal` (95.5 per tool, under the 96 floor).
+
+| Budget | What the fitter drops |
+|---|---|
+| 8k (3,686) | P04's artifact family, P06's page tools and P07's four |
+| 10k | only the artifact family |
+| 12k and up | nothing |
+
+The grammar preamble is 1,317 bytes, so its bound moved from 1,300 to 1,400
+with the measurement recorded. Role-scoped loading (P03) remains the remedy.
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2,920 passed, 2 failed**, 3 ignored: the two Windows-path tests that fail at `20061fc`. `log_lib_full.txt` |
+| focused suites (`log_focused_rust.txt`) | knowledge 369, orchestrator 222, subagents 106, agents 146, serving 45, delegation 15, context compiler 26, extraction 12, artifact tools 10, retrieval 24 |
+| `npm run test:integration` | **65 passed**, 2 ignored (as at P06) |
+| `tests/retrieval_live.rs` | 2 ignored: the target gates; **not coverage** |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; **2,385** tests |
+| `npx tsc --noEmit`, `npm run test:ui`, `npm run build` | pass; 618 UI tests |
+| `runtime:build`, `check:bundle`, `check:bundle:self`, `check:offline` | pass |
+| `check:ipc`, `check:reachable`, `check:egress`, `check:no-lora`, `check:deployment`, `check:targets`, `check:whitespace` | pass; **187** commands (+7) |
+| `check:lint-budget` | **fails, 53 > 40, pre-existing**: the P06 tree measures 53 too (P07 stashed); no P07 file contributes |
+| sidecar | router 13/13, including 4 new plain-text tests. The same 13 `pypdf` errors as P06. The three tracked fixture PDFs truncated by `test_pid_engine`'s setup were restored from git again |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (P04's CRLF hashes), 31 blocked. `sop-01`/`sop-02` are now blocked on P10 by name; their retrieval half is covered by `the_packs_sop_question_…` |
+| Knowledge page | the new panels rendered in Chromium with a stubbed `invoke` (`knowledge-retrieval-panel.png`). gstack is not installed here and was not installed |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **A real embedding model qualifying and retrieving** | Not run: no weights or `llama-server` here. Every vector in the tests comes from a fixture lexicon. Whether Qwen3-Embedding or nomic-embed-v2 passes, what floor it measures and how it ranks the labelled corpus are unknown. | On the target: `set ARJUN_APP_DATA=…\com.arjun.workbench`, then `cargo test --manifest-path src-tauri/Cargo.toml --test retrieval_live -- --ignored --nocapture --test-threads=1` |
+| `multilingual-e5-small` | Profile pinned; weights not present anywhere. Not downloaded (P00, §11.1). | An operator's reviewed, offline copy |
+| Spark/Nemotron query planning | Not used: no planner is qualified for it. Deterministic retrieval finishes jobs. | After a qualified planner exists (P09/P10) |
+| A model reranker | Only the lexical-proximity reranker exists; no `Rerank`-role model is wired. | Later, behind the same qualification pattern |
+| Lesson retrieval | No lesson store exists yet; the compiler reads project memory and knowledge, not lessons. | P15 |
+| Notebook sources | Keyword only, no dense half. | Later |
+| `search_authorized` all-terms semantics | Kept for its existing callers. Only hybrid search has the any-term pass. | — |
+| Windows target, installed app | Not run there; not rebuilt or redeployed. | P16 |
+
+## P07 close-out
+
+- **Implemented**:
+  - a pinned, qualified, loopback-only embedding provider with index identity
+    and resumable reindexing;
+  - versioned, revocable, collection-restricted sources with run pins;
+  - filter-first hybrid retrieval with a measured floor, deterministic fusion
+    and dedupe;
+  - a bounded local reranker and bounded graph neighbours;
+  - the knowledge connector the index never had.
+- **Wired**:
+  - four tools through every P01 layer;
+  - the retriever 1.1.0 with its identity kept, publishing receipts and cited
+    facts;
+  - `context.refresh` compiling pinned knowledge each round;
+  - seven admin commands and the Knowledge page panels;
+  - embedding models served as embedding models and never as children.
+- **Tested**:
+  - every case the prompt names;
+  - exact citations;
+  - consumption by the parent through the production path;
+  - labelled measurement;
+  - mutation-checked.
+- **Unverified or blocked**: real-model qualification and measurement (the
+  target gate).
+- **Remaining**: nothing else in P07's portable scope.
+
+**Exact next step:** P08, the Calculation Analyst & Checker. Then run the P07
+target gate (`tests/retrieval_live.rs`) on the target machine and record the
+qualification and measurement.

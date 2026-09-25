@@ -1449,6 +1449,44 @@
       "timeoutSeconds": 15
     },
     {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::retrieval_tools::hybrid_search, then agent_runtime::retrieval::record",
+      "maxResponseBytes": 24576,
+      "name": "knowledge.hybrid_search",
+      "network": "loopback",
+      "optional": [
+        {
+          "kind": "integer",
+          "name": "maxResults"
+        },
+        {
+          "kind": "list",
+          "name": "documentSha256s"
+        }
+      ],
+      "output": "evidence",
+      "permission": "searchKnowledge",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "query"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 60
+    },
+    {
       "aliases": [
         "load_more_evidence"
       ],
@@ -1536,6 +1574,40 @@
       "timeoutSeconds": 45
     },
     {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::retrieval_tools::rerank",
+      "maxResponseBytes": 8192,
+      "name": "knowledge.rerank",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "markers"
+        }
+      ],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "query"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 10
+    },
+    {
       "aliases": [
         "search_documents"
       ],
@@ -1574,6 +1646,35 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 30
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::retrieval_tools::source_version",
+      "maxResponseBytes": 8192,
+      "name": "knowledge.source_version",
+      "network": "none",
+      "optional": [],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "documentSha256"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 5
     },
     {
       "aliases": [],
@@ -1633,6 +1734,44 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 120
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::retrieval_tools::neighbours",
+      "maxResponseBytes": 16384,
+      "name": "memory.neighbours",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "integer",
+          "name": "depth"
+        },
+        {
+          "kind": "list",
+          "name": "edgeKinds"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "itemId"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 10
     },
     {
       "aliases": [

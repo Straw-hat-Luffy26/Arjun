@@ -590,6 +590,9 @@ struct RunTablesGuard<'a> {
     passages: &'a RunPassages,
     produced: &'a RunArtifacts,
     calculations: &'a RunCalculations,
+    /// The retrieval service, whose pin for this run is released with the
+    /// run's other tables (P07). `None` where nothing is managed.
+    retrieval: Option<Arc<crate::knowledge::service::RetrievalService>>,
     calls: &'a RunToolCalls,
     /// The fixed half of this attempt's checkpoints.
     ///
@@ -671,6 +674,9 @@ impl Drop for RunTablesGuard<'_> {
         }
         retrieval::forget(self.passages, &self.run_id);
         artifacts::forget(self.produced, &self.run_id);
+        if let Some(service) = &self.retrieval {
+            service.release(&self.run_id);
+        }
     }
 }
 
@@ -770,6 +776,10 @@ pub struct RuntimeState<'a> {
 
 /// The Document & Vision Analyst's page service, as Tauri manages it (P06).
 pub struct ExtractionState(pub Arc<crate::extraction::service::ExtractionService>);
+
+/// The retrieval service (P07), managed once in `lib.rs` and shared by the
+/// runtime's tools, the Knowledge Retriever worker and the context compiler.
+pub struct RetrievalState(pub Arc<crate::knowledge::service::RetrievalService>);
 
 /// The conversation artifact store, as Tauri manages it.
 pub struct ConversationArtifactsState(
@@ -885,6 +895,16 @@ fn runtime(
         jobs: tauri::Manager::try_state::<JobsState>(app)
             .map(|jobs| Arc::clone(&jobs.0))
             .unwrap_or_default(),
+        // The managed service, so a pin made at run start and a search made by
+        // a tool see the same table. Keyword-only where nothing is managed.
+        retrieval: tauri::Manager::try_state::<RetrievalState>(app)
+            .map(|state| Arc::clone(&state.0))
+            .unwrap_or_else(|| {
+                Arc::new(crate::knowledge::service::RetrievalService::lexical_only(
+                    state.index.clone(),
+                    "this process has no retrieval service configured",
+                ))
+            }),
         emit_durable,
         // The same channel the loop's own events travel, so an operator sees
         // one sequence of what happened rather than two interleaved by luck.
@@ -2411,6 +2431,7 @@ async fn drive_run(
         passages: &passages,
         produced: &produced,
         calculations: &calculations,
+        retrieval: tauri::Manager::try_state::<RetrievalState>(&app).map(|state| Arc::clone(&state.0)),
         calls: &calls,
         checkpoints: &checkpoints,
     };
@@ -2858,6 +2879,25 @@ async fn drive_run(
             &signed_in.user.id,
             &scope,
         )?;
+        // The run's retrieval scope (P07): its tools, the per-round context
+        // compiler and any retrieval job it delegates read this notebook's
+        // selected sources as resolved now. Released with the run's tables.
+        if let Some(service) = tauri::Manager::try_state::<RetrievalState>(&app) {
+            service.0.pin(
+                &run_id,
+                crate::knowledge::service::RunScope {
+                    pinned_revision: None,
+                    notebook: Some(crate::knowledge::service::NotebookPin {
+                        notebook_id: resolved.notebook.id.clone(),
+                        source_sha256s: resolved
+                            .sources
+                            .iter()
+                            .map(|source| source.document_sha256.clone())
+                            .collect(),
+                    }),
+                },
+            );
+        }
         let retrieval = crate::knowledge::notebook_retrieval::retrieve(
             &documents.0,
             &signed_in.user.id,
@@ -7638,6 +7678,7 @@ mod finalisation_tests {
                 passages: &self.passages,
                 produced: &self.produced,
                 calculations: &self.calculations,
+                retrieval: None,
                 calls: &self.calls,
                 checkpoints: &self.checkpoints,
             }

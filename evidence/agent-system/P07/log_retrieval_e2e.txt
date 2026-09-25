@@ -1,0 +1,1331 @@
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Block`, `Document`, `Properties`, and `Section`
+    --> src/artifacts/content.rs:1249:39
+     |
+1249 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+     |                                       ^^^^^                            ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^
+
+warning: unused import: `crate::agent_runtime::audit_health::AuditHealth`
+    --> src/agent_runtime/tests.rs:1339:9
+     |
+1339 |     use crate::agent_runtime::audit_health::AuditHealth;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Modality`
+   --> src/registry/scan.rs:496:27
+    |
+496 |     use crate::registry::{Modality, ModelRole};
+    |                           ^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+    --> src/ai_engine/runtime.rs:1415:76
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                                                                            ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1888:9
+     |
+1888 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+    --> src/ai_engine/runtime.rs:1415:31
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                               ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:384:13
+    |
+384 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:396:13
+    |
+396 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:408:13
+    |
+408 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1252:8
+     |
+1252 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1781:9
+     |
+1779 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1780 |         _dir: tempfile::TempDir,
+1781 |         root: PathBuf,
+     |         ^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib test) generated 79 warnings (run `cargo fix --lib -p sarathi --tests` to apply 53 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 31.02s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+
+running 16 tests
+test agent_runtime::retrieval_tests::a_hindi_question_reaches_the_english_passage_through_the_semantic_half ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- multilingual (transport) ---
+1 passage(s) for "पोत का स\u{941}रक\u{94d}षा वाल\u{94d}व किस दबाव पर ख\u{941}लता ह\u{948}?".
+
+[E1] manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 · version 1 (current) · found by semantic · ev:dde6635e3db0c60185d8c3eb8d0d76a2
+Separator V-101 data sheet 2 Protection The pressure safety valve PSV-1011 on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.
+  scores: semantic cosine 1.000 (closeness to the question); fused rank 0.0164 (ordering only)
+  documentSha256: bc37a16216dd0d4ce83073615f0182ea29e6e84e300e73180c981e9528442815
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::a_hybrid_passage_is_cited_exactly_by_marker_and_reranked_locally ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- rerank ---
+Reordered 3 passage(s) by lexical-proximity reranker (deterministic, no model): term coverage, exact phrase, and how close the terms sit.
+[E1] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 3 Mechanical seal, page 1 — rerank 2.00 (ordering only)
+[E2] correspondence/2026-03-seal-vendor-letter.md — Letter from the seal vendor, March 2026 › Service interval, page 1 — rerank 1.71 (ordering only)
+[E3] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 — rerank 0.00 (ordering only)
+
+ok
+test agent_runtime::retrieval_tests::a_literal_query_is_found_by_keyword_and_a_paraphrase_only_by_meaning ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- literal ---
+2 passage(s) for "PSV-1011 set pressure".
+
+[E1] manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 · version 1 (current) · found by keyword+semantic · ev:dde6635e3db0c60185d8c3eb8d0d76a2
+Separator V-101 data sheet 2 Protection The pressure safety valve PSV-1011 on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.
+  scores: keyword bm25 -7.37 (all terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0328 (ordering only)
+  documentSha256: bc37a16216dd0d4ce83073615f0182ea29e6e84e300e73180c981e9528442815
+
+[E2] manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 · version 1 (current) · found by keyword · ev:981c1d30f27026f0cffb809faf2f5728
+…vibration probes, bearing temperature elements and a discharge pressure transmitter, and each reading is logged to the historian every second for trend review by the rotating equipment engineer. Stage 2 of the recycle compressor K-301 is monitored by vibration probes, bearing temperature elements and a discharge pressure transmitter, and each reading is logged to the historian every second for trend review by the rotating equipment engineer. Stage 3 of the recycle…
+  scores: keyword bm25 -1.91 (some terms; lower is better, this query only); fused rank 0.0161 (ordering only)
+  documentSha256: 75c5960363c6d0ab0a1c171777fd0d89ac726ad17475e158b942c748c3cf2467
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+--- paraphrase ---
+2 passage(s) for "What stops the charge pump from cavitating?".
+
+[E3] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 · version 1 (current) · found by keyword+semantic · ev:861f2519eef23f9cd39f6546ab624deb
+Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.
+  scores: keyword bm25 -3.55 (some terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0325 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+[E4] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 3 Mechanical seal, page 1 · version 1 (current) · found by keyword · ev:f6940de218952669c2a93209c842316a
+Charge pump P-101 operating manual 3 Mechanical seal Renew the mechanical seal cartridge on the charge pump every 8000 running hours or at the first sign of leakage past the gland.
+  scores: keyword bm25 -4.73 (some terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::a_passage_above_the_retrievers_ceiling_is_counted_not_published ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- ceiling ---
+Job job-6322fee695d0 started for step find: knowledge-retriever (knowledge-retriever v-, bundled-profile), attempt 1/2, read-only mode, deadline 60s. Lease: shares the coordinator's model model-parent; no second model is loaded.
+
+Job job-6322fee695d0 — step find, knowledge-retriever (knowledge-retriever v-, bundled-profile), attempt 1, readOnly: completed
+  model model-parent; lease: shares the coordinator's model model-parent; no second model is loaded
+  knowledge-retriever finished — 4 finding(s), 4 citing a source, 5 published
+  - manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 [v1 current] bears on this question (keyword). [manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 [v1 current]]
+  - sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 [v1 current] bears on this question (keyword). [sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 [v1 current]]
+  - manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 [v1 current] bears on this question (keyword). [manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 [v1 current]]
+  - manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 [v1 current] bears on this question (keyword). [manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 [v1 current]]
+  uncertain: 1 passage(s) found are classified above this worker's Internal ceiling and were not published; search for them from the parent
+  uncertain: keyword-only retrieval: fixture-e5 is installed and matches the multilingual-e5-small profile, but has not been qualified on this machine, so retrieval is keyword-only. Qualify it from the Knowledge screen or with the retrieval_live test.
+  published: mi-0f339a62-56ab-4fb9-ad34-1fb1c66dafd5#r1, mi-d16c622d-4eb7-4598-a4ad-90e8ff5cbfdd#r1, mi-8e4b16f6-3a37-4554-95cf-56fa2c3bb545#r1, mi-f432f88a-2b58-4cde-8f0a-f37463a9d737#r1, mi-7099719e-2084-43df-8b6c-9aaf5fb26958#r1
+  shared memory at graph revision 7
+
+Plan v3 — goal: Find the anti-surge valve information
+- find delegate [knowledge-retriever]: Find the anti-surge valve information — completed (attempts 1/2)
+    last receipt: job job-6322fee695d0 completed — knowledge-retriever finished — 4 finding(s), 4 citing a source, 5 published
+    outputs: mi-0f339a62-56ab-4fb9-ad34-1fb1c66dafd5#r1, mi-d16c622d-4eb7-4598-a4ad-90e8ff5cbfdd#r1, mi-8e4b16f6-3a37-4554-95cf-56fa2c3bb545#r1, mi-f432f88a-2b58-4cde-8f0a-f37463a9d737#r1, mi-7099719e-2084-43df-8b6c-9aaf5fb26958#r1
+
+ok
+test agent_runtime::retrieval_tests::a_question_nothing_answers_is_said_to_have_no_answer ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- no answer ---
+No passage you may read answers "What is the drift eliminator spacing in the cooling tower?". This is a finding: do not assert what no source says. Try other wording, or say that no source was found.
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Partial: no passage was closer to the question than this model's qualified floor (0.525).
+
+ok
+test agent_runtime::retrieval_tests::a_restricted_collection_and_a_revoked_document_are_neither_retrieved_nor_disclosed ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- restricted collection, as an employee ---
+1 passage(s) for "overtime rate".
+
+[E1] sops/flare-purge.md — SOP-OPS-021 Flare header purge › 1 Purge rate, page 1 · version 1 (current) · found by keyword · ev:650a443adbe7e85dc7e5e2fae5e00e17
+SOP-OPS-021 Flare header purge 1 Purge rate A continuous nitrogen purge of 5 m3/h is maintained at the header end to prevent oxygen ingress into the flare system.
+  scores: keyword bm25 -1.84 (some terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: 0d943ff4b5191fc71876ba30284396b3f7435779d86326d6b1762ddf08bf92eb
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Partial: no passage matched the whole question; these matched some of its terms.
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+--- after revocation ---
+No passage you may read answers "hot work permit countersign". This is a finding: do not assert what no source says. Try other wording, or say that no source was found.
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Partial: no passage was closer to the question than this model's qualified floor (0.525).
+
+ok
+test agent_runtime::retrieval_tests::a_retrieval_job_is_pinned_when_queued_and_its_findings_reach_the_parents_next_round ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- agent.delegate ---
+Job job-8b5a0ae4dd6d started for step find: knowledge-retriever (knowledge-retriever v-, bundled-profile), attempt 1/2, read-only mode, deadline 60s. Lease: shares the coordinator's model model-parent; no second model is loaded.
+
+Job job-8b5a0ae4dd6d — step find, knowledge-retriever (knowledge-retriever v-, bundled-profile), attempt 1, readOnly: completed
+  model model-parent; lease: shares the coordinator's model model-parent; no second model is loaded
+  knowledge-retriever finished — 4 finding(s), 4 citing a source, 5 published
+  - manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 [v1 current] bears on this question (keyword+semantic). [manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 [v1 current]]
+  - sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 [v1 current] bears on this question (keyword). [sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 [v1 current]]
+  - manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 [v1 current] bears on this question (keyword). [manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 [v1 current]]
+  - manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 [v1 current] bears on this question (keyword). [manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 [v1 current]]
+  published: mi-ffc78c2c-d20e-45ab-b3d4-a4b2e68fd33c#r1, mi-af93c8ca-1e6d-44f1-8257-c7c5d2710943#r1, mi-1beb6f0a-7747-43ed-aa11-98350e583ce9#r1, mi-6ca4f863-c112-48c9-b767-56d465416a0c#r1, mi-5cf724ec-5437-4f02-bf1d-5ddadf139664#r1
+  shared memory at graph revision 7
+
+Plan v3 — goal: Find the anti-surge response requirement
+- find delegate [knowledge-retriever]: Find the anti-surge valve requirement — completed (attempts 1/2)
+    last receipt: job job-8b5a0ae4dd6d completed — knowledge-retriever finished — 4 finding(s), 4 citing a source, 5 published
+    outputs: mi-ffc78c2c-d20e-45ab-b3d4-a4b2e68fd33c#r1, mi-af93c8ca-1e6d-44f1-8257-c7c5d2710943#r1, mi-1beb6f0a-7747-43ed-aa11-98350e583ce9#r1, mi-6ca4f863-c112-48c9-b767-56d465416a0c#r1, mi-5cf724ec-5437-4f02-bf1d-5ddadf139664#r1
+
+--- context.refresh ---
+{
+  "blocks": [
+    {
+      "content": "[goal · established] Goal: Find the anti-surge response requirement",
+      "contentHash": "305d5ad8783a040ae95bdcf82f6f20314b6db66bbdef0d677fb82c3a8f4d11cf",
+      "itemId": "mi-goal-r",
+      "kind": "objective",
+      "revision": 1,
+      "tokens": 16
+    },
+    {
+      "content": "[plan · established] Plan v3 — goal: Find the anti-surge response requirement\n- find delegate [knowledge-retriever]: Find the anti-surge valve requirement — completed (attempts 1/2)\n    last receipt: job job-8b5a0ae4dd6d completed — knowledge-retriever finished — 4 finding(s), 4 citing a source, 5 published\n    outputs: mi-ffc78c2c-d20e-45ab-b3d4-a4b2e68fd33c#r1, mi-af93c8ca-1e6d-44f1-8257-c7c5d2710943#r1, mi-1beb6f0a-7747-43ed-aa11-98350e583ce9#r1, mi-6ca4f863-c112-48c9-b767-56d465416a0c#r1, mi-5cf724ec-5437-4f02-bf1d-5ddadf139664#r1\n",
+      "contentHash": "fd52ee80d4be7f4590bcafce3c663be677c779e1fdb982663df02a258b194e19",
+      "itemId": "mi-plan-r",
+      "kind": "plan",
+      "revision": 2,
+      "tokens": 135
+    },
+    {
+      "content": "[toolObservation · established] search coverage: \"anti-surge valve opening time\" — 4 passage(s), hybrid retrieval",
+      "contentHash": "30a72b0ca78ded3b6eb0a82a8a3284bdac046da8b0bae720f46e7c0cd137d327",
+      "itemId": "mi-ffc78c2c-d20e-45ab-b3d4-a4b2e68fd33c",
+      "kind": "receipt",
+      "revision": 1,
+      "tokens": 28
+    },
+    {
+      "content": "[fact · established] anti-surge valve opening time: manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 [v1 current] — \"…trend review by the rotating equipment engineer. The anti-surge valve UV-301 must reach its fully open position within 1.2 seconds of a surge-line crossing.\" (keyword+semantic)",
+      "contentHash": "9ad203e15221c1d077ed4c41c34d9e4d29ad3fb52f920c088a0b4ed5b33f3c58",
+      "itemId": "mi-af93c8ca-1e6d-44f1-8257-c7c5d2710943",
+      "kind": "neighbour",
+      "revision": 1,
+      "tokens": 83
+    },
+    {
+      "content": "[fact · established] anti-surge valve opening time: sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 [v1 current] — \"SOP-OPS-014 Exchanger isolation 2 Isolation before opening Close the inlet block valve and open the vent to atmosphere. Wait five minutes, then remove the channel head.\" (keyword)",
+      "contentHash": "f8032add01af3e3d492a22f57259e6869240dd88af4619cbff0f05ad75b915fd",
+      "itemId": "mi-1beb6f0a-7747-43ed-aa11-98350e583ce9",
+      "kind": "neighbour",
+      "revision": 1,
+      "tokens": 86
+    },
+    {
+      "content": "[fact · established] anti-surge valve opening time: manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 [v1 current] — \"Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.\" (keyword)",
+      "contentHash": "a9c668f0c409bc7824cc613fdfa68a9860e0e50340d2f7b1ccb8cbf2adf59cab",
+      "itemId": "mi-5cf724ec-5437-4f02-bf1d-5ddadf139664",
+      "kind": "neighbour",
+      "revision": 1,
+      "tokens": 94
+    },
+    {
+      "content": "[fact · established] anti-surge valve opening time: manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 [v1 current] — \"Separator V-101 data sheet 2 Protection The pressure safety valve PSV-1011 on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.\" (keyword)",
+      "contentHash": "56a1405cc50080890fb6acf64f30be5eaa38f456ea870a9da3ff31ad97c1d66f",
+      "itemId": "mi-6ca4f863-c112-48c9-b767-56d465416a0c",
+      "kind": "neighbour",
+      "revision": 1,
+      "tokens": 78
+    },
+    {
+      "content": "[E1] [passage · keyword+semantic · v1 current · ev:981c1d30f27026f0cffb809faf2f5728] manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1: …trend review by the rotating equipment engineer. The anti-surge valve UV-301 must reach its fully open position within 1.2 seconds of a surge-line crossing.",
+      "contentHash": "205c2c63b8ddf5869f676dd42ded5801c15dbdda17ffce08a921c3851e9626ca",
+      "kind": "evidence",
+      "tokens": 83
+    },
+    {
+      "content": "[E2] [passage · keyword · v1 current · ev:0bf8826e8a38c29e25f746ced16219a8] sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1: SOP-OPS-014 Exchanger isolation 2 Isolation before opening Close the inlet block valve and open the vent to atmosphere. Wait five minutes, then remove the channel head.",
+      "contentHash": "bdeb112a29e2780f4dce5ee87de0e88a3010eefde90bb763ac5eef17a6cd484d",
+      "kind": "evidence",
+      "tokens": 86
+    },
+    {
+      "content": "[E3] [passage · keyword · v1 current · ev:dde6635e3db0c60185d8c3eb8d0d76a2] manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1: Separator V-101 data sheet 2 Protection The pressure safety valve PSV-1011 on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.",
+      "contentHash": "9270e37740055d327b2aad67c92e83af8b9f3e51e03d10d621dfc7e5533845eb",
+      "kind": "evidence",
+      "tokens": 77
+    },
+    {
+      "content": "[E4] [passage · keyword · v1 current · ev:861f2519eef23f9cd39f6546ab624deb] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1: Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.",
+      "contentHash": "3cb3fdd32c986021cde582df3ed54dee9c642f4fd231b1a70b9f259d023bb031",
+      "kind": "evidence",
+      "tokens": 94
+    }
+  ],
+  "budget": {
+    "available": 12080,
+    "countedBy": "estimate",
+    "reservedFraming": 256,
+    "reservedOutput": 2048,
+    "reservedToolSchemas": 2000,
+    "spent": 860,
+    "window": 16384
+  },
+  "contentHashes": [
+    "305d5ad8783a040ae95bdcf82f6f20314b6db66bbdef0d677fb82c3a8f4d11cf",
+    "fd52ee80d4be7f4590bcafce3c663be677c779e1fdb982663df02a258b194e19",
+    "30a72b0ca78ded3b6eb0a82a8a3284bdac046da8b0bae720f46e7c0cd137d327",
+    "9ad203e15221c1d077ed4c41c34d9e4d29ad3fb52f920c088a0b4ed5b33f3c58",
+    "f8032add01af3e3d492a22f57259e6869240dd88af4619cbff0f05ad75b915fd",
+    "a9c668f0c409bc7824cc613fdfa68a9860e0e50340d2f7b1ccb8cbf2adf59cab",
+    "56a1405cc50080890fb6acf64f30be5eaa38f456ea870a9da3ff31ad97c1d66f",
+    "205c2c63b8ddf5869f676dd42ded5801c15dbdda17ffce08a921c3851e9626ca",
+    "bdeb112a29e2780f4dce5ee87de0e88a3010eefde90bb763ac5eef17a6cd484d",
+    "9270e37740055d327b2aad67c92e83af8b9f3e51e03d10d621dfc7e5533845eb",
+    "3cb3fdd32c986021cde582df3ed54dee9c642f4fd231b1a70b9f259d023bb031"
+  ],
+  "graphRevision": 8,
+  "mandatoryOverflowed": false,
+  "manifestHash": "f5fd9e8d44bd91441b09e97ab1335587575a22aacc33d8b906c62cb488248651",
+  "omissions": [],
+  "retrieval": {
+    "degraded": false,
+    "degradedBecause": "the task's own memory was ranked by keyword overlap",
+    "embeddingDimension": 384,
+    "embeddingModelId": "multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1",
+    "indexVersion": "knowledge-index@9",
+    "mode": "hybrid"
+  }
+}
+ok
+test agent_runtime::retrieval_tests::a_revised_sop_answers_its_old_version_is_flagged_and_claims_on_it_go_stale ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- stale SOP ---
+2 passage(s) for "isolation before opening the exchanger".
+
+[E1] sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation (revision B) › 2 Isolation before opening, page 1 · version 2 (current) · found by keyword+semantic · ev:016398895bcb0f19143a46b421fdbcfd
+SOP-OPS-014 Exchanger isolation (revision B) 2 Isolation before opening Close both block valves, open the bleed to the closed drain, confirm zero pressure on the local gauge and apply the isolation lock before breaking any flange. Venting to atmosphere is no longer permitted.
+  scores: keyword bm25 -6.67 (all terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0328 (ordering only)
+  documentSha256: e31aa6317faa65c32360b2a3db0b9e2f57da6513881261a35e156b5123f17886
+
+[E2] sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation (revision B) › 1 Scope, page 1 · version 2 (current) · found by keyword+semantic · ev:9a03a826ff14725b458c57ac2fee8608
+SOP-OPS-014 Exchanger isolation (revision B) 1 Scope This procedure applies to shell and tube exchangers E-201 to E-214 in the crude unit.
+  scores: keyword bm25 -2.35 (some terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0323 (ordering only)
+  documentSha256: e31aa6317faa65c32360b2a3db0b9e2f57da6513881261a35e156b5123f17886
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+--- source_version of revision A ---
+sops/exchanger-isolation.md in plant: version 1 is superseded.
+History:
+- sops/exchanger-isolation.md v1: superseded (indexed 2026-09-25T04:51:02.275381210+00:00, retired 2026-09-25T04:51:02.477136541+00:00, replaced by e31aa6317faa65c32360b2a3db0b9e2f57da6513881261a35e156b5123f17886) sha e6c14fbc9d895f4134ff1e6bf7b6498c91149993404268e8bf7822fa7a7b6a81
+- sops/exchanger-isolation.md v2: current (indexed 2026-09-25T04:51:02.477136541+00:00) sha e31aa6317faa65c32360b2a3db0b9e2f57da6513881261a35e156b5123f17886
+This is not the current version. The current one is e31aa6317faa65c32360b2a3db0b9e2f57da6513881261a35e156b5123f17886 (v2): cite that, or say the passage you hold is from an older version.
+
+ok
+test agent_runtime::retrieval_tests::a_run_scoped_to_someone_elses_notebook_does_not_read_it_and_says_so ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- denied notebook ---
+1 passage(s) for "flare header purge".
+
+[E1] sops/flare-purge.md — SOP-OPS-021 Flare header purge › 1 Purge rate, page 1 · version 1 (current) · found by keyword · ev:650a443adbe7e85dc7e5e2fae5e00e17
+SOP-OPS-021 Flare header purge 1 Purge rate A continuous nitrogen purge of 5 m3/h is maintained at the header end to prevent oxygen ingress into the flare system.
+  scores: keyword bm25 -10.27 (all terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: 0d943ff4b5191fc71876ba30284396b3f7435779d86326d6b1762ddf08bf92eb
+
+Retrieval: lexical. Keyword only because fixture-e5 is installed and matches the multilingual-e5-small profile, but has not been qualified on this machine, so retrieval is keyword-only. Qualify it from the Knowledge screen or with the retrieval_live test.
+Partial: the notebook this work was scoped to was not searched: that notebook does not exist.
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::an_oversized_passage_is_embedded_in_windows_and_found_by_its_last_one ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- oversized passage ---
+4 passage(s) for "How fast must the anti-surge valve open?".
+
+[E1] manuals/compressor-K301.md — Recycle compressor K-301 manual › 5 Surge protection, page 1 · version 1 (current) · found by keyword+semantic · ev:981c1d30f27026f0cffb809faf2f5728
+…trend review by the rotating equipment engineer. The anti-surge valve UV-301 must reach its fully open position within 1.2 seconds of a surge-line crossing.
+  scores: keyword bm25 -1.37 (some terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0325 (ordering only)
+  documentSha256: 75c5960363c6d0ab0a1c171777fd0d89ac726ad17475e158b942c748c3cf2467
+
+[E2] sops/exchanger-isolation.md — SOP-OPS-014 Exchanger isolation › 2 Isolation before opening, page 1 · version 1 (current) · found by keyword · ev:0bf8826e8a38c29e25f746ced16219a8
+SOP-OPS-014 Exchanger isolation 2 Isolation before opening Close the inlet block valve and open the vent to atmosphere. Wait five minutes, then remove the channel head.
+  scores: keyword bm25 -2.82 (some terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: e6c14fbc9d895f4134ff1e6bf7b6498c91149993404268e8bf7822fa7a7b6a81
+
+[E3] manuals/vessel-V101.md — Separator V-101 data sheet › 2 Protection, page 1 · version 1 (current) · found by keyword · ev:dde6635e3db0c60185d8c3eb8d0d76a2
+Separator V-101 data sheet 2 Protection The pressure safety valve PSV-1011 on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.
+  scores: keyword bm25 -0.89 (some terms; lower is better, this query only); fused rank 0.0159 (ordering only)
+  documentSha256: bc37a16216dd0d4ce83073615f0182ea29e6e84e300e73180c981e9528442815
+
+[E4] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 · version 1 (current) · found by keyword · ev:861f2519eef23f9cd39f6546ab624deb
+Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.
+  scores: keyword bm25 -0.87 (some terms; lower is better, this query only); fused rank 0.0156 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::an_unqualified_model_is_not_used_and_the_search_says_why ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- unqualified ---
+2 passage(s) for "What stops the charge pump from cavitating?".
+
+[E1] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 3 Mechanical seal, page 1 · version 1 (current) · found by keyword · ev:f6940de218952669c2a93209c842316a
+Charge pump P-101 operating manual 3 Mechanical seal Renew the mechanical seal cartridge on the charge pump every 8000 running hours or at the first sign of leakage past the gland.
+  scores: keyword bm25 -4.73 (some terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+[E2] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 · version 1 (current) · found by keyword · ev:861f2519eef23f9cd39f6546ab624deb
+Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.
+  scores: keyword bm25 -3.55 (some terms; lower is better, this query only); fused rank 0.0161 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+Retrieval: lexical. Keyword only because fixture-e5 is installed and matches the multilingual-e5-small profile, but has not been qualified on this machine, so retrieval is keyword-only. Qualify it from the Knowledge screen or with the retrieval_live test.
+Partial: no passage matched the whole question; these matched some of its terms.
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::labelled_retrieval_measurement ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- labelled measurement ---
+{
+  "cases": 9,
+  "k": 5,
+  "label": "keyword rows: deterministic test on this machine; hybrid row: deterministic transport (fixture concept lexicon, not a model)",
+  "labels": "src-tauri/src/knowledge/testdata/retrieval/labels.json",
+  "rows": [
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1"
+      ]
+    },
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1",
+        "overtime-policy.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1",
+        "overtime-policy.md p1"
+      ]
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-05-inspection-memo.md p1",
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-05-inspection-memo.md p1",
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "sops/exchanger-isolation.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "sops/hot-work-permit.md p1",
+        "sops/exchanger-isolation.md p1",
+        "sops/hot-work-permit.md p1"
+      ]
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1"
+      ]
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "manuals/compressor-K301.md p1",
+        "manuals/vessel-V101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/compressor-K301.md p1",
+        "sops/exchanger-isolation.md p1",
+        "manuals/vessel-V101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    }
+  ],
+  "summary": [
+    {
+      "answerableCases": 8,
+      "method": "hybrid via fixture transport",
+      "mrr": 0.9375,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 1.0
+    },
+    {
+      "answerableCases": 8,
+      "method": "keyword-all-terms (search_authorized)",
+      "mrr": 0.25,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 0.25
+    },
+    {
+      "answerableCases": 8,
+      "method": "keyword-any-term (hybrid, no model)",
+      "mrr": 0.625,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 0.75
+    }
+  ]
+}
+ok
+test agent_runtime::retrieval_tests::memory_neighbours_walks_only_what_the_reader_may_see ... --- memory.neighbours ---
+mi-6e501b89-cb02-4675-a7a5-fb7b45c42d65 r1 [fact · admitted] seal interval: 8000 h
+mi-cd95f7bf-64a7-46e4-a318-d4e61404f906 r1 [fact · admitted] seal interval: manual section 3 says 8000 h
+Links:
+- mi-cd95f7bf-64a7-46e4-a318-d4e61404f906 supports mi-6e501b89-cb02-4675-a7a5-fb7b45c42d65
+
+ok
+test agent_runtime::retrieval_tests::the_connector_reads_a_real_folder_into_versioned_authorised_passages ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- sync plant ---
+SyncReport {
+    plan: "8 new. 0 unchanged.",
+    outcome: IngestOutcome {
+        collection_id: "plant",
+        documents_read: 8,
+        chunks_indexed: 12,
+        pages_needing_review: 0,
+        flagged_for_injection: [],
+        failures: [],
+        retired: [],
+        superseded_sha256s: [],
+        withdrawn_sha256s: [],
+        unchanged_on_reread: 0,
+        skipped: 0,
+    },
+    memory_invalidated: 0,
+    memory_stale: 0,
+    unreadable: [],
+}
+ok
+test agent_runtime::retrieval_tests::the_packs_sop_question_retrieves_both_sections_it_must_cite ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- P00 pack SOP (keyword-only) ---
+8 passage(s) for "minimum allowable thickness hydrocarbon vessel course with pitting recorded".
+
+[E1] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 3. Minimum allowable thickness › 3.1 Carve-out: localised metal loss, page 1 · version 1 (current) · found by keyword · ev:14b60d23db04571e510ee200bd8729de
+Pressure Vessel Inspection and Retirement — Maintenance SOP 3. Minimum allowable thickness 3.1 Carve-out: localised metal loss The 8.0 mm value in section 3 applies to **general** thinning only. Where the inspection records external or internal pitting, localised metal loss, or corrosion under insulation anywhere on the course being assessed, the Revision C value of **9.0 mm** continues to apply to that course until a documented pitting assessment has been completed and…
+  scores: keyword bm25 -3.50 (some terms; lower is better, this query only); fused rank 0.0164 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E2] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 2. Definitions, page 1 · version 1 (current) · found by keyword · ev:0584bb2fffac61e0de914e5860aecc03
+Pressure Vessel Inspection and Retirement — Maintenance SOP 2. Definitions **Nominal thickness** is the as-built wall thickness recorded on the vessel data sheet. **Minimum allowable thickness** is the thickness below which the vessel may not remain in service at its rated pressure.
+  scores: keyword bm25 -2.04 (some terms; lower is better, this query only); fused rank 0.0161 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E3] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 4. Assessment › 4.1 Measurement, page 1 · version 1 (current) · found by keyword · ev:d4b4902159aef5953c5cf2bbef9321c4
+Pressure Vessel Inspection and Retirement — Maintenance SOP 4. Assessment 4.1 Measurement Ultrasonic thickness readings are taken at four points on each shell course. The governing measurement is the lowest of the four.
+  scores: keyword bm25 -1.52 (some terms; lower is better, this query only); fused rank 0.0159 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E4] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 0. Revision history, page 1 · version 1 (current) · found by keyword · ev:865e90e2420dd7ea564782d086131e6d
+Pressure Vessel Inspection and Retirement — Maintenance SOP 0. Revision history | Revision | Effective | Change | | -------- | ---------- | ------ | | C | 2024-01-15 | Minimum allowable thickness for hydrocarbon service set at 9.0 mm. | | D | 2026-09-01 | Hydrocarbon minimum reduced to 8.0 mm following the 2026 FFS study. **Section 3.1 carve-out added.** |
+  scores: keyword bm25 -1.20 (some terms; lower is better, this query only); fused rank 0.0156 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E5] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 3. Minimum allowable thickness, page 1 · version 1 (current) · found by keyword · ev:c58102a38f3c94885a05930e99b9e4cf
+Pressure Vessel Inspection and Retirement — Maintenance SOP 3. Minimum allowable thickness The minimum allowable thickness for a vessel in hydrocarbon service is 8.0 mm.
+  scores: keyword bm25 -1.10 (some terms; lower is better, this query only); fused rank 0.0154 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E6] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 3. Minimum allowable thickness, page 1 · version 1 (current) · found by keyword · ev:79c32a1d579ac271e8ea46a31dfbe599
+Pressure Vessel Inspection and Retirement — Maintenance SOP 3. Minimum allowable thickness | Service | Nominal (mm) | Minimum allowable (mm) | Re-inspect | | ------------------ | ------------ | ---------------------- | ---------- | | Hydrocarbon | 12.0 | 8.0 | 24 months | | Sour water | 12.0 | 9.5 | 12 months | | Utility / nitrogen | 10.0 | 7.0 | 36 months |
+  scores: keyword bm25 -0.93 (some terms; lower is better, this query only); fused rank 0.0152 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E7] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 4. Assessment › 4.2 Wall loss, page 1 · version 1 (current) · found by keyword · ev:0960fb018eff41947dc8b92fc9475ede
+Pressure Vessel Inspection and Retirement — Maintenance SOP 4. Assessment 4.2 Wall loss Wall loss is expressed as a percentage of the applicable minimum allowable thickness — which is the section 3.1 value where that carve-out is engaged: wall loss % = (minimum - measured) / minimum * 100
+  scores: keyword bm25 -0.00 (some terms; lower is better, this query only); fused rank 0.0149 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+[E8] maintenance-sop-rev-d.md — Pressure Vessel Inspection and Retirement — Maintenance SOP › 4. Assessment › 4.3 Replacement window, page 1 · version 1 (current) · found by keyword · ev:a7bafbb52b4a451ec01d80942daab3e4
+Pressure Vessel Inspection and Retirement — Maintenance SOP 4. Assessment 4.3 Replacement window A vessel below the applicable minimum allowable thickness must be replaced within 90 days of the inspection date. Continued operation past that window requires written approval from the Maintenance Manager and a documented fitness-for-service assessment.
+  scores: keyword bm25 -0.00 (some terms; lower is better, this query only); fused rank 0.0147 (ordering only)
+  documentSha256: 782c0d3ea89a0b2a3f75a1334e4fbcd289db1e1000d876f6279a657ec97c34a1
+
+Retrieval: lexical. Keyword only because fixture-e5 is installed and matches the multilingual-e5-small profile, but has not been qualified on this machine, so retrieval is keyword-only. Qualify it from the Knowledge screen or with the retrieval_live test.
+Partial: no passage matched the whole question; these matched some of its terms.
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+test agent_runtime::retrieval_tests::two_current_sources_that_disagree_are_both_returned_with_their_own_sources ... [document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+[document-sidecar] {"ready": false, "engine": null, "considered": [{"engine": "docling", "available": false}, {"engine": "text-layer", "available": false}], "detail": "No document engine is available. Install pypdf for basic text extraction, or Docling for layout and tables."}
+--- conflicting sources ---
+3 passage(s) for "How often should the P-101 mechanical seal be replaced?".
+
+[E1] correspondence/2026-03-seal-vendor-letter.md — Letter from the seal vendor, March 2026 › Service interval, page 1 · version 1 (current) · found by keyword+semantic · ev:b685497ea78eb88b30376137d4828da8
+Letter from the seal vendor, March 2026 Service interval Following the field failures on P-101, we now recommend that the mechanical seal cartridge be replaced every 6000 running hours rather than the interval in the original manual.
+  scores: keyword bm25 -7.66 (some terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0325 (ordering only)
+  documentSha256: ab03ee67bf1b8d02fc3725511a04821ff7ffc4c2df59b849e52db8d02be0e860
+
+[E2] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 3 Mechanical seal, page 1 · version 1 (current) · found by keyword+semantic · ev:f6940de218952669c2a93209c842316a
+Charge pump P-101 operating manual 3 Mechanical seal Renew the mechanical seal cartridge on the charge pump every 8000 running hours or at the first sign of leakage past the gland.
+  scores: keyword bm25 -6.04 (some terms; lower is better, this query only); semantic cosine 1.000 (closeness to the question); fused rank 0.0325 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+[E3] manuals/charge-pump-P101.md — Charge pump P-101 operating manual › 4 Suction conditions, page 1 · version 1 (current) · found by keyword · ev:861f2519eef23f9cd39f6546ab624deb
+Charge pump P-101 operating manual 4 Suction conditions The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow. Throttling the suction valve is prohibited.
+  scores: keyword bm25 -1.28 (some terms; lower is better, this query only); fused rank 0.0159 (ordering only)
+  documentSha256: 862248b97b16622ef616648c67be8d472a9b2bae4d1c53824712bd91ef87150f
+
+Retrieval: hybrid (semantic space multilingual-e5-small@f1f1f1f1f1f1f1f1/d384/mean/v1).
+Cite by marker. Excerpts only: read the page with knowledge.load_evidence_region before quoting anything the excerpt cuts off.
+
+ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2906 filtered out; finished in 6.42s
+

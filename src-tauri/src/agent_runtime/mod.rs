@@ -43,6 +43,7 @@ pub mod delegation;
 pub mod doc_pipeline;
 pub mod documents;
 pub mod extraction_tools;
+pub mod retrieval_tools;
 pub mod events;
 pub mod grants;
 pub mod memory;
@@ -295,6 +296,11 @@ pub struct RuntimeDeps {
     /// local OCR and interpretation over attached documents. See
     /// [`crate::extraction`].
     pub extraction: Arc<crate::extraction::service::ExtractionService>,
+    /// Retrieval (P07): the index, the embedding provider and its
+    /// qualification state, the embedding pass, and each run's pinned scope.
+    /// Shared with the Knowledge Retriever worker and the per-round context
+    /// compiler, so all three agree on whether the semantic half is on.
+    pub retrieval: Arc<crate::knowledge::service::RetrievalService>,
 }
 
 impl RuntimeDeps {
@@ -668,7 +674,7 @@ async fn handle(
         "state.commit" => state_commit_handler(params, deps),
         // The boundary before every model round. See `context_refresh_handler`
         // for why run-start injection alone is not enough.
-        "context.refresh" => context_refresh_handler(params, deps),
+        "context.refresh" => context_refresh_handler(params, deps).await,
         other => Err(WireError::new(
             code::UNKNOWN_METHOD,
             format!("no handler for {other}"),
@@ -748,7 +754,7 @@ fn state_commit_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value,
 /// is here. And the admission rules — which claims count as established and
 /// which are only proposals — are here. A loop that assembled its own context
 /// would be assembling it without any of them.
-fn context_refresh_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
+async fn context_refresh_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireError> {
     use crate::agent_runtime::context_compiler::{ContextCompiler, FrozenScope, Reserves,
         RetrievalMode};
 
@@ -853,8 +859,52 @@ fn context_refresh_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Val
         },
     );
 
+    // What the round's question retrieves from the organisation's documents
+    // (P07), inside the reader's clearance and the run's pinned scope, by the
+    // same service the tools and the retriever worker use. A search that fails
+    // costs this round its passages, not the round; it is logged, and the
+    // manifest then records the declared mode rather than a search that did
+    // not happen.
+    let knowledge = if request.question.trim().is_empty() {
+        None
+    } else {
+        let run_scope = deps.retrieval.scope_for(&request.run_id);
+        let search = crate::knowledge::hybrid::HybridRequest {
+            query: request.question.clone(),
+            limit: crate::agent_runtime::context_compiler::MAX_KNOWLEDGE_BLOCKS,
+            ..Default::default()
+        };
+        match deps.retrieval.search_scoped(&session, &search, &run_scope).await {
+            Ok(response) => {
+                let passages: Vec<_> = response.hits.iter().map(|hit| hit.passage.clone()).collect();
+                let markers = retrieval::record_markers(&deps.passages, &request.run_id, &passages)
+                    .unwrap_or_default();
+                let embedding_dimension = deps
+                    .retrieval
+                    .status()
+                    .identity
+                    .map(|identity| identity.dimensions as u32);
+                Some(crate::agent_runtime::context_compiler::RoundKnowledge {
+                    hits: response.hits,
+                    coverage: response.coverage,
+                    index_revision: deps.retrieval.index.index_revision().ok(),
+                    embedding_dimension,
+                    markers,
+                })
+            }
+            Err(error) => {
+                log::warn!(
+                    "[context] run {}: this round's knowledge search failed ({error}); it runs \
+                     on the task's memory alone",
+                    request.run_id
+                );
+                None
+            }
+        }
+    };
+
     let compiled = ContextCompiler::new(graph)
-        .compile(
+        .compile_with_knowledge(
             &session,
             &scope,
             base,
@@ -870,6 +920,7 @@ fn context_refresh_handler(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Val
                 counted_by: "estimate".to_string(),
                 mode: RetrievalMode::Lexical,
             },
+            knowledge.as_ref(),
         )
         .map_err(|error| WireError::new(code::INTERNAL, error.explain()))?;
 
@@ -2293,6 +2344,19 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
         ToolName::DocumentOcrRegions => {
             extraction_tools::ocr_regions(deps, &call, &session, &tool_call).await
         }
+        // P07. Hybrid search records its passages in the run's evidence table,
+        // numbered once for the run, exactly as `knowledge.search_authorized`.
+        ToolName::KnowledgeHybridSearch => {
+            let (outcome, chunks) =
+                retrieval_tools::hybrid_search(deps, &call, &session, &tool_call).await;
+            evidence_chunks = chunks;
+            outcome
+        }
+        ToolName::KnowledgeRerank => retrieval_tools::rerank(deps, &call, &tool_call),
+        ToolName::KnowledgeSourceVersion => {
+            retrieval_tools::source_version(deps, &session, &tool_call)
+        }
+        ToolName::MemoryNeighbours => retrieval_tools::neighbours(deps, &call, &session, &tool_call),
         ToolName::MediaExtractFindings => {
             extraction_tools::extract_findings(deps, &call, &session, &tool_call).await
         }
@@ -4794,6 +4858,8 @@ mod artifact_carryover_tests;
 mod artifact_tools_tests;
 #[cfg(test)]
 mod extraction_tests;
+#[cfg(test)]
+mod retrieval_tests;
 
 #[cfg(test)]
 mod conversations_tests;

@@ -1280,6 +1280,16 @@ impl ToolRunner for LocalToolRunner<'_> {
                  conversation the document was attached to.",
                 tool.as_str()
             )),
+            // P07: each needs the run -- its pinned scope, its evidence table,
+            // its task's memory -- which this runner does not hold.
+            ToolName::KnowledgeHybridSearch
+            | ToolName::KnowledgeRerank
+            | ToolName::KnowledgeSourceVersion
+            | ToolName::MemoryNeighbours => Err(format!(
+                "{} is answered on the agent path, which holds the run's scope, evidence and \
+                 memory.",
+                tool.as_str()
+            )),
             ToolName::SearchDocuments => self.search(call),
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),

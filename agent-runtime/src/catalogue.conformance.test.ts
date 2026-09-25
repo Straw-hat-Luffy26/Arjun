@@ -92,6 +92,10 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "document.render_regions",
   "document.ocr_regions",
   "document.extract_tables",
+  "knowledge.hybrid_search",
+  "knowledge.source_version",
+  "memory.neighbours",
+  "knowledge.rerank",
 ]);
 
 /**
@@ -198,6 +202,10 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["document.render_regions", true],
   ["document.ocr_regions", true],
   ["document.extract_tables", true],
+  ["knowledge.hybrid_search", true],
+  ["knowledge.source_version", true],
+  ["memory.neighbours", true],
+  ["knowledge.rerank", true],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

@@ -258,6 +258,15 @@ pub enum ToolName {
     DocumentOcrRegions,
     /// Tables from the text layer or from OCR, cell by cell.
     DocumentExtractTables,
+    /// P07: keyword and semantic retrieval over the organisation's documents,
+    /// fused, deduplicated and labelled by method.
+    KnowledgeHybridSearch,
+    /// P07: reorders passages this run already retrieved, locally and bounded.
+    KnowledgeRerank,
+    /// P07: the version history of one indexed source.
+    KnowledgeSourceVersion,
+    /// P07: the bounded neighbourhood of one memory item, inside what the reader may see.
+    MemoryNeighbours,
 }
 
 impl ToolName {
@@ -314,6 +323,10 @@ impl ToolName {
         ToolName::DocumentRenderRegions,
         ToolName::DocumentOcrRegions,
         ToolName::DocumentExtractTables,
+        ToolName::KnowledgeHybridSearch,
+        ToolName::KnowledgeRerank,
+        ToolName::KnowledgeSourceVersion,
+        ToolName::MemoryNeighbours,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -371,6 +384,10 @@ impl ToolName {
             ToolName::DocumentRenderRegions => "document.render_regions",
             ToolName::DocumentOcrRegions => "document.ocr_regions",
             ToolName::DocumentExtractTables => "document.extract_tables",
+            ToolName::KnowledgeHybridSearch => "knowledge.hybrid_search",
+            ToolName::KnowledgeRerank => "knowledge.rerank",
+            ToolName::KnowledgeSourceVersion => "knowledge.source_version",
+            ToolName::MemoryNeighbours => "memory.neighbours",
         }
     }
 
@@ -443,6 +460,11 @@ impl ToolName {
             | ToolName::DocumentRenderRegions
             | ToolName::DocumentOcrRegions
             | ToolName::DocumentExtractTables => None,
+            // Introduced namespaced by P07.
+            ToolName::KnowledgeHybridSearch
+            | ToolName::KnowledgeRerank
+            | ToolName::KnowledgeSourceVersion
+            | ToolName::MemoryNeighbours => None,
         }
     }
 
@@ -550,6 +572,8 @@ impl ToolName {
                 | ToolName::ReadAttachedPages
                 | ToolName::SearchAttachedDocuments
                 | ToolName::BuildDocumentGraph
+                // P07: returns passages from the organisation's documents.
+                | ToolName::KnowledgeHybridSearch
         )
     }
 
@@ -594,6 +618,14 @@ impl ToolName {
             | ToolName::DocumentRenderRegions
             | ToolName::DocumentOcrRegions
             | ToolName::DocumentExtractTables => true,
+            // P07: retrieval, a reorder of passages already retrieved, a
+            // version history and a graph walk. The embedding pass they may
+            // trigger writes derived vectors in ARJUN's own index, never a
+            // source or a memory item.
+            ToolName::KnowledgeHybridSearch
+            | ToolName::KnowledgeRerank
+            | ToolName::KnowledgeSourceVersion
+            | ToolName::MemoryNeighbours => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -680,6 +712,10 @@ impl ToolName {
             ToolName::DocumentRenderRegions => "render regions of an attached document's pages",
             ToolName::DocumentOcrRegions => "read scanned pages or regions with local OCR",
             ToolName::DocumentExtractTables => "read the tables on pages of an attached document",
+            ToolName::KnowledgeHybridSearch => "search the knowledge base by keyword and meaning",
+            ToolName::KnowledgeRerank => "reorder passages this task already retrieved",
+            ToolName::KnowledgeSourceVersion => "read the version history of a source document",
+            ToolName::MemoryNeighbours => "read what a memory item is connected to",
         }
     }
 
@@ -1849,6 +1885,51 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             network: NetworkUse::None,
             timeout: Duration::from_secs(60),
             max_response_bytes: 32 * 1024,
+            ..defaults(name)
+        },
+        // P07. Hybrid search talks to the embedding model on loopback, which
+        // is not egress; the other three read local stores only.
+        ToolName::KnowledgeHybridSearch => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "query", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "maxResults", kind: Integer },
+                ArgumentSpec { name: "documentSha256s", kind: List },
+            ],
+            network: NetworkUse::Loopback,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::KnowledgeRerank => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "query", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "markers", kind: List }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::KnowledgeSourceVersion => ToolSpec {
+            permission: SearchKnowledge,
+            arguments: &[ArgumentSpec { name: "documentSha256", kind: Text }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(5),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::MemoryNeighbours => ToolSpec {
+            // Reading memory is reading whatever the person is already cleared
+            // for, exactly as `memory.recall_authorized` is.
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "itemId", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "depth", kind: Integer },
+                ArgumentSpec { name: "edgeKinds", kind: List },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 16 * 1024,
             ..defaults(name)
         },
         ToolName::SovereigntyGetEvidence => ToolSpec {

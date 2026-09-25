@@ -692,6 +692,21 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ]);
     }
 
+    // The Knowledge Retriever's tools (P07): hybrid keyword and semantic
+    // search, a bounded local rerank of what was retrieved, a source's
+    // version history, and a bounded walk of the task's memory graph.
+    //
+    // Always permitted: all four read inside the reader's clearance and write
+    // nothing, and `knowledge.search_authorized` stays first in the list for
+    // the literal query it is best at. Before the page tools, so a small window
+    // drops a crop tool before it drops the search that finds a paraphrase.
+    permitted.extend([
+        ToolName::KnowledgeHybridSearch,
+        ToolName::KnowledgeSourceVersion,
+        ToolName::MemoryNeighbours,
+        ToolName::KnowledgeRerank,
+    ]);
+
     // The Document & Vision Analyst's page tools (P06): layout, crops, local
     // OCR and tables over what the asker attached to this thread, owner- and
     // conversation-scoped in the store, with any OCR local and bounded.

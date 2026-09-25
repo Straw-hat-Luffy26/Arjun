@@ -70,6 +70,28 @@ pub fn record(passages: &RunPassages, run_id: &str, query: &str, hits: &[SearchR
     render_passages(query, &marked)
 }
 
+/// Records passages against the run and returns the marker each was given.
+///
+/// For a caller that renders the passages itself (`knowledge.hybrid_search`
+/// shows excerpts and labelled scores rather than whole passages). The same
+/// table and the same rule as [`record`]: a passage found again keeps its
+/// marker, so the verifier resolves `[En]` to one passage for the whole run.
+pub fn record_markers(passages: &RunPassages, run_id: &str, hits: &[SearchResult]) -> Option<Vec<usize>> {
+    let mut table = passages.lock().ok()?;
+    let recorded = table.entry(run_id.to_string()).or_default();
+    Some(
+        hits.iter()
+            .map(|hit| match recorded.iter().position(|kept| kept.chunk_id == hit.chunk_id) {
+                Some(index) => index + 1,
+                None => {
+                    recorded.push(hit.clone());
+                    recorded.len()
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Reads a named page range and records it as this run's evidence.
 ///
 /// ## Why this exists rather than a "read the document" tool

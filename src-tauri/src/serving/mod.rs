@@ -242,6 +242,33 @@ pub fn plan_launch(
         entry.id.clone(),
     ];
 
+    // An embedding model is served as one, and only as one (P07).
+    //
+    // Without `--embedding` llama-server loads an embedding GGUF as a causal
+    // model and answers chat completions with it — an embedding endpoint that
+    // could be handed to a child loop as a conversational model, which is the
+    // one thing it must never be. With it, completions are refused and
+    // `/v1/embeddings` pools with the profile's method. The batch sizes are the
+    // window, so an input over it is refused as too large rather than
+    // truncated; the embedder halves such a window and retries.
+    let embedding_only = crate::knowledge::provider::is_embedding_only(entry);
+    if embedding_only {
+        args.push("--embedding".to_string());
+        if let Some(profile) = crate::knowledge::embedding::profile_for_weights(weights) {
+            args.push("--pooling".to_string());
+            args.push(profile.pooling.as_str().to_string());
+        }
+        let window = gpu.context_length.to_string();
+        args.extend([
+            "--batch-size".to_string(),
+            window.clone(),
+            "--ubatch-size".to_string(),
+            window,
+            "--parallel".to_string(),
+            "1".to_string(),
+        ]);
+    }
+
     // Without this a vision model loads, answers, and cannot see: llama.cpp
     // takes the projector as a separate argument and simply runs text-only
     // when it is absent. The scanner pairs the projector with its model on
@@ -350,7 +377,8 @@ pub fn plan_launch(
         args.push("--no-warmup".to_string());
     }
 
-    if crate::ai_engine::gguf_meta::capabilities(weights).emits_reasoning
+    if !embedding_only
+        && crate::ai_engine::gguf_meta::capabilities(weights).emits_reasoning
         && llama_server_splits_reasoning()
     {
         args.push("--jinja".to_string());
@@ -1321,6 +1349,44 @@ mod tests {
         // No default: ARJUN cannot honestly claim to manage a vLLM it did not
         // provision, so the entry must say where it is.
         assert_eq!(ServingSpec::default_for(Runtime::PythonSidecar), None);
+    }
+
+    /// P07: an embedding model is launched in embedding mode, with its
+    /// profile's pooling and a batch the size of its window, and never with
+    /// the reasoning flags a chat model gets.
+    #[test]
+    fn an_embedding_model_is_served_as_one_and_only_as_one() {
+        use crate::extraction::projector::fixture::{write_gguf, V};
+        let dir = tempfile::tempdir().unwrap();
+        let weights = dir.path().join("Qwen3-Embedding-0.6B-Q8_0.gguf");
+        write_gguf(
+            &weights,
+            &[
+                ("general.architecture", V::Str("qwen3")),
+                ("general.name", V::Str("Qwen3 Embedding 0.6b")),
+            ],
+        );
+        let mut entry = gguf_entry();
+        entry.roles = vec![ModelRole::Embedding];
+        let mut cpu = plan(0);
+        cpu.context_length = 512;
+        let launch = plan_launch(&entry, &weights, None, &cpu, 8123, false);
+        let value = |flag: &str| {
+            launch
+                .args
+                .windows(2)
+                .find(|pair| pair[0] == flag)
+                .map(|pair| pair[1].clone())
+        };
+        assert!(launch.args.contains(&"--embedding".to_string()));
+        assert_eq!(value("--pooling").as_deref(), Some("last"));
+        assert_eq!(value("--ubatch-size").as_deref(), Some("512"));
+        assert_eq!(value("--n-gpu-layers").as_deref(), Some("0"));
+        assert!(!launch.args.contains(&"--reasoning-format".to_string()));
+
+        // A chat model is untouched.
+        let chat = plan_launch(&gguf_entry(), &weights, None, &plan(33), 8123, false);
+        assert!(!chat.args.contains(&"--embedding".to_string()));
     }
 
     #[test]

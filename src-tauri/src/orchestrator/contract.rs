@@ -274,6 +274,15 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
             "agent_runtime::extraction_tools::ocr_regions, then extraction::ocr::read_batch",
         ),
         ToolName::DocumentExtractTables => (AgentPath, "agent_runtime::extraction_tools::extract_tables"),
+        // P07. On the agent path because each needs the run: its pinned
+        // scope, its evidence table, its task's memory.
+        ToolName::KnowledgeHybridSearch => (
+            AgentPath,
+            "agent_runtime::retrieval_tools::hybrid_search, then agent_runtime::retrieval::record",
+        ),
+        ToolName::KnowledgeRerank => (AgentPath, "agent_runtime::retrieval_tools::rerank"),
+        ToolName::KnowledgeSourceVersion => (AgentPath, "agent_runtime::retrieval_tools::source_version"),
+        ToolName::MemoryNeighbours => (AgentPath, "agent_runtime::retrieval_tools::neighbours"),
         ToolName::KnowledgeMultimodalRetrieve => (Runner, "LocalToolRunner::multimodal_retrieve"),
         ToolName::ReadScopedFile => (Runner, "LocalToolRunner::read"),
         ToolName::WriteScopedFile => (Runner, "LocalToolRunner::write"),
@@ -337,6 +346,13 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         ToolName::MediaExtractFindings => &[PageRenderer, LocalOcr],
         ToolName::SearchDocuments
         | ToolName::LoadMoreEvidence
+        // P07. The embedding model is optional: without a qualified one the
+        // search runs by keyword and says so. The memory walk answers "no
+        // graph on this deployment" plainly, as `context.refresh` does.
+        | ToolName::KnowledgeHybridSearch
+        | ToolName::KnowledgeRerank
+        | ToolName::KnowledgeSourceVersion
+        | ToolName::MemoryNeighbours
         | ToolName::MemoryRecallAuthorized
         | ToolName::MemoryPromoteApproved
         | ToolName::RunCalculation
@@ -372,7 +388,8 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         ToolName::SearchDocuments
         | ToolName::LoadMoreEvidence
         | ToolName::MediaExtractFindings
-        | ToolName::KnowledgeMultimodalRetrieve => Evidence,
+        | ToolName::KnowledgeMultimodalRetrieve
+        | ToolName::KnowledgeHybridSearch => Evidence,
         ToolName::RunCalculation => Calculation,
         ToolName::WriteScopedFile
         | ToolName::CreateDocx
@@ -422,7 +439,12 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::DocumentLayoutMap
         | ToolName::DocumentRenderRegions
         | ToolName::DocumentOcrRegions
-        | ToolName::DocumentExtractTables => Text,
+        | ToolName::DocumentExtractTables
+        // A reorder of markers already in the table, a version history and a
+        // graph neighbourhood.
+        | ToolName::KnowledgeRerank
+        | ToolName::KnowledgeSourceVersion
+        | ToolName::MemoryNeighbours => Text,
     }
 }
 

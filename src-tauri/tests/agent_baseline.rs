@@ -144,9 +144,10 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         ),
     );
 
+    let index = Arc::new(index);
     let deps = RuntimeDeps {
         memory_graph: None,
-        index: Arc::new(index),
+        index: index.clone(),
         session: Arc::new(RwLock::new(Some(Session::open(User::new(
             "baseline",
             "P00 Baseline",
@@ -203,6 +204,10 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         extraction: Arc::new(sarathi_lib::extraction::service::ExtractionService::without_models(
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
+        )),
+        retrieval: Arc::new(sarathi_lib::knowledge::service::RetrievalService::lexical_only(
+            index.clone(),
+            "no embedding model in this test",
         )),
     };
 

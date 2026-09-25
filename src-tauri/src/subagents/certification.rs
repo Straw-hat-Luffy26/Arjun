@@ -45,9 +45,15 @@ pub const RELIABLE_AT: f64 = 85.0;
 /// Roles where a cheaper model may be considered at all.
 ///
 /// Deliberately short. Reasoning and coding are where a small model's failures
-/// are visible and expensive; extraction and retrieval are where they are
-/// cheap and, checked, safe.
-pub const CHEAPER_ELIGIBLE: &[ModelRole] = &[ModelRole::DocumentOcr, ModelRole::Embedding];
+/// are visible and expensive; extraction is where they are cheap and, checked,
+/// safe.
+///
+/// `Embedding` used to be here, which let a certified embedding model be
+/// chosen as a retrieval child's *conversational* model — the one thing an
+/// embedding endpoint must never be (P07). Retrieval uses its embedding model
+/// through [`crate::knowledge::service::RetrievalService`], as a tool; the
+/// child's own model, when it has one, is the parent's.
+pub const CHEAPER_ELIGIBLE: &[ModelRole] = &[ModelRole::DocumentOcr];
 
 /// Which model a child will use, and why.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -182,6 +188,16 @@ pub fn choose(
     let mut why_not: Vec<String> = Vec::new();
     for (entry, certification) in ordered {
         if entry.id == parent_model {
+            continue;
+        }
+        // Whatever the role asked for, a model that produces vectors is never
+        // a child's conversational model.
+        if crate::knowledge::provider::is_embedding_only(entry) {
+            why_not.push(format!(
+                "{} is an embedding model: it produces vectors, not replies, and is never a \
+                 child's conversational model",
+                entry.id
+            ));
             continue;
         }
         match is_reliable_for(*certification, role) {

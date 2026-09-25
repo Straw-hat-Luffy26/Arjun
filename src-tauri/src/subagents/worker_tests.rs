@@ -100,6 +100,7 @@ fn services(
     events: Arc<TaskEventLog>,
     cancellations: Arc<RunCancellations>,
 ) -> Arc<WorkerServices> {
+    let index_for_retrieval = index.clone();
     Arc::new(WorkerServices {
         index,
         graph: Some(graph),
@@ -116,6 +117,10 @@ fn services(
         child_loop: None,
         cancellations,
         analyst: None,
+        retrieval: Arc::new(crate::knowledge::service::RetrievalService::lexical_only(
+            index_for_retrieval,
+            "no embedding model in these tests",
+        )),
     })
 }
 

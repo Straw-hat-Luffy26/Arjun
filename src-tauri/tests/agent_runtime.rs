@@ -31,7 +31,7 @@ fn bundle() -> PathBuf {
 
 fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir");
-    let index = KnowledgeIndex::open(dir.path()).expect("index opens");
+    let index = Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens"));
     let session = Arc::new(RwLock::new(Some(Session::open(User::new(
         "priya",
         "Priya Sharma",
@@ -60,7 +60,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             // No registry in these tests: a delegation then refuses by name
         // rather than inventing a model, which is the behaviour under test.
         registry: None,
-        index: Arc::new(index),
+        index: index.clone(),
             session,
             workspaces,
             approvals: Arc::new(ApprovalQueue::new()),
@@ -153,6 +153,10 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         extraction: Arc::new(sarathi_lib::extraction::service::ExtractionService::without_models(
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
+        )),
+        retrieval: Arc::new(sarathi_lib::knowledge::service::RetrievalService::lexical_only(
+            index.clone(),
+            "no embedding model in this test",
         )),
         }),
         // Returned so the directory outlives the test; dropping it early would
@@ -1686,6 +1690,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             documents: base.documents.clone(),
             conversations: base.run_to_conversation.clone(),
         }),
+        retrieval: base.retrieval.clone(),
     });
     let profiles = sarathi_lib::subagents::load_profiles(
         &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents"),
@@ -1736,6 +1741,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         notebooks: base.notebooks.clone(),
         jobs: Arc::default(),
         extraction: base.extraction.clone(),
+            retrieval: base.retrieval.clone(),
     });
 
     (deps, dir)

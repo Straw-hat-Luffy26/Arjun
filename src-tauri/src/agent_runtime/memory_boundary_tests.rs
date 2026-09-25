@@ -47,13 +47,14 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         crate::artifacts::conversation_store::ConversationArtifacts::open(dir.path())
             .expect("the artifact store opens"),
     );
+    let index = Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens"));
     let deps = Arc::new(RuntimeDeps {
         memory_graph: None,
         conversation_artifacts,
         // No registry in these tests: a delegation then refuses by name
         // rather than inventing a model, which is the behaviour under test.
         registry: None,
-        index: Arc::new(KnowledgeIndex::open(dir.path()).expect("index opens")),
+        index: index.clone(),
         session: signed_in(department),
         workspaces,
         approvals: Arc::new(ApprovalQueue::new()),
@@ -105,6 +106,10 @@ fn deps_in(department: Option<&str>) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         extraction: Arc::new(crate::extraction::service::ExtractionService::without_models(
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
+        )),
+        retrieval: Arc::new(crate::knowledge::service::RetrievalService::lexical_only(
+            index.clone(),
+            "no embedding model in this test",
         )),
     });
     (deps, dir)

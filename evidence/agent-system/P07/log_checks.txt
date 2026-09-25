@@ -1,0 +1,43 @@
+=== npm run runtime:build
+⚡ Done in 329ms
+bundled 1096 modules -> dist/arjun-agent-runtime.mjs (1785 KiB)
+sha256 d98553930b0139c2d92239812dc3733e460abffb51d4715fbf142ad92ba8bcec
+exit: 0
+=== npm run sbom
+  note: The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because the dependency is far heavier: it pins torch and transformers in its own requirements.txt. An air-gapped install must vendor those wheels; nothing in this repository fetches them.
+  note: The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
+exit: 0
+=== npm run check:generated
+  note: The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
+The committed SBOM is stale. Run npm run sbom and commit evidence/.
+exit: 1
+=== npm run check:bundle:self
+  a-blind-gate … caught
+
+bundle gate self-test: pass — the gate refuses every regression it claims to catch
+exit: 0
+=== npm run check:bundle
+bundle gate: pass — 1.7 MiB, adapters: openai-completions, 6 reviewed vendor hostname(s), all defences present
+exit: 0
+=== npm run runtime:test
+ Test Files  131 passed (131)
+      Tests  2385 passed (2385)
+   Start at  04:33:41
+   Duration  29.18s (transform 3.65s, setup 0ms, collect 25.76s, tests 24.69s, environment 30ms, prepare 9.72s)
+
+exit: 0
+=== npm run test:ui
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+   Start at  04:34:18
+   Duration  5.23s (transform 1.28s, setup 0ms, collect 2.64s, tests 1.01s, environment 10ms, prepare 3.14s)
+
+exit: 0
+=== npx tsc --noEmit -p .
+exit: 0
+=== npm run build
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 16.77s
+exit: 0

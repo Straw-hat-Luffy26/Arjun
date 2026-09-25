@@ -117,6 +117,10 @@ pub struct WorkerServices {
     /// the extractor then reads workspace files only, and says a document it
     /// was pointed at could not be reached.
     pub analyst: Option<AnalystServices>,
+    /// Retrieval (P07): the same service the runtime's tools and the context
+    /// compiler use, so a worker sees the same qualification state and scope
+    /// rules as the parent it works for.
+    pub retrieval: Arc<crate::knowledge::service::RetrievalService>,
 }
 
 /// What the document extractor reads an attached document through.
@@ -355,7 +359,11 @@ impl ChildWorker for SpecialistWorker {
         // Held for the length of the work and released when this returns. On a
         // machine that cannot hold two models, this is where four logically
         // parallel children become one at a time.
-        let lease = match &packet.model_id {
+        // The retriever holds no card: its search is keyword SQL and, when a
+        // qualified embedding model is installed, a CPU embedding call. Holding
+        // the GPU for it would make a parallel generation wait on nothing.
+        let holds_card = self.profile != "knowledge-retriever";
+        let lease = match packet.model_id.as_ref().filter(|_| holds_card) {
             Some(model_id) => match self
                 .services
                 .scheduler
@@ -407,6 +415,12 @@ impl ChildWorker for SpecialistWorker {
             _ if self.reads_attached_documents(packet) => {
                 self.extract_documents(packet, policy, &session, &cancel, lease.as_ref()).await
             }
+            // Retrieval is deterministic with or without a runtime (P07): a
+            // model loop would add a round that decides nothing the search
+            // does not already decide, on a card another job may need.
+            _ if self.profile == "knowledge-retriever" => {
+                self.retrieve(packet, policy, &session, &cancel).await
+            }
             Some(child_loop) => self.via_model(child_loop, packet, policy, &cancel).await,
             // No runtime, or no model. A role that cannot be done without one
             // says so rather than doing a fraction of it.
@@ -416,7 +430,7 @@ impl ChildWorker for SpecialistWorker {
                 self.profile
             )),
             None => match self.profile.as_str() {
-                "knowledge-retriever" => self.retrieve(packet, policy, &session, &cancel),
+                "knowledge-retriever" => self.retrieve(packet, policy, &session, &cancel).await,
                 "document-extractor" => self.extract(packet, policy, &session, &cancel),
                 "calculation-checker" => {
                     self.check_calculations(packet, policy, &session, memory.as_ref(), &cancel)
@@ -708,8 +722,26 @@ impl SpecialistWorker {
         Ok(work)
     }
 
-    /// Finds the passages that bear on one question, and cites them.
-    fn retrieve(
+    /// Finds the passages that bear on one question, and cites them (P07).
+    ///
+    /// ## Deterministic, with no model round
+    ///
+    /// Retrieval is a search and a citation, and the plan says so: an
+    /// embedding model is not a conversational agent, and deterministic
+    /// retrieval may finish a simple job without an LLM round. The hybrid
+    /// search runs here directly — keyword, and semantic where a qualified
+    /// embedding model is installed — inside the scope the job was queued
+    /// with. Query planning by a chat model is not used: nothing has measured
+    /// that it improves retrieval on this corpus.
+    ///
+    /// ## What is published
+    ///
+    /// One fact per passage, on the search's own receipt: the citation, the
+    /// source version, how it was found, and a short excerpt when the passage
+    /// is within this worker's classification ceiling. And one observation of
+    /// the search's coverage — including "nothing answers this", which is a
+    /// finding a sibling must be able to read rather than a silence.
+    async fn retrieve(
         &self,
         packet: &ChildTaskPacket,
         policy: &EffectivePolicy,
@@ -723,74 +755,182 @@ impl SpecialistWorker {
         // pointed at. Never the parent's transcript: a packet carries no
         // contents, and there is nothing here that could read one.
         let mut query = packet.objective.clone();
+        let mut documents: Vec<String> = Vec::new();
+        let mut scope = crate::knowledge::service::RunScope::default();
         for input in &packet.inputs {
-            if let InputRef::Expression { expression } = input {
-                query.push(' ');
-                query.push_str(expression);
+            match input {
+                InputRef::Expression { expression } => {
+                    query.push(' ');
+                    query.push_str(expression);
+                }
+                InputRef::Document { sha256, .. } => documents.push(sha256.clone()),
+                InputRef::RetrievalScope {
+                    pinned_revision,
+                    notebook_id,
+                    source_sha256s,
+                } => {
+                    scope.pinned_revision = Some(*pinned_revision);
+                    scope.notebook = notebook_id.as_ref().map(|notebook_id| {
+                        crate::knowledge::service::NotebookPin {
+                            notebook_id: notebook_id.clone(),
+                            source_sha256s: source_sha256s.clone(),
+                        }
+                    });
+                }
+                _ => {}
             }
         }
+        let mut request = crate::knowledge::hybrid::HybridRequest {
+            query: query.clone(),
+            limit: RETRIEVAL_LIMIT,
+            ..Default::default()
+        };
+        if !documents.is_empty() {
+            request.scope.documents = Some(documents);
+        }
 
-        let hits = self
+        let response = self
             .services
-            .index
-            .search(session, &query, RETRIEVAL_LIMIT)
+            .retrieval
+            .search_scoped(session, &request, &scope)
+            .await
             .map_err(|error| format!("the document index could not be searched: {error}"))?;
+        cancel.check()?;
 
         let mut work = Work::new();
         work.turns = 1;
-        if hits.is_empty() {
+        let coverage = &response.coverage;
+
+        // Above this worker's ceiling: not published, and counted. The parent
+        // holds the same clearance and can search for them itself; this
+        // worker's memory must not carry them at a lower classification.
+        let ceiling = policy.inherited.classification_ceiling;
+        let (within, above): (Vec<_>, Vec<_>) = response
+            .hits
+            .iter()
+            .partition(|hit| hit.passage.classification.within(ceiling));
+        if !above.is_empty() {
             work.uncertainty.push(format!(
-                "nothing in the connected collections matched {query:?}. This is a finding: do \
-                 not assert what no source says."
+                "{} passage(s) found are classified above this worker's {} ceiling and were not \
+                 published; search for them from the parent",
+                above.len(),
+                ceiling.label()
             ));
-            work.confidence = 1.0;
-            return Ok(work);
         }
 
-        // The search this worker ran, recorded as the receipt every passage it
-        // returned rests on. The output is the result set -- which chunks, in
-        // which documents, on which pages -- so the hash names exactly what the
-        // search returned and nothing the worker added afterwards.
-        let listing: String = hits
+        // The search, recorded as the receipt everything below rests on. The
+        // output is the result set -- which chunks, in which documents and
+        // versions, on which pages, found how -- so the hash names exactly
+        // what the search returned and nothing the worker added afterwards.
+        let listing: String = within
             .iter()
-            .map(|hit| format!("{}\t{}\t{}", hit.chunk_id, hit.document_sha256, hit.page))
+            .map(|hit| {
+                format!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    hit.passage.chunk_id,
+                    hit.passage.document_sha256,
+                    hit.passage.page,
+                    hit.method.label(),
+                    hit.source.as_ref().map(|s| s.version).unwrap_or(0)
+                )
+            })
+            .chain(std::iter::once(format!(
+                "coverage\t{}\t{}",
+                coverage.mode,
+                coverage.partial.join("; ")
+            )))
             .collect::<Vec<_>>()
             .join("\n");
         let receipt = self.receipt(
             packet,
-            ToolName::SearchDocuments,
+            ToolName::KnowledgeHybridSearch,
             "search",
             &listing,
             &session.user.id,
             &mut work,
         );
 
-        for (position, hit) in hits.iter().enumerate() {
+        // Coverage, published whether or not anything was found.
+        let mut coverage_line = format!(
+            "search coverage: {:?} — {} passage(s), {} retrieval",
+            query,
+            within.len(),
+            coverage.mode
+        );
+        if let Some(because) = &coverage.degraded_because {
+            coverage_line.push_str(&format!(" (keyword only: {because})"));
+        }
+        if !coverage.partial.is_empty() {
+            coverage_line.push_str(&format!("; partial: {}", coverage.partial.join("; ")));
+        }
+        if within.is_empty() {
+            coverage_line.push_str("; nothing the reader may see answers this");
+            work.uncertainty.push(format!(
+                "nothing in the connected collections matched {query:?}. This is a finding: do \
+                 not assert what no source says."
+            ));
+        }
+        work.claims.push(Claim {
+            kind: MemoryKind::ToolObservation,
+            content: coverage_line,
+            sources: Vec::new(),
+            artifacts: Vec::new(),
+            confidence: Some(1.0),
+            causal_parents: Vec::new(),
+            idempotency_key: format!("{}:coverage", packet.idempotency_key),
+            receipt: receipt.clone(),
+            depends_on: Vec::new(),
+        });
+        for line in &coverage.partial {
+            work.uncertainty.push(line.clone());
+        }
+        if let Some(because) = &coverage.degraded_because {
+            work.uncertainty.push(format!("keyword-only retrieval: {because}"));
+        }
+
+        for (position, hit) in within.iter().enumerate() {
+            let version = hit
+                .source
+                .as_ref()
+                .map(|source| {
+                    if source.superseded_since_pin {
+                        format!(" [v{} superseded since queued]", source.version)
+                    } else {
+                        format!(" [v{} {}]", source.version, source.status)
+                    }
+                })
+                .unwrap_or_default();
+            let citation = format!("{}{version}", hit.passage.citation());
             work.findings.push(Finding {
                 // The citation, not the passage. A finding carrying the text
                 // would be a second copy of it under a second set of clearance
                 // assumptions — the rule `result.rs` documents.
-                statement: format!("{} bears on this question.", hit.citation()),
+                statement: format!("{citation} bears on this question ({}).", hit.method.label()),
                 evidence: vec![EvidenceRef {
                     marker: Some(position + 1),
-                    document_sha256: hit.document_sha256.clone(),
-                    page: Some(hit.page),
-                    citation: hit.citation(),
+                    document_sha256: hit.passage.document_sha256.clone(),
+                    page: Some(hit.passage.page),
+                    citation: citation.clone(),
                 }],
             });
+            let excerpt: String = hit.excerpt.chars().take(300).collect();
             work.claims.push(Claim {
                 kind: MemoryKind::Fact,
                 // The `subject: statement` shape the conflict model matches on.
-                content: format!("{}: {}", subject_of(&packet.objective), hit.citation()),
+                content: format!(
+                    "{}: {citation} — \"{excerpt}\" ({})",
+                    subject_of(&packet.objective),
+                    hit.method.label()
+                ),
                 sources: vec![SourceRef {
-                    sha256: hit.document_sha256.clone(),
-                    locator: format!("page {}", hit.page),
-                    extraction_revision: None,
+                    sha256: hit.passage.document_sha256.clone(),
+                    locator: format!("page {}", hit.passage.page),
+                    extraction_revision: hit.source.as_ref().map(|source| format!("v{}", source.version)),
                 }],
                 artifacts: Vec::new(),
                 confidence: Some(0.9),
                 causal_parents: Vec::new(),
-                idempotency_key: format!("{}:{}", packet.idempotency_key, hit.chunk_id),
+                idempotency_key: format!("{}:{}", packet.idempotency_key, hit.passage.chunk_id),
                 receipt: receipt.clone(),
                 depends_on: Vec::new(),
             });

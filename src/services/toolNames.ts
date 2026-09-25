@@ -69,6 +69,10 @@ export const CANONICAL_TOOL_NAMES = [
   'document.render_regions',
   'document.ocr_regions',
   'document.extract_tables',
+  'knowledge.hybrid_search',
+  'knowledge.source_version',
+  'memory.neighbours',
+  'knowledge.rerank',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -164,6 +168,10 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'document.render_regions': 'Rendering regions of a page',
   'document.ocr_regions': 'Reading scanned pages with local OCR',
   'document.extract_tables': 'Reading the tables in a document',
+  'knowledge.hybrid_search': 'Searching the knowledge base by keyword and meaning',
+  'knowledge.source_version': "Checking a source's version",
+  'memory.neighbours': "Following a memory item's links",
+  'knowledge.rerank': 'Reordering retrieved passages',
 };
 
 /**

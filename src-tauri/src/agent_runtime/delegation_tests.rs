@@ -158,6 +158,7 @@ impl World {
                 documents: base.documents.clone(),
                 conversations: base.run_to_conversation.clone(),
             }),
+            retrieval: base.retrieval.clone(),
         });
         let profiles = load_profiles(&profiles_dir()).profiles;
         assert!(!profiles.is_empty(), "no profiles in {}", profiles_dir().display());
@@ -215,6 +216,7 @@ impl World {
             notebooks: base.notebooks.clone(),
             jobs: Arc::default(),
             extraction: base.extraction.clone(),
+            retrieval: base.retrieval.clone(),
         });
         World { deps, graph, cancellations, _dir: Some(dir) }
     }

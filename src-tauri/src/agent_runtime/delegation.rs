@@ -656,6 +656,22 @@ pub(super) async fn delegate(
             }
         }
     }
+    // A retrieval job reads the corpus as it stood when it was queued (P07):
+    // the index clock now, and the parent run's notebook selection.
+    if resolved.capability == "knowledge-retriever" {
+        let scope = deps.retrieval.scope_for(&call.run_id);
+        let pinned_revision = match scope.pinned_revision {
+            Some(revision) => revision,
+            None => deps.retrieval.index.index_revision().map_err(|error| {
+                format!("the knowledge index could not be read to pin this job's scope: {error}. Nothing was started.")
+            })?,
+        };
+        inputs.push(InputRef::RetrievalScope {
+            pinned_revision,
+            notebook_id: scope.notebook.as_ref().map(|pin| pin.notebook_id.clone()),
+            source_sha256s: scope.notebook.map(|pin| pin.source_sha256s).unwrap_or_default(),
+        });
+    }
     if inputs.is_empty() && resolved.capability != "knowledge-retriever" {
         return Err(format!(
             "The {role} role is pointed at things rather than asked a question, and neither the \
@@ -1006,9 +1022,24 @@ fn settle(
             .collect(),
         _ => Vec::new(),
     };
+    // What the child could not do or could not see, in its own words. A
+    // retrieval that ran keyword-only, found nothing, or withheld a passage
+    // above its ceiling says so here, so the parent reads the gap in the tool
+    // result rather than only in shared memory (P07).
+    let uncertainty: Vec<String> = match &outcome {
+        Ok(spawned) => spawned
+            .result()
+            .uncertainty
+            .iter()
+            .take(KEPT_FINDINGS)
+            .map(|note| note.chars().take(300).collect())
+            .collect(),
+        _ => Vec::new(),
+    };
     let result = json!({
         "status": status,
         "summary": summary.chars().take(400).collect::<String>(),
+        "uncertainty": uncertainty,
         "findings": settlement.findings,
         "evidenced": settlement.evidenced,
         "kept": findings,
@@ -1144,6 +1175,11 @@ fn render_job(job: &JobRecord) -> String {
                 } else {
                     out.push_str(&format!("  - {statement} [{}]\n", evidence.join("; ")));
                 }
+            }
+        }
+        if let Some(notes) = result.get("uncertainty").and_then(Value::as_array) {
+            for note in notes.iter().filter_map(Value::as_str) {
+                out.push_str(&format!("  uncertain: {note}\n"));
             }
         }
         for (key, label) in [("published", "published"), ("artifacts", "artifacts"), ("missing", "not done")] {

@@ -99,6 +99,11 @@ export const CANONICAL_TOOL_NAMES = [
   "document.render_regions",
   "document.ocr_regions",
   "document.extract_tables",
+  // P07's Knowledge Retriever tools.
+  "knowledge.hybrid_search",
+  "knowledge.source_version",
+  "memory.neighbours",
+  "knowledge.rerank",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -162,6 +167,7 @@ const EVIDENCE_PRODUCING: ReadonlySet<CanonicalToolName> = new Set([
   "knowledge.load_evidence_region",
   "knowledge.multimodal_retrieve",
   "media.extract_findings",
+  "knowledge.hybrid_search",
 ]);
 
 /** Tools whose result is a deterministic calculation with its working shown. */

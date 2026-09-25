@@ -203,7 +203,14 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::DocumentLayoutMap
         | ToolName::DocumentRenderRegions
         | ToolName::DocumentOcrRegions
-        | ToolName::DocumentExtractTables => ToolClass::ReadOnly,
+        | ToolName::DocumentExtractTables
+        // P07: retrieval, a reorder, a version history and a graph walk, all
+        // inside the reader's clearance. Nothing here writes a source, a memory
+        // item or a file.
+        | ToolName::KnowledgeHybridSearch
+        | ToolName::KnowledgeRerank
+        | ToolName::KnowledgeSourceVersion
+        | ToolName::MemoryNeighbours => ToolClass::ReadOnly,
         // Reversible: a notebook created by mistake can be deleted, a
         // rename can be renamed back, and a source taken out can be put
         // back - the document itself is never touched by any of them.

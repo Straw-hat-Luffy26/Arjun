@@ -1,0 +1,33 @@
+=== Run 1 (all ten mutations)
+M1 collection restriction dropped from the shared clause: CAUGHT
+    knowledge::index::tests::a_restricted_or_disabled_collection: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.44s; failing: knowledge::index::tests::a_restricted_or_disabled_collection_answers_only_whom_it_names
+    agent_runtime::retrieval_tests::a_restricted_collection: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.71s; failing: agent_runtime::retrieval_tests::a_restricted_collection_and_a_revoked_document_are_neither_retrieved_nor_disclosed
+M2 query prefix not applied: CAUGHT
+    knowledge::embedding::tests::prefixes_are_applied: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.25s; failing: knowledge::embedding::tests::prefixes_are_applied_by_the_profile_not_by_the_caller
+    agent_runtime::retrieval_tests::a_literal_query: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 1.07s; failing: agent_runtime::retrieval_tests::a_literal_query_is_found_by_keyword_and_a_paraphrase_only_by_meaning
+M3 dense floor ignored: CAUGHT
+    agent_runtime::retrieval_tests::a_question_nothing_answers: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.88s; failing: agent_runtime::retrieval_tests::a_question_nothing_answers_is_said_to_have_no_answer
+    agent_runtime::retrieval_tests::labelled_retrieval_measurement: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 1.31s; failing: agent_runtime::retrieval_tests::labelled_retrieval_measurement
+M4 pinned revision ignored: CAUGHT
+    knowledge::index::tests::a_pinned_search_reads_the_corpus: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.30s; failing: knowledge::index::tests::a_pinned_search_reads_the_corpus_it_was_queued_against
+M5 a revision does not retire its previous version: CAUGHT
+    knowledge::index::tests::a_revised_source: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.28s; failing: knowledge::index::tests::a_revised_source_supersedes_its_previous_version_which_stays_traceable
+    knowledge::ingest::tests::a_revised_file: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.27s; failing: knowledge::ingest::tests::a_revised_file_supersedes_its_previous_version
+    agent_runtime::retrieval_tests::a_revised_sop: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.94s; failing: agent_runtime::retrieval_tests::a_revised_sop_answers_its_old_version_is_flagged_and_claims_on_it_go_stale
+M6 an embedding model eligible as a child's model: CAUGHT
+    subagents::tests::a_certified_embedding_model_is_never: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.24s; failing: subagents::tests::a_certified_embedding_model_is_never_a_childs_conversational_model
+M7 the compiler not given the round's knowledge: CAUGHT
+    agent_runtime::retrieval_tests::a_retrieval_job_is_pinned: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 1.03s; failing: agent_runtime::retrieval_tests::a_retrieval_job_is_pinned_when_queued_and_its_findings_reach_the_parents_next_round
+M8 passages above the worker's ceiling published: NOT CAUGHT
+    subagents::: test result: ok. 106 passed; 0 failed; 0 ignored; 0 measured; 2815 filtered out; finished in 16.10s; failing: -
+    agent_runtime::retrieval_tests: test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 2906 filtered out; finished in 3.16s; failing: -
+M9 a withdrawn file keeps answering: CAUGHT
+    knowledge::ingest::tests::a_removed_document_stops_answering: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.27s; failing: knowledge::ingest::tests::a_removed_document_stops_answering_and_its_hash_is_reported
+M10 an embedding model served without --embedding: CAUGHT
+    serving::tests::an_embedding_model_is_served: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2920 filtered out; finished in 0.25s; failing: serving::tests::an_embedding_model_is_served_as_one_and_only_as_one
+all files restored
+
+=== Run 2 (after adding a_passage_above_the_retrievers_ceiling_is_counted_not_published; M8 only)
+M8 passages above the worker's ceiling published: CAUGHT
+    agent_runtime::retrieval_tests::a_passage_above_the_retrievers_ceiling: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2921 filtered out; finished in 0.53s; failing: agent_runtime::retrieval_tests::a_passage_above_the_retrievers_ceiling_is_counted_not_published
+all files restored

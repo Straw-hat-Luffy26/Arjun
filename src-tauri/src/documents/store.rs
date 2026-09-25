@@ -89,8 +89,14 @@ impl DocumentStore {
     }
 
     fn prepare(conn: &Connection) -> Result<()> {
+        // `collection_documents`, not `documents`: `sarathi.db` is shared, and
+        // `knowledge::multimodal` already creates an unprefixed `documents`
+        // table with a different schema. Whichever opened first used to win
+        // and the other's inserts failed -- latent only while this store was
+        // never constructed outside tests. P07 constructs it for collection
+        // sync, so the name is taken apart here.
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS documents (
+            "CREATE TABLE IF NOT EXISTS collection_documents (
                 sha256               TEXT PRIMARY KEY,
                 original_name        TEXT NOT NULL,
                 byte_size            INTEGER NOT NULL,
@@ -102,8 +108,8 @@ impl DocumentStore {
                 pages_needing_review INTEGER NOT NULL DEFAULT 0,
                 injection_findings   INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS documents_classification_idx
-                ON documents(classification);",
+            CREATE INDEX IF NOT EXISTS collection_documents_classification_idx
+                ON collection_documents(classification);",
         )?;
         Ok(())
     }
@@ -194,7 +200,7 @@ impl DocumentStore {
 
         let conn = self.conn.lock().expect("document index lock poisoned");
         conn.execute(
-            "INSERT INTO documents
+            "INSERT INTO collection_documents
                 (sha256, original_name, byte_size, ingested_at, ingested_by, classification,
                  engine, page_count, pages_needing_review, injection_findings)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -236,7 +242,7 @@ impl DocumentStore {
         let mut stmt = conn.prepare(
             "SELECT sha256, original_name, byte_size, ingested_at, ingested_by, classification,
                     engine, page_count, pages_needing_review, injection_findings
-             FROM documents WHERE sha256 = ?1",
+             FROM collection_documents WHERE sha256 = ?1",
         )?;
 
         let mut rows = stmt.query([sha256])?;

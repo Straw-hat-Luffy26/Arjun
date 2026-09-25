@@ -1232,6 +1232,82 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   // family first, then these; media.extract_findings, document.read_pages and
   // document.search (above) keep the common case covered.
   {
+    name: "knowledge.hybrid_search",
+    label: "Search by keyword and meaning",
+    readOnly: true,
+    description:
+      "Searches the organisation's documents by keyword and, where a qualified local embedding " +
+      "model is installed, by meaning, and returns short passages numbered [En] with source, " +
+      "version, page, how each was found (keyword, semantic or both) and each score labelled for " +
+      "what it is. " +
+      "Use it for a question in your own words, or when knowledge.search_authorized found " +
+      "nothing: it finds a passage that answers without sharing its wording. " +
+      "Do not use it for an exact tag or clause number; knowledge.search_authorized is exact. " +
+      "Effects: none. It reads inside your clearance; the embedding model runs on loopback. " +
+      "Limits: at most 8 passages, each a short excerpt; read more with " +
+      "knowledge.load_evidence_region. " +
+      "If it reports no answer or partial coverage, say so; never fill the gap from memory.",
+    parameters: closed({
+      query: Type.String({ minLength: 1, description: "The question." }),
+      maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+      documentSha256s: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), { description: "Only these documents." }),
+      ),
+    }),
+  },
+  {
+    name: "knowledge.source_version",
+    label: "Check a source's version",
+    readOnly: true,
+    description:
+      "Returns the version history of one indexed document: each version, whether it is current, " +
+      "superseded (and by which), withdrawn or revoked, and when. " +
+      "Use it before relying on a passage for a procedure or a limit, or when two passages " +
+      "disagree and one may be out of date. " +
+      "Do not use it to read the text; search does that. " +
+      "Effects: none. " +
+      "Limits: documents you are cleared to read; any other hash reads as not found. " +
+      "If it shows the version you cited is superseded, say so and use the current one.",
+    parameters: closed({
+      documentSha256: Type.String({ minLength: 1, description: "From a passage." }),
+    }),
+  },
+  {
+    name: "memory.neighbours",
+    label: "Follow a memory item's links",
+    readOnly: true,
+    description:
+      "Returns the items a task memory item is linked to — what supports, contradicts, supersedes, " +
+      "cites or derives from it — up to two steps away, each with its status. " +
+      "Use it to check whether a fact has support or a contradiction before relying on it. " +
+      "Do not use it to search; it walks from one item you already hold. " +
+      "Effects: none. " +
+      "Limits: at most 24 items; only what you may read, and nothing is said about the rest. " +
+      "If it finds nothing, the item has no visible links; that is not evidence it is true.",
+    parameters: closed({
+      itemId: Type.String({ minLength: 1, description: "An mi- id." }),
+      depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 })),
+      edgeKinds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    }),
+  },
+  {
+    name: "knowledge.rerank",
+    label: "Reorder retrieved passages",
+    readOnly: true,
+    description:
+      "Reorders passages this task already retrieved by how completely and closely each holds " +
+      "the question's terms, and returns their [En] markers in the new order with the score. " +
+      "Use it when a search returned many passages and you need the best few for the question. " +
+      "Do not use it to find new passages. " +
+      "Effects: none; no model runs. " +
+      "Limits: at most 24 passages. " +
+      "If it ranks a passage you need low, read it anyway; the order is a heuristic.",
+    parameters: closed({
+      query: Type.String({ minLength: 1 }),
+      markers: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }), { description: "Default: all." })),
+    }),
+  },
+  {
     name: "document.layout_map",
     label: "Map the layout of document pages",
     readOnly: true,

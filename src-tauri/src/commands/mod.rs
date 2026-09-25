@@ -22,4 +22,5 @@ pub mod registry;
 pub mod voice;
 pub mod ocr;
 pub mod extraction;
+pub mod retrieval;
 pub mod widget;

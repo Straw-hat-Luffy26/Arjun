@@ -1,0 +1,332 @@
+{
+  "cases": 9,
+  "k": 5,
+  "label": "keyword rows: deterministic test on this machine; hybrid row: deterministic transport (fixture concept lexicon, not a model)",
+  "labels": "src-tauri/src/knowledge/testdata/retrieval/labels.json",
+  "rows": [
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1"
+      ]
+    },
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "literal-psv",
+      "kind": "literal",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1",
+        "overtime-policy.md p1"
+      ]
+    },
+    {
+      "case": "literal-purge",
+      "kind": "literal",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "sops/flare-purge.md p1",
+        "overtime-policy.md p1"
+      ]
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-05-inspection-memo.md p1",
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "question-thickness",
+      "kind": "question in words",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-05-inspection-memo.md p1",
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/compressor-K301.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "sops/exchanger-isolation.md p1"
+      ]
+    },
+    {
+      "case": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "sops/hot-work-permit.md p1",
+        "sops/exchanger-isolation.md p1",
+        "sops/hot-work-permit.md p1"
+      ]
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "multilingual-psv",
+      "kind": "multilingual",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/vessel-V101.md p1"
+      ]
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "conflict-seal",
+      "kind": "conflicting sources",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "correspondence/2026-03-seal-vendor-letter.md p1",
+        "manuals/charge-pump-P101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": null,
+      "recallAtK": 0.0,
+      "reciprocalRank": 0.0,
+      "top": []
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 0.5,
+      "top": [
+        "sops/exchanger-isolation.md p1",
+        "manuals/compressor-K301.md p1",
+        "manuals/vessel-V101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "oversized-surge",
+      "kind": "oversized passage",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": null,
+      "recallAtK": 1.0,
+      "reciprocalRank": 1.0,
+      "top": [
+        "manuals/compressor-K301.md p1",
+        "sops/exchanger-isolation.md p1",
+        "manuals/vessel-V101.md p1",
+        "manuals/charge-pump-P101.md p1"
+      ]
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "keyword-all-terms (search_authorized)",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "keyword-any-term (hybrid, no model)",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    },
+    {
+      "case": "no-answer",
+      "kind": "no answer",
+      "method": "hybrid via fixture transport",
+      "noAnswerCorrect": true,
+      "recallAtK": null,
+      "reciprocalRank": null,
+      "top": []
+    }
+  ],
+  "summary": [
+    {
+      "answerableCases": 8,
+      "method": "hybrid via fixture transport",
+      "mrr": 0.9375,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 1.0
+    },
+    {
+      "answerableCases": 8,
+      "method": "keyword-all-terms (search_authorized)",
+      "mrr": 0.25,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 0.25
+    },
+    {
+      "answerableCases": 8,
+      "method": "keyword-any-term (hybrid, no model)",
+      "mrr": 0.625,
+      "noAnswerCorrect": "1 of 1",
+      "recallAtK": 0.75
+    }
+  ]
+}

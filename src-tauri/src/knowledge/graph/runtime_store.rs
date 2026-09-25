@@ -1164,6 +1164,115 @@ impl MemoryGraph {
         Ok(ids)
     }
 
+    /// Marks stale every item whose evidence came from a source version that
+    /// has since been revised (P07).
+    ///
+    /// Stale, not rejected: the claim was true of the version it read, and a
+    /// revised SOP may well say the same thing. What a reader must not do is
+    /// treat it as established about the current version without looking, and
+    /// the stale label says exactly that. Withdrawal and revocation are
+    /// [`Self::invalidate_source`].
+    pub fn source_revised(&self, sha256: &str, at: &str) -> Result<Vec<String>, MemoryError> {
+        let affected: Vec<MemoryItem> = self
+            .all_raw()?
+            .into_iter()
+            .filter(|item| item.sources.iter().any(|source| source.sha256 == sha256))
+            .filter(|item| item.is_readable() && item.status.can_go_stale())
+            .collect();
+
+        let mut conn = self.conn.lock().map_err(|_| MemoryError::Storage {
+            detail: "the memory graph was left locked by a failed write".into(),
+        })?;
+        let transaction = conn.transaction().map_err(storage)?;
+        let mut ids = Vec::new();
+        for item in affected {
+            let Some(mut item) = Self::read_item(&transaction, &item.item_id)? else {
+                continue;
+            };
+            if !item.status.can_go_stale() {
+                continue;
+            }
+            item.status = ItemStatus::Stale;
+            item.revision += 1;
+            item.updated_at = at.to_string();
+            Self::write_revision(&transaction, &item, "stale: the source version it cites was revised")?;
+            ids.push(item.item_id);
+        }
+        Self::propagate_staleness(&transaction, &ids, "a source it rests on was revised", at)?;
+        let revision = Self::latest_revision(&transaction).unwrap_or(0);
+        transaction.commit().map_err(storage)?;
+        drop(conn);
+        self.announce(revision);
+        Ok(ids)
+    }
+
+    /// A bounded breadth-first walk from `start`, entirely inside an
+    /// authorised set (P07's `memory.neighbours`).
+    ///
+    /// Built on [`Self::neighbours`], so an edge to anything outside the set is
+    /// never followed, never counted and never named — the walk cannot reveal
+    /// that a hidden item exists by the shape of what it returns. `start`
+    /// outside the set returns nothing, exactly as a start that does not exist.
+    ///
+    /// Returns the items reached (the start first, then in walk order) and the
+    /// edges walked, each once. `depth` is capped at 2 and the item count at
+    /// `max_items`; ties are broken by edge id so two walks of one graph agree.
+    pub fn neighbourhood(
+        &self,
+        start: &str,
+        authorised: &[MemoryItem],
+        depth: u32,
+        max_items: usize,
+        kinds: Option<&[EdgeKind]>,
+    ) -> Result<(Vec<MemoryItem>, Vec<MemoryEdge>), MemoryError> {
+        let by_id: HashMap<&str, &MemoryItem> =
+            authorised.iter().map(|item| (item.item_id.as_str(), item)).collect();
+        let Some(first) = by_id.get(start) else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let depth = depth.clamp(1, 2);
+        let mut items: Vec<MemoryItem> = vec![(*first).clone()];
+        let mut seen: BTreeSet<String> = BTreeSet::from([start.to_string()]);
+        let mut edges: Vec<MemoryEdge> = Vec::new();
+        let mut walked: BTreeSet<String> = BTreeSet::new();
+        let mut frontier: Vec<String> = vec![start.to_string()];
+        for _ in 0..depth {
+            let mut next: Vec<String> = Vec::new();
+            for node in &frontier {
+                let mut found = self.neighbours(node, authorised)?;
+                found.sort_by(|a, b| a.edge_id.cmp(&b.edge_id));
+                for edge in found {
+                    if kinds.is_some_and(|kinds| !kinds.contains(&edge.kind)) {
+                        continue;
+                    }
+                    let other = if edge.from_item == *node { &edge.to_item } else { &edge.from_item };
+                    if !seen.contains(other) {
+                        if items.len() >= max_items {
+                            continue;
+                        }
+                        let Some(item) = by_id.get(other.as_str()) else {
+                            continue;
+                        };
+                        seen.insert(other.clone());
+                        items.push((*item).clone());
+                        next.push(other.clone());
+                    }
+                    if walked.insert(edge.edge_id.clone()) {
+                        edges.push(edge);
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        // Only edges whose both ends were returned: a cut at `max_items` must
+        // not leave an edge pointing at an item the caller was not given.
+        edges.retain(|edge| seen.contains(&edge.from_item) && seen.contains(&edge.to_item));
+        Ok((items, edges))
+    }
+
     // ── Outbox ───────────────────────────────────────────────────────────
 
     /// Effects that have not been delivered.

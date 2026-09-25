@@ -40,6 +40,82 @@ TYPE_ROUTED_ENGINES: Dict[str, Type[DocumentEngine]] = {
 #: drawing set can be very large, and failing clearly beats failing by swapping.
 MAX_FILE_BYTES = 512 * 1024 * 1024
 
+#: Read directly, without a document engine. The type-routed engines (Docling,
+#: the text layer, the P&ID reader) all expect a PDF.
+PLAIN_TEXT_EXTENSIONS = {".txt", ".md", ".html", ".htm"}
+
+#: Tags after which HTML text starts a new line, so words from two paragraphs
+#: are not glued together into one token.
+_HTML_BREAKS = {"p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "td"}
+
+
+def read_plain_text(path: str, extension: str):
+    """A text file as pages: split at form feeds, which is how a text export
+    marks a page break, and otherwise one page.
+
+    HTML is reduced to its text with the standard library's parser, so a tag
+    is never indexed as if it were a word. Undecodable bytes are replaced and
+    said so, rather than the file being refused or silently altered.
+    """
+    from html.parser import HTMLParser
+
+    from engines.base import EngineCapabilities, ExtractionResult, PageResult
+
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    text = raw.decode("utf-8", errors="replace")
+    result = ExtractionResult(
+        engine="plain-text",
+        engine_version="1",
+        capabilities=EngineCapabilities(
+            ocr=False, layout=False, tables=False, formulas=False, handwriting=False,
+            pid_symbols=False, image_captioning=False,
+        ),
+    )
+    if "�" in text:
+        result.warnings.append(
+            "Some bytes in this file are not UTF-8 and were replaced; the passages "
+            "around them may read oddly."
+        )
+    if extension in (".html", ".htm"):
+
+        class _Text(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.parts: List[str] = []
+                self.skip = 0
+
+            def handle_starttag(self, tag, attrs):  # noqa: ANN001
+                if tag in ("script", "style"):
+                    self.skip += 1
+                elif tag in _HTML_BREAKS:
+                    self.parts.append("\n")
+
+            def handle_endtag(self, tag):  # noqa: ANN001
+                if tag in ("script", "style") and self.skip:
+                    self.skip -= 1
+
+            def handle_data(self, data):  # noqa: ANN001
+                if not self.skip:
+                    self.parts.append(data)
+
+        parser = _Text()
+        parser.feed(text)
+        text = "".join(parser.parts)
+    pages = text.split("\f") if "\f" in text else [text]
+    for index, page_text in enumerate(pages, start=1):
+        stripped = page_text.strip()
+        result.pages.append(
+            PageResult(
+                page=index,
+                text=stripped,
+                confidence=1.0 if stripped else 0.0,
+                needs_review=not stripped,
+                review_reason=None if stripped else "This page of the file is empty.",
+            )
+        )
+    return result
+
 
 class DocumentRouter:
     def __init__(self) -> None:
@@ -180,18 +256,24 @@ class DocumentRouter:
                 f"{MAX_FILE_BYTES / 1024 / 1024:.0f} MB limit for a single document"
             )
 
-        if self._engine is None:
-            raise ValueError(
-                "No document engine is available on this machine, so nothing can be read."
-            )
+        # Plain text needs no engine, and reading it through one would be a
+        # PDF parser refusing a Markdown file. A knowledge collection is mostly
+        # PDFs and a fair number of notes, and the notes must not wait on
+        # Docling being installed.
+        extension = os.path.splitext(path)[1].lower()
+        if extension in PLAIN_TEXT_EXTENSIONS:
+            result = read_plain_text(path, extension)
+        else:
+            if self._engine is None:
+                raise ValueError(
+                    "No document engine is available on this machine, so nothing can be read."
+                )
+            # Pick the engine: the document type may override the global
+            # preference for documents that have a dedicated engine (P&ID,
+            # today). The type-routed engine is used only if it is available on
+            # this machine and the document is plausibly of that type.
+            result = self._select_engine_for(path).extract(path)
 
-        # Pick the engine: the document type may override the global preference
-        # for documents that have a dedicated engine (P&ID, today). The
-        # type-routed engine is used only if it is available on this machine
-        # and the document is plausibly of that type — both checked below.
-        engine = self._select_engine_for(path)
-
-        result = engine.extract(path)
         payload = result.to_dict()
         payload["sourcePath"] = path
         payload["sourceBytes"] = size

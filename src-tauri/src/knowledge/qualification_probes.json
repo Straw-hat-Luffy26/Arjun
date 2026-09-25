@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "provenance": "Written for ARJUN P07. Synthetic, non-confidential engineering sentences; no plant data. Each probe pairs a question with a passage that answers it in different words and a distractor that shares vocabulary with the question without answering it. The Hindi probes ask in Hindi about English passages, which is the case a multilingual model must pass.",
+  "probes": [
+    {
+      "id": "en-cavitation",
+      "language": "en",
+      "query": "What stops the charge pump from cavitating?",
+      "relevant": "The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow.",
+      "distractor": "The charge pump nameplate lists the motor rating, the manufacturer and the year of build."
+    },
+    {
+      "id": "en-isolation",
+      "language": "en",
+      "query": "How do I make the exchanger safe before opening it?",
+      "relevant": "Close both block valves, open the bleed to the closed drain, confirm zero pressure on the gauge and apply the isolation lock before breaking any flange.",
+      "distractor": "The exchanger was supplied by the vendor with a painted shell and a stainless tube bundle."
+    },
+    {
+      "id": "en-thickness",
+      "language": "en",
+      "query": "When must a corroded pipe section be replaced?",
+      "relevant": "Replace the spool when the measured wall is below the retirement thickness of 4.8 mm at any ultrasonic reading point.",
+      "distractor": "Pipe sections are painted grey and labelled with the line number every ten metres."
+    },
+    {
+      "id": "en-relief",
+      "language": "en",
+      "query": "At what pressure does the vessel's protection device open?",
+      "relevant": "The pressure safety valve on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.",
+      "distractor": "The vessel protection coating is inspected during each turnaround for blistering."
+    },
+    {
+      "id": "en-permit",
+      "language": "en",
+      "query": "Who has to sign before hot work can start?",
+      "relevant": "A hot work permit requires the area authority and the fire watch to countersign after a gas test shows less than 1% LEL.",
+      "distractor": "Hot weather work schedules move the start of shift to six in the morning in May and June."
+    },
+    {
+      "id": "en-seal",
+      "language": "en",
+      "query": "How often should the mechanical seal be changed?",
+      "relevant": "Renew the mechanical seal cartridge every 8000 running hours or at the first sign of leakage past the gland.",
+      "distractor": "The mechanical workshop is open from eight to five on working days."
+    },
+    {
+      "id": "en-flare",
+      "language": "en",
+      "query": "What keeps air out of the flare header?",
+      "relevant": "A continuous nitrogen purge of 5 m3/h is maintained at the header end to prevent oxygen ingress.",
+      "distractor": "The flare header drawing was revised to show the new pipe rack numbering."
+    },
+    {
+      "id": "en-torque",
+      "language": "en",
+      "query": "How tight should the bolts on the reactor manway be?",
+      "relevant": "Tighten the manway studs in a cross pattern to 450 N·m in three passes using a calibrated torque wrench.",
+      "distractor": "The reactor manway cover weighs 120 kg and is lifted with the davit."
+    },
+    {
+      "id": "hi-cavitation",
+      "language": "hi",
+      "query": "चार्ज पंप में कैविटेशन को कैसे रोका जाता है?",
+      "relevant": "The net positive suction head available shall exceed the NPSH required by at least 1.5 m at rated flow.",
+      "distractor": "The charge pump nameplate lists the motor rating, the manufacturer and the year of build."
+    },
+    {
+      "id": "hi-relief",
+      "language": "hi",
+      "query": "पोत का सुरक्षा वाल्व किस दबाव पर खुलता है?",
+      "relevant": "The pressure safety valve on V-101 is set to lift at 14.0 barg, below the vessel design pressure of 15.5 barg.",
+      "distractor": "The vessel protection coating is inspected during each turnaround for blistering."
+    },
+    {
+      "id": "hi-seal",
+      "language": "hi",
+      "query": "मैकेनिकल सील कितने समय बाद बदलनी चाहिए?",
+      "relevant": "Renew the mechanical seal cartridge every 8000 running hours or at the first sign of leakage past the gland.",
+      "distractor": "The mechanical workshop is open from eight to five on working days."
+    },
+    {
+      "id": "hi-permit",
+      "language": "hi",
+      "query": "हॉट वर्क शुरू करने से पहले किसके हस्ताक्षर जरूरी हैं?",
+      "relevant": "A hot work permit requires the area authority and the fire watch to countersign after a gas test shows less than 1% LEL.",
+      "distractor": "Hot weather work schedules move the start of shift to six in the morning in May and June."
+    }
+  ]
+}

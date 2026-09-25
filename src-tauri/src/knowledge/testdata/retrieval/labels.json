@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "provenance": "Written for ARJUN P07. A synthetic, non-confidential corpus of SOPs, manuals and correspondence (PS-K) with hand-written labels. Each case names the question, the kind of retrieval it tests, and the passages that answer it by document path and a phrase unique to the answering passage. An empty `relevant` list means the correct answer is that nothing in the corpus answers the question.",
+  "collections": [
+    { "id": "plant", "folders": ["sops", "manuals", "correspondence"], "restrictedToRoles": [] },
+    { "id": "hr", "folders": ["hr"], "restrictedToRoles": ["administrator"] }
+  ],
+  "cases": [
+    {
+      "id": "literal-psv",
+      "kind": "literal",
+      "query": "PSV-1011 set pressure",
+      "relevant": [{ "path": "manuals/vessel-V101.md", "phrase": "set to lift at 14.0 barg" }]
+    },
+    {
+      "id": "literal-purge",
+      "kind": "literal",
+      "query": "flare header nitrogen purge rate",
+      "relevant": [{ "path": "sops/flare-purge.md", "phrase": "5 m3/h" }]
+    },
+    {
+      "id": "question-thickness",
+      "kind": "question in words",
+      "query": "When must the corroded spool on line 6-P-2201 be replaced?",
+      "relevant": [{ "path": "correspondence/2026-05-inspection-memo.md", "phrase": "retirement thickness of 4.8 mm" }]
+    },
+    {
+      "id": "paraphrase-cavitation",
+      "kind": "paraphrase",
+      "query": "What stops the charge pump from cavitating?",
+      "relevant": [{ "path": "manuals/charge-pump-P101.md", "phrase": "NPSH required by at least 1.5 m" }]
+    },
+    {
+      "id": "paraphrase-hot-work",
+      "kind": "paraphrase",
+      "query": "Who has to approve welding in the unit before it starts?",
+      "relevant": [{ "path": "sops/hot-work-permit.md", "phrase": "fire watch to countersign" }]
+    },
+    {
+      "id": "multilingual-psv",
+      "kind": "multilingual",
+      "query": "पोत का सुरक्षा वाल्व किस दबाव पर खुलता है?",
+      "relevant": [{ "path": "manuals/vessel-V101.md", "phrase": "set to lift at 14.0 barg" }]
+    },
+    {
+      "id": "conflict-seal",
+      "kind": "conflicting sources",
+      "query": "How often should the P-101 mechanical seal be replaced?",
+      "relevant": [
+        { "path": "manuals/charge-pump-P101.md", "phrase": "every 8000 running hours" },
+        { "path": "correspondence/2026-03-seal-vendor-letter.md", "phrase": "every 6000 running hours" }
+      ]
+    },
+    {
+      "id": "oversized-surge",
+      "kind": "oversized passage",
+      "query": "How fast must the anti-surge valve open?",
+      "relevant": [{ "path": "manuals/compressor-K301.md", "phrase": "within 1.2 seconds" }]
+    },
+    {
+      "id": "no-answer",
+      "kind": "no answer",
+      "query": "What is the drift eliminator spacing in the cooling tower?",
+      "relevant": []
+    }
+  ]
+}

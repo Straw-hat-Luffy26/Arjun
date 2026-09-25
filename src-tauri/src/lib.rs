@@ -325,6 +325,16 @@ pub fn run() {
                 Err(e) => log::error!("[NOTEBOOK] the notebook store could not be opened: {e}"),
             }
 
+            // The knowledge collections (P07): which folders and shares this
+            // installation reads, and what the last sync of each saw. The
+            // connector PS 26117 asks for, now reachable from a screen.
+            match knowledge::CollectionStore::open(&data_dir) {
+                Ok(store) => {
+                    app.manage(Arc::new(store));
+                }
+                Err(e) => log::error!("[KNOWLEDGE] the collection list could not be opened: {e}"),
+            }
+
             // What each conversation has produced, across every run in it.
             //
             // The cross-model channel. Run workspaces are isolated from each
@@ -888,6 +898,48 @@ pub fn run() {
                 // Managed so the vision probe reserves the card through the
                 // same scheduler as every worker and every page read.
                 app.manage(StdArc::clone(&scheduler));
+                // Retrieval (P07): the index, the registry's embedding model
+                // (served CPU-only, used only once qualified), the embedding
+                // pass, and each run's pinned scope. One service, shared by the
+                // runtime's tools, these workers and the context compiler.
+                let mut retrieval_service = knowledge::service::RetrievalService::new(
+                    index.inner().clone(),
+                    StdArc::new(knowledge::provider::ServedEmbeddings::new(
+                        models.inner().clone(),
+                        servers.inner().clone(),
+                        app_data_dir.join("retrieval"),
+                    )),
+                );
+                // Notebooks are a second corpus a run can be scoped to. Both
+                // stores are optional at start, so a deployment without them
+                // searches the index only and says so on a notebook-scoped job.
+                if let (Some(notebooks), Some(documents)) = (
+                    app.try_state::<StdArc<knowledge::NotebookStore>>(),
+                    app.try_state::<commands::agent::DocumentsState>(),
+                ) {
+                    retrieval_service = retrieval_service.with_notebooks(knowledge::service::NotebookCorpus {
+                        notebooks: StdArc::clone(&notebooks),
+                        documents: StdArc::clone(&documents.0),
+                    });
+                }
+                let retrieval = StdArc::new(retrieval_service);
+                app.manage(commands::agent::RetrievalState(StdArc::clone(&retrieval)));
+                {
+                    // Said at start, the way the OCR and vision readiness are:
+                    // which half of retrieval this machine will run, and why.
+                    let status = retrieval.status();
+                    log::info!("[retrieval] {:?}: {}", status.state, status.detail);
+                    // A qualified model with passages still to embed resumes
+                    // the pass in the background, bounded per start.
+                    if status.state == knowledge::provider::ProviderState::Qualified {
+                        let background = StdArc::clone(&retrieval);
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(reason) = background.reindex_once(5_000).await {
+                                log::warn!("[retrieval] the embedding pass did not run: {reason}");
+                            }
+                        });
+                    }
+                }
                 let analyst = subagents::AnalystServices {
                     extraction: extraction_service,
                     documents: StdArc::clone(&app.state::<commands::agent::DocumentsState>().0),
@@ -928,6 +980,7 @@ pub fn run() {
                     })),
                     cancellations: StdArc::clone(&cancellations.0),
                     analyst: Some(analyst),
+                    retrieval,
                 });
 
                 for worker in
@@ -1292,6 +1345,13 @@ pub fn run() {
             commands::knowledge::knowledge_documents,
             commands::knowledge::knowledge_search,
             commands::knowledge::knowledge_health,
+            commands::retrieval::knowledge_collections,
+            commands::retrieval::knowledge_collection_save,
+            commands::retrieval::knowledge_collection_remove,
+            commands::retrieval::knowledge_collection_sync,
+            commands::retrieval::knowledge_retrieval_status,
+            commands::retrieval::knowledge_embedding_qualify,
+            commands::retrieval::knowledge_reindex,
             commands::memory_graph::memory_graph_snapshot,
             commands::memory_graph::memory_graph_changes,
             commands::memory_graph::memory_graph_neighbours,

@@ -364,8 +364,6 @@ function runCodingGroup() {
  */
 function blockedOnUnbuiltAgents() {
   const pending = [
-    ['sop-01-applicable-minimum', 'P07', 'Knowledge Retriever and local retrieval tools'],
-    ['sop-02-conflict-surfaced', 'P07', 'Knowledge Retriever and local retrieval tools'],
     ['calc-01-wall-loss-mm', 'P08', 'Calculation Analyst & Checker'],
     ['calc-02-mixed-units-inch', 'P08', 'Calculation Analyst & Checker'],
     ['calc-03-percent-of-what', 'P08', 'Calculation Analyst & Checker'],
@@ -408,6 +406,33 @@ function blockedOnUnbuiltAgents() {
       unblockCommand:
         'On the target machine: set ARJUN_APP_DATA to the app data directory, then ' +
         'cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1',
+    });
+  }
+
+  // P07 built the Knowledge Retriever: the connector, hybrid retrieval and
+  // versioned citations. Retrieving the two passages sop-01 must cite (section
+  // 3 and the 3.1 carve-out of Revision D) is deterministic and is checked on
+  // this pack's own file by
+  // src-tauri/src/agent_runtime/retrieval_tests.rs::the_packs_sop_question_retrieves_both_sections_it_must_cite.
+  // What these two cases grade is the *answer* -- 9.0 mm because pitting
+  // engages 3.1, and the conflict stated rather than silently resolved -- which
+  // a model composes. This harness does not run a model through the task
+  // driver; the first complete journey (P10) does.
+  for (const id of ['sop-01-applicable-minimum', 'sop-02-conflict-surfaced']) {
+    record({
+      id,
+      group: 'agent-cases',
+      kind: 'fixture-case',
+      status: BLOCKED,
+      detail:
+        'the Knowledge Retriever exists (P07) and retrieves both governing passages of Revision D ' +
+        '(retrieval_tests.rs); grading the answer needs a model run through the production task ' +
+        'driver, which this harness does not perform.',
+      blockedOnPhase: 'P10',
+      unblockCommand:
+        'Implement P10 (first complete journey with a real model), then re-run this harness; ' +
+        'on the target machine qualify an embedding model first with ' +
+        'cargo test --manifest-path src-tauri/Cargo.toml --test retrieval_live -- --ignored --nocapture --test-threads=1',
     });
   }
 

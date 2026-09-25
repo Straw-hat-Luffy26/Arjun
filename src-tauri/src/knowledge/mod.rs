@@ -28,12 +28,14 @@ pub mod index;
 pub mod ingest;
 pub mod multimodal;
 pub mod notebook_retrieval;
+pub mod provider;
+pub mod service;
 pub mod source_readiness;
 
 pub use chunking::{chunk_document, Chunk, ChunkKind};
 pub use connector::{discover, plan_sync, Collection, SourceKind, SyncPlan};
-pub use embedding::LocalEmbedder;
-pub use hybrid::{reciprocal_rank_fusion, Embedder, Hybrid, HybridResults};
+pub use embedding::{Embedder, EmbeddingIdentity, LocalEmbedder};
+pub use hybrid::{reciprocal_rank_fusion, EvidenceHit, HybridRequest, HybridResponse, HybridRetriever};
 pub use index::{KnowledgeIndex, Retrieval, SearchResult};
 pub use evidence::{present, EvidenceBlock, PresentedPassage};
 pub use collections::CollectionStore;

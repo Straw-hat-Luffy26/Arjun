@@ -195,6 +195,33 @@ pub enum RetrievalMode {
     Hybrid { embedding_dimension: u32 },
 }
 
+/// What the round's question retrieved from the organisation's documents (P07).
+///
+/// Retrieved before compiling, by the same [`crate::knowledge::service::RetrievalService`]
+/// the tools and the retriever worker use, inside the reader's clearance and the
+/// run's pinned scope. The compiler places the passages as evidence within the
+/// budget left after the mandatory set and the task's own memory, and records
+/// the search that produced them — hybrid or lexical, and why — in the
+/// manifest's retrieval record.
+#[derive(Debug, Clone, Default)]
+pub struct RoundKnowledge {
+    pub hits: Vec<crate::knowledge::hybrid::EvidenceHit>,
+    pub coverage: crate::knowledge::hybrid::Coverage,
+    /// The index clock the search read at.
+    pub index_revision: Option<i64>,
+    /// The width of the semantic space, when the semantic half ran.
+    pub embedding_dimension: Option<u32>,
+    /// The run's `[En]` marker for each hit, same order, so a model can cite a
+    /// passage it was given without searching for it again.
+    pub markers: Vec<usize>,
+}
+
+/// Most retrieved passages one round's context carries.
+///
+/// Four excerpts: enough to ground a round, few enough that the task's own
+/// memory is never crowded out by the library. More is one tool call away.
+pub const MAX_KNOWLEDGE_BLOCKS: usize = 4;
+
 /// What the compiler produced.
 #[derive(Debug, Clone)]
 pub struct CompiledContext {
@@ -296,6 +323,27 @@ impl<'a> ContextCompiler<'a> {
         already_carried: &BTreeSet<String>,
         reserves: Reserves,
     ) -> Result<CompiledContext, MemoryError> {
+        self.compile_with_knowledge(session, scope, base, question, already_carried, reserves, None)
+    }
+
+    /// [`Self::compile`], with what the round's question retrieved (P07).
+    ///
+    /// The passages are optional context: placed after the mandatory set and
+    /// the task's own memory, within the budget, at most
+    /// [`MAX_KNOWLEDGE_BLOCKS`], each omission recorded. The manifest's
+    /// retrieval record then describes this search rather than the reserves'
+    /// declared mode.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compile_with_knowledge(
+        &self,
+        session: &Session,
+        scope: &FrozenScope,
+        base: ContextManifest,
+        question: &str,
+        already_carried: &BTreeSet<String>,
+        reserves: Reserves,
+        knowledge: Option<&RoundKnowledge>,
+    ) -> Result<CompiledContext, MemoryError> {
         // ── Authorised set first ─────────────────────────────────────────
         //
         // Everything below ranks, expands and deduplicates inside this. A
@@ -324,7 +372,21 @@ impl<'a> ContextCompiler<'a> {
                 .snapshot_at(session, &task_scope, scope.project_id.as_deref())?
         };
         let read_at = read.cursor;
-        let authorised = read.items;
+        let mut authorised = read.items;
+
+        // The project's own memory, at the same cursor: what this project has
+        // established, and -- once the lesson lifecycle exists (P15) -- the
+        // lessons activated for it. Read under the same authorisation, so a
+        // project item the reader may not see is not in the set that is ranked.
+        if let Some(project_id) = scope.project_id.as_deref() {
+            let project_scope = MemoryScope::Workspace {
+                project_id: project_id.to_string(),
+            };
+            let project = self
+                .graph
+                .snapshot_as_of(session, &project_scope, Some(project_id), read_at)?;
+            authorised.extend(project.items);
+        }
 
         let usable: Vec<&MemoryItem> = authorised
             .iter()
@@ -463,6 +525,59 @@ impl<'a> ContextCompiler<'a> {
             }
         }
 
+        // ── Retrieved knowledge, within what is left ─────────────────────
+        if let (Some(knowledge), false) = (knowledge, mandatory_overflowed) {
+            for (placed, hit) in knowledge.hits.iter().enumerate() {
+                let handle = hit.handle.clone();
+                if placed >= MAX_KNOWLEDGE_BLOCKS {
+                    omissions.push(Omission {
+                        what: handle,
+                        reason: "budget".into(),
+                        detail: format!(
+                            "{} was retrieved and not injected: a round carries at most \
+                             {MAX_KNOWLEDGE_BLOCKS} passages; it can be searched for explicitly",
+                            hit.passage.citation()
+                        ),
+                    });
+                    continue;
+                }
+                let block = ContextBlock::new(
+                    BlockKind::Evidence,
+                    None,
+                    render_passage(hit, knowledge.markers.get(placed).copied()),
+                );
+                if seen.contains(&block.content_hash) {
+                    omissions.push(Omission {
+                        what: handle,
+                        reason: "deduplicated".into(),
+                        detail: format!("{} was already carried", hit.passage.citation()),
+                    });
+                    continue;
+                }
+                if spent.saturating_add(block.tokens) > available {
+                    omissions.push(Omission {
+                        what: handle,
+                        reason: "budget".into(),
+                        detail: format!(
+                            "{} needs {} tokens and {} were left; it can be searched for explicitly",
+                            hit.passage.citation(),
+                            block.tokens,
+                            available.saturating_sub(spent)
+                        ),
+                    });
+                    continue;
+                }
+                seen.insert(block.content_hash.clone());
+                spent = spent.saturating_add(block.tokens);
+                selected.push(SelectedItem {
+                    item_id: handle,
+                    revision: hit.source.as_ref().map(|source| source.version as u64).unwrap_or(0),
+                    reason: format!("retrieved:{}", hit.method.label()),
+                });
+                blocks.push(block);
+            }
+        }
+
         // Anything in the task that is not offerable is recorded as a count
         // rather than named — the count is the disclosure-safe half.
         let hidden = authorised.len().saturating_sub(usable.len());
@@ -500,7 +615,10 @@ impl<'a> ContextCompiler<'a> {
                     counted_by: reserves.counted_by.clone(),
                     server_reported_tokens: None,
                 }),
-                Some(retrieval_record(reserves.mode)),
+                Some(match knowledge {
+                    Some(knowledge) => knowledge_record(knowledge),
+                    None => retrieval_record(reserves.mode),
+                }),
                 omissions,
                 content_hashes,
             ),
@@ -563,6 +681,50 @@ impl<'a> ContextCompiler<'a> {
         };
         self.compile(session, &scope, base, question, already_carried, reserves)
     }
+}
+
+/// The retrieval record for a round that retrieved (P07): what the search that
+/// produced its passages actually was.
+fn knowledge_record(knowledge: &RoundKnowledge) -> RetrievalRecord {
+    let coverage = &knowledge.coverage;
+    let hybrid = coverage.mode == "hybrid";
+    let mut reasons: Vec<String> = Vec::new();
+    if let Some(because) = &coverage.degraded_because {
+        reasons.push(format!("keyword only: {because}"));
+    }
+    reasons.extend(coverage.partial.iter().cloned());
+    // The task's own memory is ranked by keyword overlap on every round; the
+    // semantic half applies to the organisation's documents. Said, so a hybrid
+    // record is not read as covering both.
+    if hybrid {
+        reasons.push("the task's own memory was ranked by keyword overlap".into());
+    }
+    RetrievalRecord {
+        mode: if hybrid { "hybrid" } else { "lexical" }.into(),
+        embedding_model_id: coverage.space_key.clone().filter(|_| hybrid),
+        embedding_dimension: knowledge.embedding_dimension.filter(|_| hybrid),
+        index_version: knowledge.index_revision.map(|revision| format!("knowledge-index@{revision}")),
+        degraded: !hybrid || !coverage.partial.is_empty(),
+        degraded_because: (!reasons.is_empty()).then(|| reasons.join("; ")),
+    }
+}
+
+/// How a retrieved passage reads to a model: labelled as data from a source,
+/// with its version and how it was found.
+fn render_passage(hit: &crate::knowledge::hybrid::EvidenceHit, marker: Option<usize>) -> String {
+    let version = hit
+        .source
+        .as_ref()
+        .map(|source| format!(" · v{} {}", source.version, source.status))
+        .unwrap_or_default();
+    let cite = marker.map(|marker| format!("[E{marker}] ")).unwrap_or_default();
+    format!(
+        "{cite}[passage · {}{version} · {}] {}: {}",
+        hit.method.label(),
+        hit.handle,
+        hit.passage.citation(),
+        hit.excerpt
+    )
 }
 
 fn retrieval_record(mode: RetrievalMode) -> RetrievalRecord {
@@ -1439,5 +1601,99 @@ mod projection_tests {
             record_projection(&compiled.manifest, &compiled.blocks, "nothing", 0, 0);
         assert_eq!(projection.run_id, "run-1");
         assert_eq!(projection.attempt_id, "attempt-1");
+    }
+}
+
+/// P07: retrieved knowledge in the round.
+#[cfg(test)]
+mod knowledge_tests {
+    use super::tests::{base_manifest, reserves, scope, session, write};
+    use super::*;
+    use crate::policy::Classification;
+
+    fn operator() -> crate::knowledge::graph::runtime_memory::Provenance {
+        crate::knowledge::graph::runtime_memory::Provenance::Operator { user_id: "priya".into() }
+    }
+
+    // ── P07: retrieved knowledge in the round ─────────────────────────────
+
+    fn knowledge(hits: usize, mode: &str) -> RoundKnowledge {
+        let hit = |n: usize| crate::knowledge::hybrid::EvidenceHit {
+            handle: format!("ev:c{n}"),
+            passage: crate::knowledge::SearchResult {
+                chunk_id: format!("c{n}"),
+                document_sha256: "d".repeat(64),
+                document_name: "sops/purge.md".into(),
+                text: format!("Passage {n} about the nitrogen purge."),
+                page: 1,
+                section_path: Vec::new(),
+                classification: Classification::Internal,
+                score: 0.0,
+                retrieval: crate::knowledge::Retrieval::Keyword,
+            },
+            excerpt: format!("Passage {n} about the nitrogen purge."),
+            method: crate::knowledge::hybrid::HitMethod::LexicalAndDense,
+            scores: Default::default(),
+            source: None,
+            duplicates: Vec::new(),
+        };
+        RoundKnowledge {
+            hits: (1..=hits).map(hit).collect(),
+            coverage: crate::knowledge::hybrid::Coverage {
+                mode: mode.into(),
+                space_key: Some("multilingual-e5-small@abcd/d384/mean/v1".into()),
+                degraded_because: (mode == "lexical").then(|| "no qualified embedding model".into()),
+                ..Default::default()
+            },
+            index_revision: Some(7),
+            embedding_dimension: Some(384),
+            markers: (1..=hits).collect(),
+        }
+    }
+
+    #[test]
+    fn retrieved_passages_are_capped_labelled_and_the_search_is_recorded() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Goal, "Purge the flare header", operator());
+        let round = knowledge(6, "hybrid");
+        let compiled = ContextCompiler::new(&graph)
+            .compile_with_knowledge(&session("priya"), &scope(), base_manifest(), "purge", &BTreeSet::new(), reserves(), Some(&round))
+            .expect("compiles");
+        let evidence: Vec<&ContextBlock> = compiled.blocks.iter().filter(|b| b.kind == BlockKind::Evidence).collect();
+        assert_eq!(evidence.len(), MAX_KNOWLEDGE_BLOCKS);
+        assert!(evidence[0].content.starts_with("[E1] [passage · keyword+semantic"), "{}", evidence[0].content);
+        let capped = compiled.manifest.omissions.iter().filter(|o| o.what.starts_with("ev:")).count();
+        assert_eq!(capped, 2, "{:?}", compiled.manifest.omissions);
+        let record = compiled.manifest.retrieval.as_ref().expect("recorded");
+        assert_eq!(record.mode, "hybrid");
+        assert_eq!(record.embedding_model_id.as_deref(), Some("multilingual-e5-small@abcd/d384/mean/v1"));
+        assert_eq!(record.embedding_dimension, Some(384));
+        assert_eq!(record.index_version.as_deref(), Some("knowledge-index@7"));
+    }
+
+    #[test]
+    fn a_keyword_only_round_is_recorded_as_degraded_with_the_reason() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        let round = knowledge(1, "lexical");
+        let compiled = ContextCompiler::new(&graph)
+            .compile_with_knowledge(&session("priya"), &scope(), base_manifest(), "purge", &BTreeSet::new(), reserves(), Some(&round))
+            .expect("compiles");
+        let record = compiled.manifest.retrieval.as_ref().expect("recorded");
+        assert_eq!(record.mode, "lexical");
+        assert!(record.degraded);
+        assert!(record.embedding_model_id.is_none(), "a keyword round named an embedding model");
+        assert!(record.degraded_because.as_deref().unwrap().contains("no qualified embedding model"));
+    }
+
+    #[test]
+    fn retrieved_passages_never_crowd_out_the_mandatory_set() {
+        let graph = MemoryGraph::in_memory().expect("opens");
+        write(&graph, MemoryKind::Goal, &"Produce the inspection note. ".repeat(6000), operator());
+        let round = knowledge(3, "hybrid");
+        let compiled = ContextCompiler::new(&graph)
+            .compile_with_knowledge(&session("priya"), &scope(), base_manifest(), "purge", &BTreeSet::new(), reserves(), Some(&round))
+            .expect("compiles");
+        assert!(compiled.mandatory_overflowed);
+        assert!(compiled.blocks.iter().all(|b| b.kind != BlockKind::Evidence));
     }
 }

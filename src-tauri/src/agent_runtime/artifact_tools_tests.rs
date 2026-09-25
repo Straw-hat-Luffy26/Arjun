@@ -73,6 +73,7 @@ fn rebuilt(
         notebooks: base.notebooks.clone(),
         jobs: Arc::default(),
         extraction: base.extraction.clone(),
+            retrieval: base.retrieval.clone(),
     })
 }
 

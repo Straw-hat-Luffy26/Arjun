@@ -432,6 +432,41 @@
       "consumer": "frontend",
       "note": "Called from src/."
     },
+    "knowledge_collections": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. The Knowledge screen's collection list (P07): readable collections, or every one for an administrator, with last sync and current source count."
+    },
+    "knowledge_collection_save": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Defines or changes a collection (P07); its enabled state and role restriction reach the index before anything else. Gated on ModifyPolicy."
+    },
+    "knowledge_collection_remove": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Removes a collection (P07): its sources are withdrawn, stay traceable, stop answering, and claims resting on them are rejected. Gated on ModifyPolicy."
+    },
+    "knowledge_collection_sync": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Reads a collection's folder into the index through the document sidecar (P07): versions, withdrawals and memory invalidation. Gated on UploadDocument."
+    },
+    "knowledge_retrieval_status": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Which half of retrieval runs on this machine and why (P07): the embedding model's identity and qualification state, and semantic coverage over the reader's own passages."
+    },
+    "knowledge_embedding_qualify": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Measures the registered embedding model on the bundled labelled probes and keeps the record (P07). The only way a model becomes usable for retrieval. Gated on ImportModel."
+    },
+    "knowledge_reindex": {
+      "owner": "knowledge",
+      "consumer": "frontend",
+      "note": "Called from src/. Runs one bounded, resumable embedding pass with the qualified model (P07). Gated on UploadDocument."
+    },
     "list_accounts": {
       "owner": "governance",
       "consumer": "frontend",

@@ -7,6 +7,8 @@ import {
   type KnowledgeHealth,
   type SearchResult,
 } from '../services/knowledge.service';
+import { KnowledgeCollectionsPanel } from './KnowledgeCollectionsPanel';
+import { retrievalService, type RetrievalStatus } from '../services/retrieval.service';
 import styles from './Knowledge.module.css';
 
 /** Classification labels, as an operator reads them rather than as JSON spells them. */
@@ -45,16 +47,19 @@ export const Knowledge: React.FC = () => {
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [retrieval, setRetrieval] = useState<RetrievalStatus | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [docs, state] = await Promise.all([
+      const [docs, state, mode] = await Promise.all([
         knowledgeService.documents(),
         knowledgeService.health().catch(() => null),
+        retrievalService.status().catch(() => null),
       ]);
       setDocuments(docs);
       setHealth(state);
+      setRetrieval(mode);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -141,8 +146,12 @@ export const Knowledge: React.FC = () => {
         </div>
         <div className={styles.stat}>
           <span className={styles.statLabel}>Retrieval</span>
-          <span className={styles.statValue}>Keyword</span>
-          <span className={styles.statNote}>No embedding model is installed.</span>
+          <span className={styles.statValue}>
+            {retrieval?.provider.state === 'qualified' ? 'Keyword + semantic' : 'Keyword'}
+          </span>
+          <span className={styles.statNote}>
+            {retrieval ? retrieval.provider.detail : 'The retrieval status could not be read.'}
+          </span>
         </div>
       </div>
 
@@ -207,6 +216,8 @@ export const Knowledge: React.FC = () => {
         )}
       </section>
 
+      <KnowledgeCollectionsPanel onChanged={() => void refresh()} />
+
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>
           <Library size={15} /> Indexed documents
@@ -214,10 +225,10 @@ export const Knowledge: React.FC = () => {
 
         {documents.length === 0 ? (
           <p className={styles.empty}>
-            Nothing is indexed yet. Documents enter the index through the extraction pipeline,
-            which classifies and chunks them — there is deliberately no way to add one from this
-            screen, because material that skipped classification would be retrievable by a run
-            that is not cleared for it.
+            Nothing is indexed yet. Documents enter the index by syncing a collection above, which
+            reads them under the collection's classification — there is deliberately no way to add
+            a single file from this screen, because material that skipped classification would be
+            retrievable by a run that is not cleared for it.
           </p>
         ) : (
           <ul className={styles.documents}>

@@ -1,0 +1,62 @@
+=== npm run check:egress
+egress gate: pass — one chokepoint, no unapproved hosts
+exit: 0
+=== npm run check:no-lora
+LoRA removal gate passed across 655 product files.
+exit: 0
+=== npm run check:deployment
+  ok  memory-sidecar ships as sidecars/memory_engine_sidecar/main.py
+  ok  voice-sidecar ships as sidecars/voice_sidecar/voice_bridge.py
+  ok  node is spawned through deployment::program(), not a bare literal
+  ok  python is spawned through deployment::program(), not a bare literal
+  ok  llama-server is spawned through deployment::program(), not a bare literal
+  ok  office-renderer is spawned through deployment::program(), not a bare literal
+
+Deployment gate passed: everything the code resolves, the installer ships.
+exit: 0
+=== npm run check:offline
+  Rust dependencies resolve from the local registry … ok
+  Node dependencies resolve from the npm cache … ok
+  TypeScript compiles … ok
+
+offline gate: pass — the build needs no network
+exit: 0
+=== npm run runtime:audit
+registered APIs: openai-completions
+scanned 287 source files and 10 manifests
+OK - link integrity and provider exclusion both hold
+exit: 0
+=== npm run runtime:typecheck
+exit: 0
+=== npm run check:ipc
+IPC contract OK: 187 commands (18 admin, 3 external, 146 frontend, 20 frontend-pending).
+exit: 0
+=== npm run check:reachable
+Reachability OK: 200 module(s) reachable from the entry points, 1 reached only by tests.
+exit: 0
+=== npm run check:targets
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: `sarathi` (lib test) generated 79 warnings (68 duplicates) (run `cargo fix --lib -p sarathi --tests` to apply 6 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32.74s
+exit: 0
+=== npm run check:lint-budget
+Unused-code budget exceeded: 53 warnings, ceiling is 40.
+
+This change left new dead code behind. Remove it, or — if it is genuinely
+needed and unused for a stated reason — say so at the definition rather than
+raising the number in scripts/lint-budget.json.
+exit: 1
+=== npm run check:generated
+sbom: wrote 1153 component(s) to evidence/sbom.cdx.json and evidence/sbom.md
+  note: The document sidecar's Python dependencies are installed by the deployment rather than by this repository, so they are not listed here. They belong in the deployment record.
+  note: The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because the dependency is far heavier: it pins torch and transformers in its own requirements.txt. An air-gapped install must vendor those wheels; nothing in this repository fetches them.
+  note: The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
+The committed SBOM is stale. Run npm run sbom and commit evidence/.
+exit: 1
+=== npm run check:whitespace
+exit: 0
