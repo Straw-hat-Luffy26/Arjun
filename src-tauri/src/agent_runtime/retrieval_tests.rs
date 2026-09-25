@@ -287,6 +287,7 @@ impl World {
             child_loop: None,
             cancellations: cancellations.clone(),
             analyst: None,
+            calculation_store: Arc::new(crate::calculation::CalculationStore::in_memory().expect("a calculation store")),
             retrieval: retrieval.clone(),
         });
         let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents");
@@ -396,6 +397,7 @@ fn rebuilt(
         jobs: base.jobs.clone(),
         extraction: base.extraction.clone(),
         retrieval,
+        calculation_store: base.calculation_store.clone(),
     })
 }
 

@@ -205,6 +205,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
         )),
+        calculation_store: Arc::new(sarathi_lib::calculation::CalculationStore::in_memory().expect("a calculation store")),
         retrieval: Arc::new(sarathi_lib::knowledge::service::RetrievalService::lexical_only(
             index.clone(),
             "no embedding model in this test",

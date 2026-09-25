@@ -386,6 +386,9 @@ fn objective_prompt(packet: &ChildTaskPacket) -> String {
             if let InputRef::Expression { expression } = input {
                 out.push_str(&format!(" (check this: {expression})"));
             }
+            if let InputRef::Calculation { calculation_id } = input {
+                out.push_str(&format!(" (cite it as [C:{calculation_id}])"));
+            }
             out.push('\n');
         }
     }

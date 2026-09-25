@@ -752,21 +752,34 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     label: "Calculate",
     readOnly: true,
     description:
-      "Evaluates an arithmetic expression with units, deterministically, and returns the result " +
-      "with every step of the working. " +
-      "Use it for any number that will appear in a deliverable. A figure you worked out in your " +
-      "head is not verifiable and may be wrong; one from here is recorded and can be shown. " +
+      "Evaluates an expression with units, deterministically, over named inputs that each carry " +
+      "their source, and returns an immutable calculation record: id, inputs, substitutions, " +
+      "working, raw and displayed result, rounding, tolerance and any uncertainty. " +
+      "Use it for any number that will appear in a deliverable, and cite the result as [C:calc-…]. " +
       "Do not use your own arithmetic to recompute or re-round what it returns — quote the result exactly as given. " +
-      "Effects: none that a person must approve, but each call is recorded and the workbook tool " +
-      "draws on that record, so the order you run them in is the order they appear. " +
-      "Limits: arithmetic with units, not algebra or code. " +
-      "If it cannot parse the expression: rewrite it with explicit units and operators, for " +
-      'example "1500 kg / 3 m^3" rather than "1500kg per 3 cubic metres".',
+      "Effects: none that a person must approve; the record is kept and published to the task's memory. " +
+      "Limits: + - * / ^, sqrt abs min max ln log10 exp sin cos tan, absolute(gauge, atm), dates " +
+      "plus whole days; units from a fixed table (degC is a temperature, delta_degC a difference, " +
+      "barg is gauge; months are refused). An input with no source makes the result PROVISIONAL. " +
+      "If it refuses: the error names its kind (dimension_mismatch, division_by_zero, domain, …); " +
+      "fix the input — never supply a number yourself.",
     parameters: closed({
       expression: Type.String({
-        description: 'With units, for example "1500 kg / 3 m^3" or "0.85 * 240 kW".',
+        description: 'E.g. "(t_min - t_meas) / t_min", or with units written in: "1500 kg / 3 m^3".',
         minLength: 1,
       }),
+      // Bounds (24 inputs, 1-12 figures or places) are enforced by the
+      // engine, which names them in its refusal; repeating them here costs
+      // every run the tokens.
+      inputs: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            'One line each: "t_meas = 8.2 mm ±0.05 mm [M:mi-7#r2]". Sources: [M:item#rN], [E3], ' +
+            "[ev:chunk], [S:sha@p4], [C:calc-…], [user], [assumed: why], [standard: name edition clause]; ? = no value.",
+        }),
+      ),
+      resultUnit: Type.Optional(Type.String()),
+      round: Type.Optional(Type.String({ description: 'E.g. "3sf", "2dp".' })),
     }),
   },
 
@@ -1305,6 +1318,83 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     parameters: closed({
       query: Type.String({ minLength: 1 }),
       markers: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }), { description: "Default: all." })),
+    }),
+  },
+  // P08: the Calculation Analyst & Checker's families. Each takes the same
+  // input lines as calculation.evaluate_with_units and keeps a record.
+  {
+    name: "calculation.validate_dimensions",
+    label: "Check a calculation's units",
+    readOnly: true,
+    description:
+      "Checks the dimensions of an expression or equation (a = b) without any values: every " +
+      "addition, function argument, both sides, and the result unit; lists every problem. " +
+      "Use it before formulating a calculation whose inputs are not all known yet. " +
+      "Do not use it to compute a number. " +
+      "Effects: none. " +
+      "Limits: the engine's unit table; inputs need units, not values (? is fine). To check a " +
+      'result unit, write "result = …" with the input "result = ? kPa". ' +
+      "If it reports a problem, fix the formulation; a pressure plus a temperature is never right.",
+    parameters: closed({
+      expression: Type.String(),
+      inputs: Type.Optional(Type.Array(Type.String())),
+    }),
+  },
+  {
+    name: "calculation.compare",
+    label: "Compare a value with a limit",
+    readOnly: true,
+    description:
+      "Compares a value (an expression over inputs, or calc-…) with a limit input: holds, fails or " +
+      "indeterminate within the stated uncertainty and tolerance, with the margin. " +
+      "Use it for any acceptance check against a criterion. " +
+      "Do not use it to state a conclusion yourself: it draws one only when the limit is sourced " +
+      "and names its standard with edition ([standard: …]). " +
+      "Effects: none that a person must approve; the record is kept. " +
+      "Limits: <=, <, >=, >, == (== needs a tolerance). " +
+      "If it says no engineering conclusion, report the numerical comparison only and name the missing standard.",
+    parameters: closed({
+      value: Type.String(),
+      relation: Type.String({ description: "<=, <, >=, > or ==" }),
+      limit: Type.String({ description: "An input's name." }),
+      inputs: Type.Optional(Type.Array(Type.String())),
+      tolerance: Type.Optional(Type.String({ description: 'E.g. "±0.1 mm" or "1%".' })),
+    }),
+  },
+  {
+    name: "calculation.solve",
+    label: "Solve for an unknown",
+    readOnly: true,
+    description:
+      "Solves equations for as many unknowns: one linear unknown, a linear system of up to six, " +
+      "or one unknown inside a bracket (\"t mm in 1..20\") by bisection; returns a record. " +
+      "Use it to rearrange a formula for the quantity asked. " +
+      "Do not use it for a nonlinear system; it refuses rather than guesses. " +
+      "Effects: none that a person must approve; the record is kept. " +
+      "Limits: square systems only; condition number ≤ 1e10; residuals are checked. " +
+      "If it reports singular, nonlinear or no_sign_change, restate the problem or give a bracket.",
+    parameters: closed({
+      equations: Type.Array(Type.String()),
+      unknowns: Type.Array(Type.String(), { description: 'E.g. "t mm".' }),
+      inputs: Type.Optional(Type.Array(Type.String())),
+    }),
+  },
+  {
+    name: "calculation.sensitivity",
+    label: "See how a result depends on its inputs",
+    readOnly: true,
+    description:
+      "Reports how a calculation's result moves with each input: derivative, elasticity and the " +
+      "result at each input's ± uncertainty (or ±1%), and the propagated uncertainty. " +
+      "Use it to see which input matters before relying on a figure. " +
+      "Do not use it as a new result; cite the evaluation. " +
+      "Effects: none that a person must approve. " +
+      "Limits: local, first-order; at most 24 inputs. " +
+      "If it says an input could not be probed, the function is undefined near it; say so.",
+    parameters: closed({
+      calculationId: Type.Optional(Type.String({ description: "calc-…" })),
+      expression: Type.Optional(Type.String()),
+      inputs: Type.Optional(Type.Array(Type.String())),
     }),
   },
   {

@@ -1,0 +1,686 @@
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Block`, `Document`, `Properties`, and `Section`
+    --> src/artifacts/content.rs:1255:39
+     |
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+     |                                       ^^^^^                            ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^
+
+warning: unused import: `crate::agent_runtime::audit_health::AuditHealth`
+    --> src/agent_runtime/tests.rs:1344:9
+     |
+1344 |     use crate::agent_runtime::audit_health::AuditHealth;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Modality`
+   --> src/registry/scan.rs:496:27
+    |
+496 |     use crate::registry::{Modality, ModelRole};
+    |                           ^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+    --> src/ai_engine/runtime.rs:1415:76
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                                                                            ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1900:9
+     |
+1900 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+    --> src/ai_engine/runtime.rs:1415:31
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                               ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:384:13
+    |
+384 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:396:13
+    |
+396 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:408:13
+    |
+408 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1258:8
+     |
+1258 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1798:9
+     |
+1796 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1797 |         _dir: tempfile::TempDir,
+1798 |         root: PathBuf,
+     |         ^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib test) generated 79 warnings (run `cargo fix --lib -p sarathi --tests` to apply 53 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.75s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+
+running 42 tests
+test calculation::tests::a_changed_source_value_changes_the_record_id_and_makes_the_old_one_stale ... ok
+test calculation::tests::a_conclusion_needs_a_sourced_limit_from_a_standard_with_its_edition ... ok
+test calculation::tests::a_linear_system_solves_and_a_singular_or_ill_conditioned_one_refuses ... ok
+test calculation::tests::a_linear_unknown_is_solved_exactly_and_checked ... ok
+test calculation::tests::a_nonlinear_unknown_needs_a_bracket_and_a_bracket_needs_a_sign_change ... ok
+test calculation::tests::a_pressure_and_a_temperature_are_a_dimensional_mismatch_everywhere ... ok
+test calculation::tests::an_invalid_mathematical_domain_is_a_structured_refusal ... ok
+test calculation::tests::an_uncertain_input_carries_its_uncertainty_to_the_result_and_to_the_verdict ... ok
+test calculation::tests::equality_needs_a_tolerance_and_strict_equality_at_the_limit_is_indeterminate ... ok
+test calculation::tests::pack_calc_01_wall_loss_against_the_minimum ... --- calc-01 ---
+calc-0a01044b759f0427 · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: wall_loss = (t_min - t_meas) / t_min
+Inputs:
+  t_min = 9.0 mm [user] (sourced)
+  t_meas = 8.2 mm [user] (sourced)
+Substituted: (9.0 mm - 8.2 mm) / (9.0 mm)
+Working:
+  9.0 mm - 8.2 mm = 0.8 mm
+  0.8 mm / 9.0 mm = 0.0888888889
+Result wall_loss: 8.889 % (raw 8.888888888888896 %; SI 0.0888888889)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Cite it as [C:calc-0a01044b759f0427] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test calculation::tests::pack_calc_02_mixed_units_are_converted_not_subtracted_raw ... --- calc-02 ---
+calc-12505ae049dee91a · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: (t_min - t_meas) / t_min
+Inputs:
+  t_min = 0.354 in [user] (sourced)
+  t_meas = 8.2 mm [user] (sourced)
+Substituted: (0.354 in - 8.2 mm) / (0.354 in)
+Working:
+  0.354 in - 8.2 mm = 0.0311653543 in
+  0.0311653543 in / 0.354 in = 0.0880377241
+Result result: 8.804 % (raw 8.803772409804706 %; SI 0.0880377241)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Cite it as [C:calc-12505ae049dee91a] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test calculation::tests::pack_calc_03_the_basis_decides_the_figure ... --- calc-03 (nominal basis) ---
+calc-3135556fe8af3341 · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: (t_nom - t_meas) / t_nom
+Inputs:
+  t_nom = 12.0 mm [user] (sourced)
+  t_meas = 8.2 mm [user] (sourced)
+Substituted: (12.0 mm - 8.2 mm) / (12.0 mm)
+Working:
+  12.0 mm - 8.2 mm = 3.8 mm
+  3.8 mm / 12.0 mm = 0.3166666667
+Result result: 31.7 % (raw 31.66666666666667 %; SI 0.3166666667)
+Rounding: 1 decimal places, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Cite it as [C:calc-3135556fe8af3341] and quote the result exactly as displayed; do not recompute or re-round it.
+--- calc-03 (the SOP's basis) ---
+calc-f1660e2e117fc0d2 · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: (t_min - t_meas) / t_min
+Inputs:
+  t_min = 9.0 mm [user] (sourced)
+  t_meas = 8.2 mm [user] (sourced)
+Substituted: (9.0 mm - 8.2 mm) / (9.0 mm)
+Working:
+  9.0 mm - 8.2 mm = 0.8 mm
+  0.8 mm / 9.0 mm = 0.0888888889
+Result result: 8.9 % (raw 8.888888888888896 %; SI 0.0888888889)
+Rounding: 1 decimal places, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Cite it as [C:calc-f1660e2e117fc0d2] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test calculation::tests::pack_calc_04_ninety_days_is_not_three_months ... --- calc-04 ---
+calc-8cca725e0fc356e1 · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: last_day = inspected + window
+Inputs:
+  inspected = 2026-08-12 [user] (sourced)
+  window = 90 days [user] (sourced)
+Substituted: 2026-08-12 + 90 days
+Working:
+  2026-08-12 + 90 days = 2026-11-10
+Result last_day: 2026-11-10 (raw 2026-11-10; SI 20767 d since 1970-01-01)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Cite it as [C:calc-8cca725e0fc356e1] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test calculation::tests::pack_calc_05_the_rate_uses_the_actual_interval ... --- calc-05 ---
+calc-04e2fb2c9edcc1fe · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: rate = (t_from - t_to) / (d_to - d_from)
+Inputs:
+  t_from = 9.6 mm [user] (sourced)
+  t_to = 8.2 mm [user] (sourced)
+  d_from = 2024-03-18 [user] (sourced)
+  d_to = 2026-08-12 [user] (sourced)
+Substituted: (9.6 mm - 8.2 mm) / (2026-08-12 - 2024-03-18)
+Working:
+  9.6 mm - 8.2 mm = 1.4 mm
+  2026-08-12 - 2024-03-18 = 877 d
+  1.4 mm / 877 d = 0.0015963512 mm/d
+Result rate: 0.5831 mm/a (raw 0.5830672748004563 mm/a; SI 1.8476287005363406e-11 m/s)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Assumptions: a year (a, yr) is the Julian year, 365.25 d
+Cite it as [C:calc-04e2fb2c9edcc1fe] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test calculation::tests::pack_calc_06_a_zero_minimum_is_refused_with_no_number ... --- calc-06 ---
+calc-14f28481c460bccb · evaluate · refused · arjun-calc 2.0.0 (units f3deca3b)
+Equation: (t_min - t_meas) / t_min
+Inputs:
+  t_min = 0.0 mm [user] (sourced)
+  t_meas = 6.4 mm [user] (sourced)
+Substituted: (0.0 mm - 6.4 mm) / (0.0 mm)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Refused — division_by_zero: Division by zero: the divisor 0.0 mm is zero, so there is no result. The input is not usable as given. No number was produced.
+
+ok
+test calculation::tests::rounding_is_stated_and_the_raw_result_is_kept ... ok
+test calculation::tests::sensitivity_ranks_inputs_by_elasticity_and_reports_swings ... ok
+test calculation::tests::unit_conversions_are_exact_to_the_table ... ok
+test calculation::tests::unsourced_assumed_and_missing_inputs_stay_explicit ... ok
+test calculation::tests::zero_and_negative_boundary_inputs_are_computed_or_refused_never_clipped ... ok
+test orchestrator::calculation::tests::a_length_minus_a_length_is_a_length ... ok
+test orchestrator::calculation::tests::a_percent_sign_reads_as_a_unit ... ok
+test orchestrator::calculation::tests::a_sentence_is_not_mistaken_for_an_expression ... ok
+test orchestrator::calculation::tests::a_stray_symbol_after_a_complete_expression_is_refused ... ok
+test orchestrator::calculation::tests::adding_incompatible_units_is_refused_rather_than_computed ... ok
+test orchestrator::calculation::tests::an_empty_expression_is_refused ... ok
+test orchestrator::calculation::tests::an_error_says_where_it_happened ... ok
+test orchestrator::calculation::tests::an_unclosed_bracket_is_refused ... ok
+test orchestrator::calculation::tests::dividing_like_units_cancels_them ... ok
+test orchestrator::calculation::tests::division_by_zero_is_refused ... ok
+test orchestrator::calculation::tests::every_input_is_recorded_with_its_unit ... ok
+test orchestrator::calculation::tests::every_record_says_it_was_computed_deterministically ... ok
+test orchestrator::calculation::tests::intermediate_steps_are_recorded_in_order ... ok
+test orchestrator::calculation::tests::multiplication_binds_tighter_than_addition ... ok
+test orchestrator::calculation::tests::multiplying_units_produces_a_compound_unit ... ok
+test orchestrator::calculation::tests::negation_works_at_the_front_and_inside_brackets ... ok
+test orchestrator::calculation::tests::plain_arithmetic_is_correct ... ok
+test orchestrator::calculation::tests::subtracting_a_bare_number_from_a_measurement_is_refused ... ok
+test orchestrator::calculation::tests::the_record_states_its_rounding_and_keeps_the_exact_value ... ok
+test orchestrator::calculation::tests::the_wall_thickness_deviation_is_exact ... ok
+test orchestrator::calculation::tests::the_written_result_carries_no_floating_point_noise ... ok
+test orchestrator::calculation::tests::trailing_nonsense_is_refused_rather_than_partly_evaluated ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.07s
+

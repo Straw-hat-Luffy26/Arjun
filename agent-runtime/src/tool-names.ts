@@ -104,6 +104,11 @@ export const CANONICAL_TOOL_NAMES = [
   "knowledge.source_version",
   "memory.neighbours",
   "knowledge.rerank",
+  // P08's Calculation Analyst & Checker tools.
+  "calculation.validate_dimensions",
+  "calculation.compare",
+  "calculation.solve",
+  "calculation.sensitivity",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -173,6 +178,9 @@ const EVIDENCE_PRODUCING: ReadonlySet<CanonicalToolName> = new Set([
 /** Tools whose result is a deterministic calculation with its working shown. */
 const CALCULATION: ReadonlySet<CanonicalToolName> = new Set([
   "calculation.evaluate_with_units",
+  "calculation.compare",
+  "calculation.solve",
+  "calculation.sensitivity",
 ]);
 
 /**

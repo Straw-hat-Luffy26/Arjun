@@ -73,6 +73,11 @@ export const CANONICAL_TOOL_NAMES = [
   'knowledge.source_version',
   'memory.neighbours',
   'knowledge.rerank',
+  // P08's Calculation Analyst & Checker tools.
+  'calculation.validate_dimensions',
+  'calculation.compare',
+  'calculation.solve',
+  'calculation.sensitivity',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -172,6 +177,10 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'knowledge.source_version': "Checking a source's version",
   'memory.neighbours': "Following a memory item's links",
   'knowledge.rerank': 'Reordering retrieved passages',
+  'calculation.validate_dimensions': "Checking a calculation's units",
+  'calculation.compare': 'Comparing a value with a limit',
+  'calculation.solve': 'Solving for an unknown',
+  'calculation.sensitivity': 'Seeing how a result depends on its inputs',
 };
 
 /**

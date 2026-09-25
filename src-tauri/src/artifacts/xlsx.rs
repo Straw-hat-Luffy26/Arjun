@@ -165,6 +165,12 @@ fn rows_for(records: &[CalculationRecord], classification: &str) -> Vec<Vec<Cell
             Cell::Empty,
             Cell::Text(record.expression.clone()),
         ]);
+        // P08: the immutable record behind the figure, so a reader can cite
+        // it and a reviewer can check it against its sources.
+        if !record.id.is_empty() {
+            rows.push(vec![Cell::Text("Record".into()), Cell::Empty, Cell::Text(format!("{} ({})", record.id, record.status))]);
+            rows.push(vec![Cell::Text("Engine".into()), Cell::Empty, Cell::Text(record.engine.clone())]);
+        }
 
         for input in &record.inputs {
             rows.push(vec![

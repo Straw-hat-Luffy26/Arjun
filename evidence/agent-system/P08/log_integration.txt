@@ -1,0 +1,657 @@
+
+> arjun@0.2.0 test:integration
+> cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast --test agent_runtime --test two_runtimes --test rbac_isolation --test imported_skills_load --test test_memory_pipeline --test seed_local_accounts --test verify_certification_system --test scan_real_library --test artifact_formats_end_to_end --test production_acceptance --test production_hardening
+
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Grounding`
+  --> src/artifacts/production.rs:29:39
+   |
+29 | use super::verifier::{self, Evidence, Grounding, VerificationReport};
+   |                                       ^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+  --> src/ai_engine/request_context.rs:34:36
+   |
+34 | use std::sync::atomic::{AtomicU64, Ordering};
+   |                                    ^^^^^^^^
+
+warning: unused import: `RoutingPreference`
+  --> src/ai_engine/vision_bridge.rs:52:45
+   |
+52 | use crate::registry::{ModelEntry, Modality, RoutingPreference, Runtime};
+   |                                             ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RawBox`
+  --> src/ai_engine/ocr_stream.rs:31:34
+   |
+31 | use super::ocr_spans::{OcrEvent, RawBox, SpanParser};
+   |                                  ^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1900:9
+     |
+1900 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `from_connections` is never used
+  --> src/sovereignty/observer.rs:55:8
+   |
+46 | impl ObservationReport {
+   | ---------------------- associated function in this implementation
+...
+55 |     fn from_connections(connections: Vec<ObservedConnection>) -> Self {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `is_loopback_addr` is never used
+  --> src/sovereignty/observer.rs:70:4
+   |
+70 | fn is_loopback_addr(addr: &std::net::IpAddr) -> bool {
+   |    ^^^^^^^^^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib) generated 74 warnings (run `cargo fix --lib -p sarathi` to apply 51 suggestions)
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+warning: function `two_runs_in_a_row_each_carry_their_own_messageId` should have a snake case name
+   --> tests/agent_runtime.rs:686:10
+    |
+686 | async fn two_runs_in_a_row_each_carry_their_own_messageId() {
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `two_runs_in_a_row_each_carry_their_own_message_id`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `sarathi` (test "agent_runtime") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.91s
+     Running tests/agent_runtime.rs (src-tauri/target/debug/deps/agent_runtime-e6ab37dc075af3a6)
+
+running 18 tests
+test a_longer_prompt_streams_in_the_wire_contract ... ok
+test a_real_model_answers_from_the_conversation_it_was_given ... ok
+test a_run_against_a_public_endpoint_is_refused_by_the_runtime_itself ... ok
+test a_continuing_turn_carries_its_history_across_the_process_boundary ... ok
+test a_model_reads_an_artifact_manifest_through_the_real_runtime ... ok
+test aborting_a_finished_run_is_not_an_error ... ok
+test a_coordinating_model_plans_delegates_and_reads_a_job_through_the_real_runtime ... ok
+test message_stream_events_carry_message_id_and_text_deltas ... ok
+test spark_routes_the_orchestrator_tools_through_the_real_runtime ... ignored, needs a Spark X2.5 server: set ARJUN_SPARK_URL (see the doc comment)
+test an_empty_correction_is_refused_by_the_runtime ... ok
+test stopping_a_real_model_mid_answer_ends_the_run_as_aborted ... ok
+test an_unknown_method_comes_back_as_an_error_not_a_hang ... ok
+test runtime_logging_does_not_corrupt_the_channel ... ok
+test steering_a_finished_run_is_not_an_error ... ok
+test two_runs_in_a_row_each_carry_their_own_messageId ... ok
+test the_runtime_answers_across_the_language_boundary ... ok
+test the_turn_after_a_stop_runs_normally ... ok
+test stopping_a_thinking_run_ends_it_as_aborted_and_keeps_what_it_wrote ... ok
+
+test result: ok. 17 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.07s
+
+     Running tests/artifact_formats_end_to_end.rs (src-tauri/target/debug/deps/artifact_formats_end_to_end-0d54d6d28633a005)
+
+running 6 tests
+test a_progressing_task_outlives_the_old_wall_clock_ceilings ... ok
+test every_validator_rejects_its_formats_characteristic_corruption ... ok
+test nothing_unsound_is_ever_presented_as_finished ... ok
+test the_templates_this_product_shipped_with_still_produce_their_artifacts ... ok
+test every_supported_format_is_produced_and_accepted_by_its_own_validator ... ok
+test a_request_selects_and_loads_skills_that_survive_being_carried ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/imported_skills_load.rs (src-tauri/target/debug/deps/imported_skills_load-2c65fd7ee580ebf0)
+
+running 1 test
+test every_shipped_skill_loads_and_is_trusted ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/production_acceptance.rs (src-tauri/target/debug/deps/production_acceptance-aadbbda174f2d7e6)
+
+running 12 tests
+test step_3_a_user_scoped_item_is_confined_to_its_owner ... ok
+test step_1_two_agents_with_distinct_colours_share_one_task ... ok
+test step_2_a_records_a_fact_a_correction_and_a_versioned_artifact ... ok
+test step_3_an_unauthorised_reader_sees_nothing_not_even_a_count ... ok
+test step_3_b_reads_a_s_fact_and_artifact_through_authorised_memory_only ... ok
+test step_5_an_interrupted_run_resumes_the_same_assistant_message ... ok
+test step_6_one_external_write_happens_once_and_the_rest_is_checkable ... ok
+test step_4_changing_b_s_model_and_shrinking_its_window_compacts_repeatedly ... ok
+test step_8_the_real_verifier_refuses_an_unsupported_draft_and_the_result_persists ... ok
+test step_7_a_conflicting_update_is_refused_rather_than_silently_overwritten ... ok
+test step_7_invalidating_a_source_rejects_what_cited_it_and_keeps_it_labelled ... ok
+test step_7_duplicate_and_out_of_order_events_are_absorbed ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/production_hardening.rs (src-tauri/target/debug/deps/production_hardening-99423bb7dccea9e4)
+
+running 8 tests
+test an_injected_disclosure_request_does_not_cross_a_project ... ok
+test an_injection_inside_stored_content_changes_no_decision ... ok
+test a_semantic_search_with_no_vectors_finds_nothing_rather_than_falling_back ... ok
+test two_owners_do_not_see_each_others_memory ... ok
+test two_projects_do_not_see_each_others_memory ... ok
+test lexical_and_semantic_retrieval_are_distinguishable ... ok
+test an_unbounded_request_is_clamped_rather_than_honoured ... ok
+test a_history_past_the_page_boundary_pages_without_loss_or_repeat ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/rbac_isolation.rs (src-tauri/target/debug/deps/rbac_isolation-32dfa9c9555db97f)
+
+running 12 tests
+test a_user_with_no_roles_holds_no_permissions ... ok
+test employee_cannot_perform_administrative_actions ... ok
+test a_user_with_two_roles_holds_the_union_of_what_each_grants ... ok
+test administrator_is_a_superset_of_employee ... ok
+test every_seeded_account_holds_exactly_one_role ... ok
+test headline_role_never_returns_a_legacy_role ... ok
+test headline_role_uses_active_roles_only ... ok
+test require_permission_admits_employee_for_use_model ... ok
+test require_permission_refuses_an_unauthenticated_caller ... ok
+test require_permission_refuses_employee_for_modify_policy ... ok
+test role_grants_matches_documented_matrix ... ok
+test the_seeded_directory_exposes_only_active_roles ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/scan_real_library.rs (src-tauri/target/debug/deps/scan_real_library-af36550e1b3d5220)
+
+running 2 tests
+test every_installed_model_reports_its_reasoning_capability ... ok
+test the_scanner_agrees_with_the_directory_it_scanned ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/seed_local_accounts.rs (src-tauri/target/debug/deps/seed_local_accounts-2e79be15b49f1000)
+
+running 1 test
+test seed_local_accounts_sets_password_for_every_seeded_account_except_modeladmin ... ignored, writes to the live credential store. Run with `cargo test --test seed_local_accounts -- --ignored --nocapture`.
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_memory_pipeline.rs (src-tauri/target/debug/deps/test_memory_pipeline-2622720dfb69fad4)
+
+running 1 test
+test test_memory_pipeline_end_to_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/two_runtimes.rs (src-tauri/target/debug/deps/two_runtimes-77a6719e84b505eb)
+
+running 5 tests
+test a_python_model_with_no_endpoint_is_refused_with_the_line_to_add ... ok
+test a_coding_task_and_a_document_task_reach_different_models_on_different_runtimes ... ok
+test a_python_model_whose_server_is_down_is_reported_before_a_run_starts ... ok
+test a_manifest_may_point_a_gguf_model_at_a_server_someone_else_runs ... ok
+test each_routed_model_resolves_to_a_loopback_endpoint_on_its_own_runtime ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/verify_certification_system.rs (src-tauri/target/debug/deps/verify_certification_system-6e3c7d192a531a82)
+
+running 1 test
+test test_certification_system_loading_and_matching ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

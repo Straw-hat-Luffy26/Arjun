@@ -154,6 +154,7 @@ fn deps() -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             &dir.path().join("documents"),
             "no OCR or vision model in this test",
         )),
+        calculation_store: Arc::new(sarathi_lib::calculation::CalculationStore::in_memory().expect("a calculation store")),
         retrieval: Arc::new(sarathi_lib::knowledge::service::RetrievalService::lexical_only(
             index.clone(),
             "no embedding model in this test",
@@ -1690,6 +1691,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             documents: base.documents.clone(),
             conversations: base.run_to_conversation.clone(),
         }),
+        calculation_store: base.calculation_store.clone(),
         retrieval: base.retrieval.clone(),
     });
     let profiles = sarathi_lib::subagents::load_profiles(
@@ -1741,6 +1743,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
         notebooks: base.notebooks.clone(),
         jobs: Arc::default(),
         extraction: base.extraction.clone(),
+            calculation_store: base.calculation_store.clone(),
             retrieval: base.retrieval.clone(),
     });
 

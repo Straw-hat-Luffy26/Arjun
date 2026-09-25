@@ -20,7 +20,8 @@
 //!
 //! A citation is a marker in the text: `[E3]` names passage 3 of the run that
 //! wrote it; `[A:art-1@2]` an artifact version; `[M:mem-7@4]` a memory item at a
-//! revision; `[S:<sha>@p4]` a source document by hash. Markers are what a model
+//! revision; `[S:<sha>@p4]` a source document by hash; `[C:calc-…]` a
+//! calculation record (P08), whose exact result the text quotes. Markers are what a model
 //! writes. What they *mean* is fixed when a version is registered — see
 //! `conversation_store`'s dependency table — because `[E3]` in one run and
 //! `[E3]` in the next are different passages.
@@ -87,6 +88,8 @@ pub enum CitationTarget {
     Memory { item_id: String, revision: Option<u64> },
     /// `[S:ab12…@p4]` — source bytes by hash, with a locator.
     Source { sha256: String, locator: Option<String> },
+    /// `[C:calc-0123456789abcdef]` — an immutable calculation record (P08).
+    Calculation { calculation_id: String },
 }
 
 /// One marker, as written.
@@ -819,6 +822,9 @@ fn parse_marker(inner: &str) -> Option<CitationTarget> {
         "S" => CitationTarget::Source {
             sha256: id.to_ascii_lowercase(),
             locator: at.map(str::to_string),
+        },
+        "C" if id.starts_with("calc-") && at.is_none() => CitationTarget::Calculation {
+            calculation_id: id.to_string(),
         },
         _ => return None,
     })

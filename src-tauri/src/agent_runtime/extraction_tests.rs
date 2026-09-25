@@ -365,6 +365,7 @@ impl World {
                 documents: base.documents.clone(),
                 conversations: base.run_to_conversation.clone(),
             }),
+            calculation_store: base.calculation_store.clone(),
             retrieval: base.retrieval.clone(),
         });
         let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents");
@@ -414,6 +415,7 @@ impl World {
             notebooks: base.notebooks.clone(),
             jobs: Arc::default(),
             extraction,
+            calculation_store: base.calculation_store.clone(),
             retrieval: base.retrieval.clone(),
         });
         World { deps, graph, server, dir, opened }

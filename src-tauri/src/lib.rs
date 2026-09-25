@@ -25,6 +25,7 @@ pub mod serving;
 pub mod skills;
 pub mod subagents;
 pub mod extraction;
+pub mod calculation;
 
 // Phase modules
 pub mod system_analyzer;
@@ -924,6 +925,16 @@ pub fn run() {
                 }
                 let retrieval = StdArc::new(retrieval_service);
                 app.manage(commands::agent::RetrievalState(StdArc::clone(&retrieval)));
+                // Calculation records (P08): append-only, content-addressed,
+                // one store for the tools, the checker and the artifact tools.
+                let calculation_store = match calculation::CalculationStore::open(&app_data_dir.join("calculations")) {
+                    Ok(store) => StdArc::new(store),
+                    Err(problem) => {
+                        log::error!("[calculation] {problem}; records are kept for this process only");
+                        StdArc::new(calculation::CalculationStore::in_memory().expect("an in-memory calculation store"))
+                    }
+                };
+                app.manage(commands::agent::CalculationStoreState(StdArc::clone(&calculation_store)));
                 {
                     // Said at start, the way the OCR and vision readiness are:
                     // which half of retrieval this machine will run, and why.
@@ -981,6 +992,7 @@ pub fn run() {
                     cancellations: StdArc::clone(&cancellations.0),
                     analyst: Some(analyst),
                     retrieval,
+                    calculation_store,
                 });
 
                 for worker in

@@ -96,6 +96,10 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "knowledge.source_version",
   "memory.neighbours",
   "knowledge.rerank",
+  "calculation.validate_dimensions",
+  "calculation.compare",
+  "calculation.solve",
+  "calculation.sensitivity",
 ]);
 
 /**
@@ -206,6 +210,10 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["knowledge.source_version", true],
   ["memory.neighbours", true],
   ["knowledge.rerank", true],
+  ["calculation.validate_dimensions", true],
+  ["calculation.compare", true],
+  ["calculation.solve", true],
+  ["calculation.sensitivity", true],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

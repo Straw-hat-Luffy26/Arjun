@@ -364,12 +364,6 @@ function runCodingGroup() {
  */
 function blockedOnUnbuiltAgents() {
   const pending = [
-    ['calc-01-wall-loss-mm', 'P08', 'Calculation Analyst & Checker'],
-    ['calc-02-mixed-units-inch', 'P08', 'Calculation Analyst & Checker'],
-    ['calc-03-percent-of-what', 'P08', 'Calculation Analyst & Checker'],
-    ['calc-04-replacement-window', 'P08', 'Calculation Analyst & Checker'],
-    ['calc-05-corrosion-rate', 'P08', 'Calculation Analyst & Checker'],
-    ['calc-06-division-by-zero', 'P08', 'Calculation Analyst & Checker'],
     ['art-docx-02-required-sections', 'P09', 'Document Author and Word authoring tools'],
     ['art-docx-03-names-the-revision', 'P09', 'Document Author and Word authoring tools'],
     ['art-docx-04-no-invented-internal-inspection', 'P09', 'Document Author and Word authoring tools'],
@@ -406,6 +400,41 @@ function blockedOnUnbuiltAgents() {
       unblockCommand:
         'On the target machine: set ARJUN_APP_DATA to the app data directory, then ' +
         'cargo test --manifest-path src-tauri/Cargo.toml --test extraction_live -- --ignored --nocapture --test-threads=1',
+    });
+  }
+
+  // P08 built the Calculation Analyst & Checker: the deterministic engine and
+  // its five operation families, immutable records, independent checking and
+  // lineage. The engine half of all six cases -- the pack's own inputs against
+  // the pack's own expected answers, with the SOP's formulation written in the
+  // test -- is checked by src-tauri/src/calculation/tests.rs::pack_calc_*
+  // (calc-06 refuses with division_by_zero and no number). What these cases
+  // grade is the agent's answer: that it chose the SOP's basis (calc-03), did
+  // not add three months (calc-04), used the actual interval (calc-05). A model
+  // formulates that, and this harness does not run a model through the task
+  // driver; the first complete journey (P10) does.
+  for (const id of [
+    'calc-01-wall-loss-mm',
+    'calc-02-mixed-units-inch',
+    'calc-03-percent-of-what',
+    'calc-04-replacement-window',
+    'calc-05-corrosion-rate',
+    'calc-06-division-by-zero',
+  ]) {
+    record({
+      id,
+      group: 'agent-cases',
+      kind: 'fixture-case',
+      status: BLOCKED,
+      detail:
+        'the Calculation Analyst & Checker exists (P08) and the engine reproduces this case\'s ' +
+        'expected answer from the pack\'s inputs (src-tauri/src/calculation/tests.rs::pack_calc_*); ' +
+        'grading the agent\'s formulation needs a model run through the production task driver, ' +
+        'which this harness does not perform.',
+      blockedOnPhase: 'P10',
+      unblockCommand:
+        'Implement P10 (first complete journey with a real model), then re-run this harness. ' +
+        'The engine half: cargo test --manifest-path src-tauri/Cargo.toml --lib calculation::tests::pack_calc',
     });
   }
 

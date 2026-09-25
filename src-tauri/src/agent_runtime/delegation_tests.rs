@@ -158,6 +158,7 @@ impl World {
                 documents: base.documents.clone(),
                 conversations: base.run_to_conversation.clone(),
             }),
+            calculation_store: base.calculation_store.clone(),
             retrieval: base.retrieval.clone(),
         });
         let profiles = load_profiles(&profiles_dir()).profiles;
@@ -216,6 +217,7 @@ impl World {
             notebooks: base.notebooks.clone(),
             jobs: Arc::default(),
             extraction: base.extraction.clone(),
+            calculation_store: base.calculation_store.clone(),
             retrieval: base.retrieval.clone(),
         });
         World { deps, graph, cancellations, _dir: Some(dir) }

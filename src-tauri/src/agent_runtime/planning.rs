@@ -707,6 +707,22 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ToolName::KnowledgeRerank,
     ]);
 
+    // The Calculation Analyst & Checker's tools (P08): dimension checks, the
+    // documented solver families, a comparison against a sourced limit and
+    // sensitivity. Where the work calculates, or produces a workbook of
+    // figures; `calculation.evaluate_with_units` is permitted everywhere
+    // above. After the retrieval tools and before the page tools, so a small
+    // window keeps the search that finds an input before the solver that
+    // uses it.
+    if calculates || produces_workbook {
+        permitted.extend([
+            ToolName::CalculationValidateDimensions,
+            ToolName::CalculationCompare,
+            ToolName::CalculationSolve,
+            ToolName::CalculationSensitivity,
+        ]);
+    }
+
     // The Document & Vision Analyst's page tools (P06): layout, crops, local
     // OCR and tables over what the asker attached to this thread, owner- and
     // conversation-scoped in the store, with any OCR local and bounded.

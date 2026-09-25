@@ -234,6 +234,12 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         // It changes state this process owns and can discard, and it reaches
         // nothing outside the task.
         ToolName::RunCalculation => ToolClass::Reversible,
+        // P08: the same, with an immutable record in the calculation store
+        // and an observation in the task's memory. Nothing outside the task.
+        ToolName::CalculationValidateDimensions
+        | ToolName::CalculationSolve
+        | ToolName::CalculationCompare
+        | ToolName::CalculationSensitivity => ToolClass::Reversible,
 
         // Writes into the project's memory, under an approval granted for that
         // exact fact. Reversible because `memory_forgotten` can take it back

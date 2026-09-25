@@ -38,14 +38,15 @@ function catalogue(): BudgetableTool[] {
  * A budget of `1` would also reach the smallest stage, but it reaches it by
  * amputating the catalogue down to one tool — which is a different question
  * from "how small can the whole catalogue be made". The budget has to sit
- * between the `minimal` size and the next stage up. Measured at P07 (56 tools)
- * as 5,350 tokens at `minimal` (95.5 per tool), so 5,400 still compresses to
- * `minimal` and drops nothing. At P06 (52 tools) it was 4,990 / 5,619; it was
+ * between the `minimal` size and the next stage up. Measured at P08 (60 tools)
+ * as 5,755 tokens at `minimal` (95.9 per tool), so 5,800 still compresses to
+ * `minimal` and drops nothing. At P07 (56 tools) it was 5,350 (95.5 per tool);
+ * at P06 (52 tools) 4,990 / 5,619; it was
  * 4,800 at 48 tools (P05: 4,521 / 5,089),
  * 4,000 at 43 (P04: 3,902 / 4,399) and 3,000 at 33.
  */
 function minimalCatalogue(): BudgetableTool[] {
-  const fitted = fitToolsToBudget(catalogue(), 5_400);
+  const fitted = fitToolsToBudget(catalogue(), 5_800);
   if (fitted.report.stage !== "minimal" || fitted.report.dropped.length > 0) {
     throw new Error(
       `expected the whole catalogue at the smallest stage, got ${fitted.report.stage} with ` +
@@ -95,6 +96,18 @@ const P07_RETRIEVAL_TOOLS: ReadonlySet<string> = new Set([
   "knowledge.rerank",
 ]);
 
+/**
+ * The four calculation families P08 added, listed after the P07 tools and
+ * before the page tools. `calculation.evaluate_with_units` sits in the core
+ * and keeps every figure computable when a window is too small for these.
+ */
+const P08_CALCULATION_TOOLS: ReadonlySet<string> = new Set([
+  "calculation.validate_dimensions",
+  "calculation.compare",
+  "calculation.solve",
+  "calculation.sensitivity",
+]);
+
 /** Every `properties` key in a schema, at every depth. */
 function propertyNames(schema: unknown, found: string[] = []): string[] {
   if (Array.isArray(schema)) {
@@ -122,9 +135,11 @@ describe("the tool catalogue against a small window", () => {
   /**
    * The core — every tool before P07's — at 8k. Measured at P07: the 8k tool
    * budget is 3,686 tokens and this core fills 3,611 of it at `minimal`, so no
-   * further tool of any kind fits an 8k window whole. P07's four tools are
-   * kept whole from about 10k (at 10,240 only eight artifact tools drop) and
-   * everything is kept from 12k.
+   * further tool of any kind fits an 8k window whole. P08 widened the core's
+   * `calculation.evaluate_with_units` (typed inputs, result unit, rounding)
+   * and it still fits. P07's and P08's tools are kept whole at 10,240 (the
+   * artifact family and two page tools drop); at 12,288 only the last two
+   * artifact tools drop, and everything is kept from 14,336.
    */
   it("fits the budget an 8k model can afford, with every tool before P07's intact", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
@@ -132,7 +147,8 @@ describe("the tool catalogue against a small window", () => {
       (tool) =>
         !P04_ARTIFACT_TOOLS.has(tool.name) &&
         !P06_PAGE_TOOLS.has(tool.name) &&
-        !P07_RETRIEVAL_TOOLS.has(tool.name),
+        !P07_RETRIEVAL_TOOLS.has(tool.name) &&
+        !P08_CALCULATION_TOOLS.has(tool.name),
     );
     const fitted = fitToolsToBudget(core, budget);
 
@@ -166,12 +182,19 @@ describe("the tool catalogue against a small window", () => {
    * `minimal` for 56 tools). Measured at 8k: the artifact family, the page
    * tools and then these four are dropped; the original search, page-region
    * and multimodal readers are kept.
+   *
+   * P08 adds four calculation families between the P07 tools and the page
+   * tools (5,755 tokens for 60). At 8k they go after the page tools and
+   * before the P07 tools; `calculation.evaluate_with_units` stays.
    */
-  it("drops only the P04, P06 and P07 additions, from the tail, when the whole catalogue meets an 8k window", () => {
+  it("drops only the P04, P06, P07 and P08 additions, from the tail, when the whole catalogue meets an 8k window", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
     const fitted = fitToolsToBudget(catalogue(), budget);
     const droppable = (name: string) =>
-      P04_ARTIFACT_TOOLS.has(name) || P06_PAGE_TOOLS.has(name) || P07_RETRIEVAL_TOOLS.has(name);
+      P04_ARTIFACT_TOOLS.has(name) ||
+      P06_PAGE_TOOLS.has(name) ||
+      P07_RETRIEVAL_TOOLS.has(name) ||
+      P08_CALCULATION_TOOLS.has(name);
 
     expect(fitted.report.overBudget).toBe(false);
     expect(fitted.report.dropped.length).toBeGreaterThan(0);
@@ -186,27 +209,48 @@ describe("the tool catalogue against a small window", () => {
         expect(dropped.includes(name), `${name} kept while a page tool was dropped`).toBe(true);
       }
     }
-    // And every page tool goes before any P07 retrieval tool does.
+    // Every page tool goes before any P08 calculation tool does...
+    if (dropped.some((name) => P08_CALCULATION_TOOLS.has(name))) {
+      for (const name of P06_PAGE_TOOLS) {
+        expect(dropped.includes(name), `${name} kept while a P08 tool was dropped`).toBe(true);
+      }
+    }
+    // ...and every P08 tool before any P07 retrieval tool.
     const firstRetrievalTool = dropped.findIndex((name) => P07_RETRIEVAL_TOOLS.has(name));
     if (firstRetrievalTool >= 0) {
-      for (const name of P06_PAGE_TOOLS) {
+      for (const name of [...P06_PAGE_TOOLS, ...P08_CALCULATION_TOOLS]) {
         expect(dropped.includes(name), `${name} kept while a P07 tool was dropped`).toBe(true);
       }
     }
+    expect(fitted.tools.some((kept) => kept.name === "calculation.evaluate_with_units")).toBe(true);
     for (const tool of catalogue().filter((t) => !droppable(t.name))) {
       expect(fitted.tools.some((kept) => kept.name === tool.name), `${tool.name} kept`).toBe(true);
     }
   });
 
-  it("keeps every P07 retrieval tool and every page tool at a 10k window", () => {
+  it("keeps every P07 and P08 tool at a 10k window, dropping only artifact and page tools from the tail", () => {
     const budget = toolBudgetFor(10_240, "You are ARJUN.".repeat(80), "Write bubble sort");
     const fitted = fitToolsToBudget(catalogue(), budget);
-    for (const name of [...P07_RETRIEVAL_TOOLS, ...P06_PAGE_TOOLS]) {
+    for (const name of [...P07_RETRIEVAL_TOOLS, ...P08_CALCULATION_TOOLS]) {
       expect(fitted.tools.some((kept) => kept.name === name), `${name} kept`).toBe(true);
     }
     for (const name of fitted.report.dropped) {
-      expect(P04_ARTIFACT_TOOLS.has(name), `${name} was dropped`).toBe(true);
+      expect(P04_ARTIFACT_TOOLS.has(name) || P06_PAGE_TOOLS.has(name), `${name} was dropped`).toBe(true);
     }
+    // Measured at P08: the ten artifact tools and the last two page tools.
+    expect(fitted.report.dropped.filter((name) => P06_PAGE_TOOLS.has(name))).toEqual([
+      "document.ocr_regions",
+      "document.extract_tables",
+    ]);
+  });
+
+  it("keeps every page tool at a 12k window and everything at 14k", () => {
+    const twelve = fitToolsToBudget(catalogue(), toolBudgetFor(12_288, "You are ARJUN.".repeat(80), "Write bubble sort"));
+    for (const name of twelve.report.dropped) {
+      expect(P04_ARTIFACT_TOOLS.has(name), `${name} was dropped at 12k`).toBe(true);
+    }
+    const fourteen = fitToolsToBudget(catalogue(), toolBudgetFor(14_336, "You are ARJUN.".repeat(80), "Write bubble sort"));
+    expect(fourteen.report.dropped).toEqual([]);
   });
 
   it("leaves the whole request inside the window on the case that failed", () => {

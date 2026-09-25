@@ -37,7 +37,8 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P05 | Orchestrator and delegation tools | **Complete for portable code and the production path with a fixture coordinator**; the Spark-driven run and P03's parent-lease suspension are open gates — see below |
 | P06 | Document & Vision Analyst with Unlimited-OCR | **Complete for portable code and the production path with deterministic OCR transport**; every real-model read and the vision probe are the open target gate — see below |
 | P07 | Knowledge Retriever and local retrieval tools | **Complete for portable code and the production path, keyword retrieval measured and semantic retrieval through deterministic transport**; qualifying and measuring a real embedding model is the open target gate — see below |
-| P08–P16 | — | Not started |
+| P08 | Calculation Analyst & Checker and numerical tools | **Complete for portable code and the production path, fully deterministic**; formulation by a qualified model is the open gate (no model is qualified for it) — see below |
+| P09–P16 | — | Not started |
 
 ---
 
@@ -1324,3 +1325,202 @@ with the measurement recorded. Role-scoped loading (P03) remains the remedy.
 **Exact next step:** P08, the Calculation Analyst & Checker. Then run the P07
 target gate (`tests/retrieval_live.rs`) on the target machine and record the
 qualification and measurement.
+
+---
+
+# P08 — The Calculation Analyst & Checker and numerical tools
+
+Worked on 2026-09-25 on branch `claude/hopeful-brahmagupta-1eol9d` from HEAD
+`c3d803f` (P07), in the same **Linux cloud container**. No model runs in P08's
+evidence, deliberately. The engine computes every number. The prompt's models
+(Nemotron Nano 4B Q8 for simple formulation, Qwen3.5 9B Q4 for harder
+interpretation) are unqualified on the target (P00 inventory), so
+formulation-by-model is an open gate (see the end of this section).
+
+**P03 is not started.** Raw output: `evidence/agent-system/P08/` (index in its
+`README.md`).
+
+## Found before, or while, building it
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | **Units were opaque symbols.** Any word after a number was a unit of its own: `1 m + 1 mm` was refused as mismatched, `8.2 mmm + 1 mmm` computed. There was no unit table and no conversion, and a temperature (`20 °C`) did not parse at all. | `orchestrator/calculation.rs` | `calculation::units`: a fixed table with its digest in the engine identity; conversion when same-dimension units meet; absolute temperatures, deltas, gauge pressure, dates; ambiguous units refused by name. |
+| 2 | The tool's own documented example, `"1500 kg / 3 m^3"`, did not parse: there was no power operator. | TS catalogue, `orchestrator/calculation.rs` | `^` with a literal exponent (≤ 12), `²`/`³`, compound units (`kg/m^3`, `W/(m·K)`). |
+| 3 | **A calculation had no identity.** No id, no input sources, no engine version, no tolerance. It was kept only in the per-run in-memory table, so it was lost at restart and could not be cited. | `commands::agent::RunCalculations` | `CalcRecord`: content-addressed (`calc-` + 16 hex), immutable, in an append-only store checked against its own hash on every read. |
+| 4 | **The "independent" checker re-evaluated the same literal expression with the same engine.** That proves determinism, not correctness: it never went back to where a number came from. | `subagents/worker.rs::check_calculations` | `calculation::check`: re-reads every input at its source (memory item at its current revision, passage, document page, other record) and recomputes by two paths. A changed source is `stale`, with a recomputation that cites the replacement. |
+| 5 | **An artifact's calculation dependency could never go stale.** It was named by its expression and "rechecked" by evaluating that literal again. A corrected input had no path to the deliverable. | `agent_runtime/artifact_tools.rs` | `[C:calc-…]` citations bind the record's hash, display string and memory item. The record's memory item rests on its inputs, so a correction reaches the deliverable through the graph. |
+| 6 | Display rounding was binary (`2.675` → `2.67`), and inputs lost their written precision (`9.0` recorded as `9`). | `orchestrator/calculation.rs` | `calculation::decimal`: exact decimal inputs; the raw result is the shortest round-trip; display rounds decimal digits half away from zero; the rule is stated per record. |
+| 7 | Nothing distinguished a sourced value from one the model typed in. | — | Typed inputs with sources. Unsourced or assumed inputs make a record **provisional**, and a missing one makes it **unresolved** with no number. A value with a unit typed into the expression counts as unsourced. |
+| 8 | No dates: the P00 pack's `calc-04` (90 days) and `calc-05` (actual interval) could not be computed. | — | Date literals; a date plus whole days is a date; date minus date is days. `month` is refused. `a` is the Julian year, and says so. |
+| 9 | `calculation.evaluate_with_units` ran on the runner path, which holds no session or memory, so a figure could not reach shared memory on a receipt. | `orchestrator/contract.rs` | It is on the agent path; the record is published after the call's receipt. The runner keeps the legacy expression-only path on the same engine. |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| **Engine** | Decimal parsing and rounding; the unit table and unit expressions; a bounded expression parser (1,000 characters, 256 nodes, depth 32, no implicit multiplication, fixed function list); an evaluator that keeps written units and records steps; a values-free dimension walker that lists every problem; twenty structured error codes. | `calculation/{decimal,units,expr,eval,error}.rs` (new) |
+| **Typed inputs** | `CalcInput`: value as written, unit, source, standard, uncertainty and notes, as one grammar line per input. Status: sourced, assumed, unsourced or missing. | `calculation/inputs.rs` (new) |
+| **Families** | evaluate, validate_dimensions, solve (linear; linear system ≤ 6; bracketed bisection), compare (with uncertainty and tolerance; a conclusion only on a sourced, versioned standard), sensitivity (derivatives, elasticities, swings, first-order propagation). Each states its tolerance and rounding. | `calculation/ops.rs` (new) |
+| **Records and store** | `CalcRecord`, whose id covers the operation, engine, equation, inputs and options. The store is append-only, hash-checked on read, holds per-owner links to memory items, and appends checks. | `calculation/{record,store}.rs` (new) |
+| **Independent check** | `SourceReader` over memory, passages, pages and records. Two recomputation paths. The seven verdicts. A corrected recomputation cites the replacement source. | `calculation/check.rs` (new), `agent_runtime/calculation_tools.rs` (`Sources`) |
+| **Tools** | `calculation.evaluate_with_units` completed (inputs, result unit, rounding). New tools: `calculation.validate_dimensions`, `calculation.solve`, `calculation.compare`, `calculation.sensitivity`. Wired through every P01 layer: enum, spec, contract (agent path; Calculation output), policy class, runner refusal, plan (where the work calculates or makes a workbook; after P07 and before P06), dispatcher, TS catalogue, names, conformance, budget, UI labels. `tool-contract.json` regenerated. | `orchestrator/{tools,contract,runner,grammar}.rs`, `agent_runtime/{mod,calculation_tools,planning,tool_policy}.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| **Lineage** | Each record is published as a ToolObservation (or an OpenQuestion when unresolved) on the call's receipt. It rests on each memory-sourced input at its cited revision and on cited records, with DerivedFrom edges. A refusal is not published. | `agent_runtime/calculation_tools.rs::publish` |
+| **Consumers** | Documents and decks cite `[C:calc-…]`. The binding pins the record's hash and exact display, and the version's graph node cites the record's item. Recheck reports a stale record as stale. Workbooks show each record's id, status and engine, and their dependencies name the record. The run's table (read by the verifier and the workbook) holds the projection with its id. | `artifacts/content.rs`, `agent_runtime/artifact_tools.rs`, `artifacts/xlsx.rs`, `orchestrator/calculation.rs` |
+| **The agent** | `calculation-checker` 1.1.0: same name and id; the four families and hybrid search granted; its instructions say what runs deterministically. Pointed at a record, the worker checks it deterministically, with no card reserved and no model. Expressions are evaluated as before, now on the new engine. Delegations accept `calc-…` in `expressions`. | `agents/calculation-checker.md`, `subagents/{worker,packet,child_loop}.rs`, `orchestrator/runner.rs` |
+| **App** | One managed store at `app_data/calculations`, shared by the runtime, the checker and the artifact tools. | `lib.rs`, `commands/agent.rs` |
+
+## Contract decisions
+
+1. **The engine is the only source of a number.** A model may formulate; an
+   independent check recomputes from the cited inputs and never asks a model
+   whether it agrees.
+2. **Records are immutable and content-addressed.** A corrected input is a
+   new record. What a correction changes is the old record's *standing*,
+   through the memory graph, never its bytes.
+3. **Refuse rather than guess.** Unknown or ambiguous units, dimension
+   mismatches, affine or gauge misuse, division by zero, domain errors,
+   non-finite results, singular or ill-conditioned systems, a bracket
+   without a sign change, a discontinuity, a nonlinear equation without a
+   bracket and an unsupported family each get a named error and no number.
+4. **Written units, exact decimals, stated rounding.** Values keep the units
+   and digits they were written with. SI is for comparison and for the
+   checker's second path. Display rounding is decimal and stated in every
+   record.
+5. **Unsourced stays visible.** A provisional record says which inputs make
+   it so, wherever it is rendered. An unresolved one has no number. A value
+   typed into an expression with a unit is unsourced; a plain number is read
+   as a formula constant, and the record lists literal values.
+6. **No invented criteria.** A conclusion needs a limit with a source and a
+   supplied standard naming its edition, and a value resting on no
+   unresolved input. Otherwise the result is a numerical comparison, and
+   says so.
+7. **The checker needs no card.** Checking a record is deterministic, so the
+   worker reserves no model: a parallel generation does not wait on
+   arithmetic.
+8. **Order and budget under pressure.** The four families follow the P07
+   tools and precede the page tools; `evaluate_with_units` stays in the
+   core. To keep the catalogue at 96 tokens per tool, the Rust handlers
+   enforce bounds rather than the schema. `validate_dimensions` takes no
+   `resultUnit`: an equation `result = …` with `result = ? unit` checks the
+   same thing. `solve` takes no `round`.
+
+## Tests
+
+| What the prompt names | Test (`calculation::tests` unless noted) |
+|---|---|
+| unit conversion | `unit_conversions_are_exact_to_the_table` (bar→psi, °C→°F, in→mm, kWh→MJ, °C→K; a difference is not a temperature); `pack_calc_02_mixed_units_are_converted_not_subtracted_raw` |
+| pressure/temperature dimensional mismatch | `a_pressure_and_a_temperature_are_a_dimensional_mismatch_everywhere` (evaluate, validate with and without values, the ideal-gas equation passes); `eval::tests::a_pressure_and_a_temperature_do_not_add` |
+| negative or zero boundary input | `zero_and_negative_boundary_inputs_are_computed_or_refused_never_clipped` (zero rate refused; negative remaining life computed and failing its criterion); `pack_calc_06_a_zero_minimum_is_refused_with_no_number` |
+| invalid mathematical domain | `an_invalid_mathematical_domain_is_a_structured_refusal` (sqrt of a negative, ln 0, log10 of a negative, tan 90°, exp overflow, ln of a length) |
+| rounding | `rounding_is_stated_and_the_raw_result_is_kept`; `decimal::tests::rounding_is_decimal_and_half_away_from_zero` |
+| uncertainty | `an_uncertain_input_carries_its_uncertainty_to_the_result_and_to_the_verdict` (±0.56 % propagated; straddling → indeterminate) |
+| a changed source value | `a_changed_source_value_changes_the_record_id_and_makes_the_old_one_stale` (the recomputation cites the corrected source) |
+| **two agents consume one exact verified calculation and go stale when an input is corrected** | `agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected`. Steps: evaluate from two memory facts → the production calculation-checker via `agent.delegate_readonly` VERIFIES → run `r` writes a note and run `r-deck` a deck, both citing `[C:calc-…]` with the exact display → a person corrects the reading → the record is unchanged, and its item, the verification and both deliverables are stale, with `resolve_evidence` naming the calculation. A second check reports STALE and recomputes 12.22 % as a new record citing the correction, and checking that record VERIFIES. |
+| the real worker tool path | the same, plus `an_unsourced_input_is_provisional_and_its_check_is_unresolved`, `a_refused_calculation_publishes_nothing_and_says_what_kind_of_refusal`, `the_other_families_run_through_the_runtime_and_keep_their_records` |
+| deterministic known-answer tests | `pack_calc_01` … `pack_calc_06`: the P00 pack's inputs against the pack's expected answers, within the pack's tolerances; solver, compare and sensitivity known answers |
+| identity kept | `agents::store::tests::the_calculation_checker_upgrade_keeps_its_identity_and_its_settings` |
+| store | `calculation::store::tests::a_record_is_kept_once_read_only_by_its_holders_and_refused_if_tampered` |
+
+**Seen failing** (`log_mutation.txt`): twelve mutations, each caught:
+
+- absolute temperatures allowed to add;
+- the inch at 25 mm;
+- no division-by-zero check;
+- a 5 rounding down;
+- a corrected memory item read as current;
+- a record published without its lineage;
+- a conclusion without an edition;
+- a record id that ignores sources;
+- an artifact that ignores its calculation's standing;
+- no condition-number limit;
+- any number in a source counted as the value;
+- a gauge pressure allowed into a product.
+
+The first form of the last mutation did not compile; it was rewritten, and the log says so.
+
+## Measured
+
+**P08-OBS-1: the catalogue at 60 tools** is 5,755 estimated tokens at
+`minimal` (95.9 per tool, under the 96 floor). The schemas were trimmed to get
+there (contract decision 8).
+
+| Window | What the fitter drops |
+|---|---|
+| 8k | the artifact family, the page tools, the four P08 families, then P07's four; `evaluate_with_units` stays |
+| 10,240 | the artifact family and the last two page tools |
+| 12,288 | the last two artifact tools |
+| 14,336 | nothing |
+
+The grammar preamble is 1,415 bytes, so its bound moved from 1,400 to 1,500
+with the measurement recorded.
+
+**P08-OBS-2: the P00 pack's calculation cases through the engine**
+(deterministic test; the formulation is written in the test, and the inputs
+and expected answers are the pack's; `log_known_answers.txt`):
+
+| Case | Engine result (display; raw) | Pack's expected answer |
+|---|---|---|
+| calc-01 | 8.889 %; 8.888888888888896 | 8.88888888888889, relative 1e-9 |
+| calc-02 | 8.804 %; 8.803772409804706 | 8.8038, absolute 0.01 |
+| calc-03 | 31.7 % against the nominal thickness, 8.9 % on the SOP's basis (1 dp) | "no"; the SOP figure is 8.9 % |
+| calc-04 | 2026-11-10 | 2026-11-10 (not 2026-11-12) |
+| calc-05 | 0.5831 mm/a; 0.5830672748004563 (877 d, Julian year stated) | 0.5831, absolute 0.0006 |
+| calc-06 | refused, `division_by_zero`, "the input is not usable", no number | refusal |
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **2,982 passed, 2 failed**, 3 ignored: the two Windows-path tests that fail at `20061fc`. `log_lib_full.txt` |
+| focused suites (`log_focused_rust.txt`) | calculation 79, orchestrator 222, subagents 106, agents 147, artifacts 322 (1 ignored), P08 end to end 4, delegation 15, artifact tools 10, retrieval 24 |
+| `npm run test:integration` | **65 passed**, 2 ignored (as at P07) |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; **2,402** tests |
+| `npx tsc --noEmit`, `npm run test:ui`, `npm run build` | pass; 618 UI tests |
+| `runtime:build`, `check:bundle`, `check:bundle:self`, `check:offline`, `check:egress`, `check:no-lora`, `check:deployment`, `check:ipc`, `check:reachable`, `check:targets`, `check:whitespace` | pass (no new IPC command) |
+| `check:lint-budget` | **fails, 53 > 40, pre-existing**: unchanged from P06 and P07; no P08 code adds to it |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (P04's CRLF hashes), 31 blocked. `calc-01` … `calc-06` are now blocked on P10 by name; their engine half is covered by `pack_calc_*` |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **Formulation by a model** | Not used. Nemotron Nano 4B Q8 and Qwen3.5 9B Q4 are not qualified for formulation on the target (P00), so nothing routes the checker's formulation to either. With a runtime and a model, the checker's model loop can formulate using the P08 tools; every number still comes from the engine. Checking a record never uses a model. | A formulation qualification set, then routing (P10 grades the first journey) |
+| The P00 calculation cases as *agent* answers | The engine reproduces every expected answer; whether an agent chooses the SOP's basis (calc-03) or 90 days (calc-04) is a model's formulation. | P10 |
+| Standards text | A standard is taken as supplied, with its source cited. The engine does not hold or interpret any code of practice. Domain experts must validate acceptance criteria before operational use (plan §5.7). | — |
+| Nonlinear systems, integrals, ODEs, statistics beyond first-order propagation | Not supported families: refused as `unsupported` or `nonlinear`. | Later, only with tested limits |
+| A UI for calculation records | None: records are reached through the tools, citations, workbooks and the checker. | P14 (administration) |
+| `CalculationRecord.inputs` for legacy callers | Now the exact written literals (`9.0 mm`, not `9 mm`); the two legacy tests that pinned the old form were updated. | — |
+| Windows target, installed app | Not run there; not rebuilt or redeployed. | P16 |
+
+## P08 close-out
+
+- **Implemented**:
+  - a bounded deterministic engine with a unit table, affine temperatures,
+    gauge pressure and dates;
+  - typed, sourced inputs;
+  - five documented families with stated tolerance and rounding;
+  - twenty structured error codes;
+  - immutable content-addressed records in an append-only, hash-checked
+    store;
+  - independent checking from sources by two paths.
+- **Wired**:
+  - four new tools, and `evaluate_with_units` completed, through every P01
+    layer;
+  - lineage into shared memory on receipts;
+  - `[C:calc-…]` citations in documents and decks, and records in
+    workbooks;
+  - the checker 1.1.0 with its identity kept, deterministic on records.
+- **Tested**:
+  - every case the prompt names;
+  - the P00 pack's six cases against its expected answers;
+  - two agents consuming one verified calculation and going stale on a
+    correction, through the production path;
+  - mutation-checked.
+- **Unverified or blocked**: formulation by a qualified model (no model is
+  qualified for it).
+- **Remaining**: nothing else in P08's portable scope.
+
+**Exact next step:** P09, the Document Author and Word authoring tools. Its
+documents cite `[C:calc-…]` and `[E…]`, and P08's staleness reaches them. Then
+qualify a formulation model on the target, before routing any calculation
+formulation to one.

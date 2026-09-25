@@ -1,0 +1,328 @@
+
+ RUN  v3.2.7 /home/user/Arjun/agent-runtime
+
+ ✓ vendor/openclaw/packages/tool-call-repair/src/stream-normalizer.test.ts (107 tests) 1857ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-transport.requests.test.ts (4 tests) 1323ms
+   ✓ openai completions transport requests > preserves OpenAI-compatible error metadata on failed chat requests  1239ms
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=43 totalMs=47 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-after-restart this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-after-restart call=1 firstChunkMs=17 totalMs=18 chunks=5
+[agent-runtime:log] [stream] messageId=msg-after-restart text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=7 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=7 totalMs=8 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=7 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] ceiling enforced: 1 message(s) dropped, 0 truncated, to fit 3200 token(s) of a 4000-token window (fixed cost 8, drift x1.00)
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=4 totalMs=7 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] ceiling enforced: 1 message(s) dropped, 0 truncated, to fit 2400 token(s) of a 3000-token window (fixed cost 8, drift x1.00)
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=6 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=2 totalMs=254 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-completions.legacy-function-call.test.ts (84 tests) 643ms
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=253 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=3 totalMs=251 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=4 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=252 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-2 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-2 call=1 firstChunkMs=5 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-2 text_delta=1 text_end=1 text_start=1
+ ✓ src/turn-journey.test.ts (16 tests) 1198ms
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=52 totalMs=56 chunks=5
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=11 totalMs=13 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=12 totalMs=13 chunks=5
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=13 totalMs=16 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=12 totalMs=14 chunks=5
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=7 totalMs=9 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=18 totalMs=18 chunks=5
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=8 totalMs=9 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=16 totalMs=18 chunks=5
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=9 totalMs=9 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=11 totalMs=12 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=6 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=4 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=9 totalMs=153 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=62 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=6 chunks=1
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=5 totalMs=5 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [answer] run=run-1 the turn ended with no visible text; asking once for the answer itself
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=5 totalMs=6 chunks=5
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=6 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [answer] run=run-1 the turn ended with no visible text; asking once for the answer itself
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=5 totalMs=5 chunks=5
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=8 totalMs=9 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [answer] run=run-1 the turn ended with no visible text; asking once for the answer itself
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=9 totalMs=9 chunks=2
+[agent-runtime:log] [answer] run=run-1 ended with no text after 2 turn(s) and one salvage attempt
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=19 totalMs=62 chunks=2
+[agent-runtime:log] [stream] messageId=msg-1 
+ ✓ src/run.test.ts (26 tests) 641ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-transport.response-hook.test.ts (14 tests) 414ms
+ ✓ vendor/openclaw/packages/media-core/src/base64.test.ts (17 tests) 425ms
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=65 totalMs=70 chunks=11
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=12 totalMs=14 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=3 toolcall_end=3 toolcall_start=3
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=15 totalMs=16 chunks=8
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=10 totalMs=11 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=2 toolcall_end=2 toolcall_start=2
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=17 totalMs=21 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=13 totalMs=14 chunks=5
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=2 firstChunkMs=17 totalMs=17 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=8 totalMs=8 chunks=5
+[agent-runtime:log] [state] run=run-1 no attempt id was supplied, so nothing can be committed; this run's resume point will not advance
+[agent-runtime:log] [stream] messageId=msg-1 toolcall_delta=1 toolcall_end=1 toolcall_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=10 totalMs=11 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+ ✓ src/hardening.test.ts (12 tests) 249ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-dsml.test.ts (10 tests) 172ms
+ ✓ vendor/openclaw/packages/agent-core/src/agent-loop.test.ts (71 tests) 149ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-completions-structured-content-parity.test.ts (54 tests) 133ms
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=49 totalMs=53 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-dsml.recovery.test.ts (16 tests) 107ms
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=8 totalMs=9 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=7 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=4 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=6 totalMs=6 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=4 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+[agent-runtime:log] [context] run=run-1 this round could not refresh its context (core stub has no context.refresh), so it runs on what it already had — a correction or a fact recorded since the last refresh will not have reached the model
+[agent-runtime:log] [model] run=run-1 call=1 firstChunkMs=3 totalMs=5 chunks=5
+[agent-runtime:log] [stream] messageId=msg-1 text_delta=1 text_end=1 text_start=1
+ ✓ src/conversation-history.test.ts (14 tests) 132ms
+ ✓ vendor/openclaw/packages/ai/src/utils/provider-error.test.ts (120 tests) 84ms
+ ✓ src/tool-budget.test.ts (22 tests) 112ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.tool-calls.test.ts (14 tests) 107ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-transport.test.ts (7 tests) 86ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-completions.test.ts (64 tests) 89ms
+ ✓ src/peer.test.ts (13 tests) 71ms
+ ✓ src/context-management.test.ts (30 tests) 83ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-completions-usage-parity.test.ts (12 tests) 64ms
+ ✓ src/catalogue.conformance.test.ts (254 tests) 44ms
+ ✓ vendor/openclaw/packages/tool-call-repair/src/payload.test.ts (25 tests) 33ms
+ ✓ vendor/openclaw/packages/llm-core/src/utils/event-stream.test.ts (5 tests) 59ms
+ ✓ vendor/openclaw/packages/net-policy/src/redact-sensitive-url.test.ts (55 tests) 35ms
+ ✓ vendor/openclaw/packages/ai/src/package-dependencies.test.ts (3 tests) 39ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/compaction.test.ts (44 tests) 42ms
+ ✓ vendor/openclaw/packages/tool-call-repair/src/grammar.test.ts (23 tests) 40ms
+ ✓ src/ocr-budget.test.ts (10 tests) 35ms
+[agent-runtime:log] [context] ceiling enforced: 3 message(s) dropped, 0 truncated, to fit 6144 token(s) of a 8192-token window (fixed cost 3000, drift x1.00)
+[agent-runtime:log] [context] ceiling enforced: 51 message(s) dropped, 0 truncated, to fit 6144 token(s) of a 8192-token window (fixed cost 0, drift x1.00)
+ ✓ src/compaction.test.ts (13 tests) 46ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-completions.compat.test.ts (51 tests) 40ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.test.ts (12 tests) 29ms
+ ✓ vendor/openclaw/packages/normalization-core/src/phone-presentation.test.ts (18 tests) 29ms
+ ✓ vendor/openclaw/packages/ai/src/utils/reasoning-tag-text-partitioner.test.ts (79 tests) 15328ms
+   ✓ createReasoningTagTextPartitioner > recovers a byte-streamed 110KB malformed quoted tag without reparsing prefixes  10383ms
+   ✓ createReasoningTagTextPartitioner > keeps newline-heavy malformed-tag recovery linear  2003ms
+   ✓ createReasoningTagTextPartitioner > bounds parser-owned reparsing across many code-bearing blocks  726ms
+   ✓ createReasoningTagTextPartitioner > compacts blank-only streams without retaining an empty tree  403ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.reasoning.test.ts (20 tests) 19ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.reasoning-and-buffering.test.ts (9 tests) 26ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.test.ts (13 tests) 29ms
+ ✓ vendor/openclaw/packages/llm-core/src/validation.test.ts (11 tests) 34ms
+ ✓ vendor/openclaw/packages/ai/src/utils/stream-first-event-timeout.test.ts (8 tests) 16ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-replay.test.ts (33 tests) 30ms
+ ✓ vendor/openclaw/packages/ai/src/env-api-keys.browser-bundle.test.ts (1 test) 23ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/model-catalog-normalize.test.ts (14 tests) 23ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-transport-params.code-mode.test.ts (25 tests) 20ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/compaction-summary-cap.test.ts (1 test) 23ms
+ ✓ vendor/openclaw/packages/ai/src/internal/retry-sleep.test.ts (4 tests) 32ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.usage.test.ts (12 tests) 22ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.reasoning-streaming.test.ts (5 tests) 18ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.cache-and-compat.test.ts (17 tests) 27ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.tools.test.ts (10 tests) 18ms
+ ✓ vendor/openclaw/packages/retry/src/index.test.ts (10 tests) 12ms
+[agent-runtime:log] [stream] messageId=msg-test-1 thinking_delta=1
+[agent-runtime:log] [stream] messageId=msg-test-1 
+[agent-runtime:log] [stream] messageId=msg-test-1 
+[agent-runtime:log] [stream] messageId=msg-test-1 
+[agent-runtime:log] [stream] messageId=msg-test-1 
+[agent-runtime:log] [stream] messageId=msg-1 
+[agent-runtime:log] [stream] messageId=msg-lifecycle text_delta=4
+[agent-runtime:log] [stream] messageId=msg-lifecycle text_delta=4
+[agent-runtime:log] [stream] messageId=msg-lifecycle text_delta=4
+[agent-runtime:log] [stream] messageId=msg-lifecycle text_delta=4
+[agent-runtime:log] [stream] messageId=msg-stalled 
+[agent-runtime:log] [stream] messageId=msg-once 
+[agent-runtime:log] [stream] messageId=msg-thrown 
+ ✓ src/translator.test.ts (36 tests) 18ms
+ ✓ vendor/openclaw/packages/ai/src/host.test.ts (2 tests) 14ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.shaping.test.ts (10 tests) 22ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-replay.google-signatures.test.ts (11 tests) 16ms
+ ✓ vendor/openclaw/packages/ai/src/utils/overflow.test.ts (17 tests) 10ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.tool-assembly.test.ts (3 tests) 19ms
+ ✓ src/note-taking.test.ts (26 tests) 15ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-params.compat-and-tool-choice.test.ts (9 tests) 25ms
+ ✓ vendor/openclaw/packages/net-policy/src/ip.test.ts (14 tests) 15ms
+ ✓ vendor/openclaw/packages/ai/src/transports/simple-completion-transport.test.ts (8 tests) 16ms
+ ✓ vendor/openclaw/packages/normalization-core/src/string-normalization.test.ts (44 tests) 16ms
+ ✓ vendor/openclaw/packages/ai/src/transports/transport-stream-shared.acceptance.test.ts (8 tests) 20ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-reasoning-effort.test.ts (20 tests) 10ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/branch-summarization.test.ts (12 tests) 15ms
+ ✓ vendor/openclaw/packages/normalization-core/src/error-coercion.test.ts (18 tests) 14ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-completions-stream.reasoning-details.test.ts (6 tests) 15ms
+ ✓ vendor/openclaw/packages/normalization-core/src/number-coercion.test.ts (30 tests) 20ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/remote-catalog-bundle.test.ts (2 tests) 17ms
+ ✓ vendor/openclaw/packages/ai/src/providers/clean-for-gemini.test.ts (25 tests) 9ms
+ ✓ src/toolTimeout.test.ts (11 tests) 13ms
+ ✓ vendor/openclaw/packages/ai/src/api-registry.test.ts (4 tests) 16ms
+ ✓ src/tools.test.ts (13 tests) 15ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-tool-schema.test.ts (9 tests) 12ms
+ ✓ src/providers.test.ts (21 tests) 10ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/session/session-context.test.ts (10 tests) 11ms
+ ✓ vendor/openclaw/packages/ai/src/utils/deferred-event-buffer.test.ts (6 tests) 8ms
+ ✓ src/protocol.test.ts (10 tests) 8ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/utils.test.ts (19 tests) 11ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-tool-projection.test.ts (17 tests) 12ms
+ ✓ src/stallGuard.test.ts (5 tests) 15ms
+ ✓ vendor/openclaw/packages/ai/src/utils/tls-certificate-errors.test.ts (37 tests) 9ms
+ ✓ vendor/openclaw/packages/ai/src/transports/provider-transport-stream.test.ts (6 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/utils/system-prompt-cache-boundary.test.ts (11 tests) 6ms
+ ✓ src/context-entities.test.ts (20 tests) 9ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/model-catalog-refs.test.ts (17 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/providers/tool-result-text.test.ts (17 tests) 8ms
+ ✓ vendor/openclaw/packages/ai/src/providers/anthropic-tool-projection.test.ts (5 tests) 8ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/configured-model-refs.test.ts (19 tests) 10ms
+ ✓ src/context-reconciliation.test.ts (11 tests) 13ms
+ ✓ vendor/openclaw/packages/ai/src/internal/retry-after.test.ts (20 tests) 7ms
+ ✓ vendor/openclaw/packages/normalization-core/src/record-coerce.test.ts (15 tests) 12ms
+ ✓ vendor/openclaw/packages/ai/src/providers/transform-messages.test.ts (4 tests) 10ms
+ ✓ vendor/openclaw/packages/normalization-core/src/agent-id.test.ts (17 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/openai-completions-messages.test.ts (3 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/providers/anthropic-usage.test.ts (10 tests) 15ms
+ ✓ src/pinned-context.test.ts (11 tests) 8ms
+ ✓ vendor/openclaw/packages/normalization-core/src/stable-stringify.test.ts (9 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/utf16-slice.test.ts (26 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/transports/transport-stream-shared.test.ts (7 tests) 5ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/utils/truncate.test.ts (8 tests) 6ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/provider-model-id-normalization.test.ts (11 tests) 6ms
+ ✓ vendor/openclaw/packages/ai/src/transports/openai-transport-params.session-header.test.ts (4 tests) 4ms
+ ✓ vendor/openclaw/packages/normalization-core/src/cjk-chars.test.ts (17 tests) 9ms
+ ✓ vendor/openclaw/packages/normalization-core/src/package-exports.test.ts (1 test) 6ms
+ ✓ vendor/openclaw/packages/ai/src/utils/streaming-byte-guard.test.ts (2 tests) 6ms
+ ✓ vendor/openclaw/packages/normalization-core/src/markdown-plain-text.test.ts (9 tests) 5ms
+ ✓ vendor/openclaw/packages/ai/src/providers/schema-keyword-strip.test.ts (9 tests) 5ms
+ ✓ vendor/openclaw/packages/ai/src/utils/assistant-text-phase.test.ts (2 tests) 4ms
+ ✓ vendor/openclaw/packages/ai/src/provider-types.test.ts (2 tests) 5ms
+ ✓ vendor/openclaw/packages/net-policy/src/url-protocol.test.ts (14 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/format.test.ts (11 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/string-coerce.test.ts (10 tests) 6ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/messages.test.ts (7 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/json-coercion.test.ts (12 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/boolean-coercion.test.ts (16 tests) 5ms
+ ✓ vendor/openclaw/packages/normalization-core/src/browser-error-runtime.test.ts (6 tests) 5ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/compaction-trailing-toolresult.test.ts (4 tests) 6ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/prompt-templates.test.ts (4 tests) 5ms
+ ✓ vendor/openclaw/packages/ai/src/providers/openai-stop-reason.test.ts (8 tests) 5ms
+ ✓ vendor/openclaw/packages/ai/src/providers/anthropic-server-fallback.test.ts (5 tests) 7ms
+ ✓ vendor/openclaw/packages/agent-core/src/reasoning.test.ts (8 tests) 4ms
+ ✓ vendor/openclaw/packages/normalization-core/src/expect.test.ts (4 tests) 4ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/compaction/compaction-image-tokens.test.ts (3 tests) 4ms
+ ✓ vendor/openclaw/packages/agent-core/src/harness/prompt-template-arguments.test.ts (3 tests) 4ms
+ ✓ vendor/openclaw/packages/net-policy/src/ipv4.test.ts (2 tests) 5ms
+ ✓ vendor/openclaw/packages/model-catalog-core/src/provider-model-id-normalize.test.ts (6 tests) 4ms
+ ✓ vendor/openclaw/packages/ai/src/providers/simple-options.test.ts (4 tests) 3ms
+ ✓ vendor/openclaw/packages/normalization-core/src/text-decoding.test.ts (3 tests) 3ms
+ ✓ vendor/openclaw/packages/normalization-core/src/result.test.ts (1 test) 3ms
+ ✓ vendor/openclaw/packages/normalization-core/src/promise-like.test.ts (2 tests) 3ms
+ ✓ vendor/openclaw/packages/normalization-core/src/mountinfo-path.test.ts (1 test) 4ms
+
+ Test Files  131 passed (131)
+      Tests  2402 passed (2402)
+   Start at  16:19:45
+   Duration  30.62s (transform 3.79s, setup 0ms, collect 28.24s, tests 25.06s, environment 25ms, prepare 10.02s)
+

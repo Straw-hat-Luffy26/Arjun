@@ -134,7 +134,7 @@ pub(super) fn run_classification(deps: &Arc<RuntimeDeps>, run_id: &str) -> (Stri
     (label, classes)
 }
 
-fn acl_for(classes: &[Classification], owner: &str) -> crate::agent_runtime::memory::Acl {
+pub(super) fn acl_for(classes: &[Classification], owner: &str) -> crate::agent_runtime::memory::Acl {
     let mut cleared: Option<Vec<crate::identity::Role>> = None;
     for class in classes {
         let roles = class.cleared_roles().to_vec();
@@ -150,7 +150,7 @@ fn acl_for(classes: &[Classification], owner: &str) -> crate::agent_runtime::mem
     }
 }
 
-fn classes_of_label(label: &str) -> Vec<Classification> {
+pub(super) fn classes_of_label(label: &str) -> Vec<Classification> {
     let found: Vec<Classification> = label
         .split(';')
         .filter_map(|part| Classification::ALL.iter().copied().find(|c| c.label() == part.trim()))
@@ -240,6 +240,20 @@ pub(super) fn bind(
                 })
             }
             CitationTarget::Source { .. } => None,
+            // P08: the record, exactly; its result is what the text quotes.
+            CitationTarget::Calculation { calculation_id } => deps
+                .calculation_store
+                .get(calculation_id, &session.user.id)
+                .filter(|record| record.status.has_result())
+                .map(|record| VersionDependency {
+                    kind: DependencyKind::Calculation,
+                    id: record.id.clone(),
+                    version: record.first().map(|r| r.display.clone()),
+                    sha256: Some(record.sha256()),
+                    locator: None,
+                    marker: Some(citation.marker.clone()),
+                    label: Some(record.equation.chars().take(80).collect()),
+                }),
         };
         if let Some(bound) = bound {
             out.push(bound);
@@ -258,12 +272,14 @@ pub(super) fn calculation_dependencies(deps: &Arc<RuntimeDeps>, run_id: &str) ->
         .into_iter()
         .map(|record| VersionDependency {
             kind: DependencyKind::Calculation,
-            id: record.expression.clone(),
+            // The record's content address where it has one (P08); a
+            // projection written before then is named by its expression.
+            id: if record.id.is_empty() { record.expression.clone() } else { record.id.clone() },
             version: Some(record.formatted.clone()),
             sha256: None,
             locator: None,
             marker: None,
-            label: None,
+            label: (!record.id.is_empty()).then(|| record.expression.chars().take(80).collect()),
         })
         .collect()
 }
@@ -403,6 +419,26 @@ pub(super) fn recheck(
                     _ => Standing::Denied("gone, or no longer readable by you".into()),
                 }
             }
+            // P08: an immutable record, standing while the memory item it was
+            // published as does. A corrected input marks that item stale, and
+            // this version with it.
+            DependencyKind::Calculation if dependency.id.starts_with("calc-") => {
+                match deps.calculation_store.get(&dependency.id, &session.user.id) {
+                    None => Standing::Denied("gone, or no longer readable by you".into()),
+                    Some(record) if dependency.sha256.as_deref().is_some_and(|sha| sha != record.sha256()) => {
+                        Standing::Stale("its stored record differs from the one cited".into())
+                    }
+                    Some(_) => match super::calculation_tools::standing(
+                        deps.memory_graph.as_deref(),
+                        &deps.calculation_store,
+                        session,
+                        &dependency.id,
+                    ) {
+                        Some(why) => Standing::Stale(why),
+                        None => Standing::Current,
+                    },
+                }
+            }
             DependencyKind::Calculation => match crate::orchestrator::calculation::evaluate(&dependency.id) {
                 Ok(again) if dependency.version.as_deref().is_none_or(|v| v == again.formatted) => Standing::Current,
                 Ok(again) => Standing::Stale(format!("now evaluates to {}", again.formatted)),
@@ -526,6 +562,13 @@ pub(super) fn link_to_graph(
             .filter_map(|d| {
                 Some(Dependency { item_id: d.id.clone(), revision: d.version.as_deref()?.parse().ok()? })
             })
+            // A cited calculation, as the memory item it was published as, at
+            // the revision it has now (P08).
+            .chain(dependencies.iter().filter(|d| d.kind == DependencyKind::Calculation).filter_map(|d| {
+                let item = deps.calculation_store.graph_item(&d.id, &session.user.id)?;
+                let revision = graph.versions_of(session, &item, None).ok()?.last()?.revision;
+                Some(Dependency { item_id: item, revision })
+            }))
             .collect(),
         revoked_readers: Vec::new(),
         authority: Authority::Graph,
@@ -539,6 +582,11 @@ pub(super) fn link_to_graph(
                 .filter(|d| d.kind == DependencyKind::MemoryItem)
                 .map(|d| (d.id.clone(), EdgeKind::DerivedFrom))
                 .collect();
+            for dependency in dependencies.iter().filter(|d| d.kind == DependencyKind::Calculation) {
+                if let Some(node) = deps.calculation_store.graph_item(&dependency.id, &session.user.id) {
+                    targets.push((node, EdgeKind::Cites));
+                }
+            }
             for dependency in dependencies.iter().filter(|d| d.kind == DependencyKind::Artifact) {
                 let version = dependency.version.as_deref().and_then(|v| v.parse().ok());
                 if let Ok(Some(cited)) = deps.conversation_artifacts.get(&session.user.id, &dependency.id, version) {

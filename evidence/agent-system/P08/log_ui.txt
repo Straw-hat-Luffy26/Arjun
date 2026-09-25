@@ -1,0 +1,134 @@
+
+ RUN  v3.2.7 /home/user/Arjun
+
+ ✓ src/components/graph/simulation.test.ts (19 tests) 72ms
+ ✓ src/components/graph/labelGeometry.test.ts (22 tests) 163ms
+ ✓ src/utils/relativeTime.test.ts (7 tests) 20ms
+ ✓ src/contexts/__tests__/RunReducer.test.ts (26 tests) 258ms
+ ✓ src/components/graph/memoryModel.test.ts (34 tests) 35ms
+ ✓ src/components/run/context-ledger.test.ts (27 tests) 30ms
+ ✓ src/components/chat/mermaidTheme.test.ts (15 tests) 20ms
+ ✓ src/components/chat/mermaidDiagram.test.ts (21 tests) 13ms
+ ✓ src/components/chat/runProgress.test.ts (33 tests) 14ms
+ ✓ src/components/chat/CodeBlock.test.ts (16 tests) 31ms
+ ✓ src/contexts/activeRun.test.ts (19 tests) 12ms
+ ✓ src/services/ocr.service.test.ts (11 tests) 8ms
+ ✓ src/components/run/context-entities.test.ts (25 tests) 10ms
+ ✓ src/services/runOutcome.test.ts (42 tests) 19ms
+ ✓ src/services/artifactPreview.test.ts (10 tests) 9ms
+ ✓ src/contexts/__tests__/runIdPublication.test.ts (6 tests) 6ms
+ ✓ src/components/chat/inspectorStop.test.ts (7 tests) 8ms
+ ✓ src/pages/auditNetwork.test.ts (9 tests) 5ms
+ ✓ src/components/run/recovery.test.ts (39 tests) 16ms
+ ✓ src/components/graph/agentColor.test.ts (13 tests) 9ms
+ ✓ src/components/chat/parseThinking.test.ts (9 tests) 6ms
+ ✓ src/components/chat/widgetDocument.test.ts (16 tests) 10ms
+ ✓ src/components/chat/useTokenMetrics.test.ts (7 tests) 6ms
+ ✓ src/contexts/PermissionsContext.test.ts (6 tests) 6ms
+ ✓ src/components/chat/assistantFooter.test.ts (8 tests) 9ms
+ ✓ src/components/chat/notebookScope.test.ts (30 tests) 11ms
+ ✓ src/components/graph/typingOutcome.test.ts (12 tests) 10ms
+ ✓ src/services/artifactKind.test.ts (7 tests) 13ms
+ ✓ src/components/chat/markdownFence.test.ts (11 tests) 11ms
+ ✓ src/components/graph/flow.test.ts (8 tests) 8ms
+ ✓ src/components/run/MilestoneGate.test.ts (2 tests) 6ms
+ ✓ src/components/graph/memoryFeed.test.ts (18 tests) 8ms
+ ✓ src/components/chat/mermaidParse.test.ts (9 tests) 9ms
+ ✓ src/components/chat/notebookHandoff.test.ts (9 tests) 8ms
+ ✓ src/contexts/conversationStartup.test.ts (13 tests) 10ms
+ ✓ src/components/chat/composerStop.test.ts (6 tests) 9ms
+ ✓ src/components/graph/edgeLabel.test.ts (7 tests) 4ms
+ ✓ src/services/reading.test.ts (13 tests) 6ms
+ ✓ src/components/graph/claimLabel.test.ts (9 tests) 5ms
+ ✓ src/components/notebook/addOutcomes.test.ts (8 tests) 8ms
+ ✓ src/contexts/__tests__/ConversationContext.test.ts (2 tests) 4ms
+ ✓ src/components/chat/TaskPanel.test.ts (6 tests) 6ms
+ ✓ src/components/graph/layout.test.ts (1 test) 3ms
+
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+   Start at  16:20:40
+   Duration  5.57s (transform 1.35s, setup 0ms, collect 3.03s, tests 934ms, environment 9ms, prepare 3.30s)
+
+egress gate: pass — one chokepoint, no unapproved hosts
+LoRA removal gate passed across 670 product files.
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 4109 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /home/user/Arjun/src/services/agent.service.ts is dynamically imported by /home/user/Arjun/src/pages/Demo.tsx but also statically imported by /home/user/Arjun/src/components/chat/AssistantMessageCell.tsx, /home/user/Arjun/src/components/chat/ChatComposer.tsx, /home/user/Arjun/src/components/chat/ChatSurface.tsx, /home/user/Arjun/src/components/chat/ContextChip.tsx, /home/user/Arjun/src/components/chat/NotebookScopeControls.tsx, /home/user/Arjun/src/components/chat/notebookScope.ts, /home/user/Arjun/src/components/run/MilestoneGate.tsx, /home/user/Arjun/src/components/run/RunView.tsx, /home/user/Arjun/src/components/run/recovery.ts, /home/user/Arjun/src/components/run/runAdopt.ts, /home/user/Arjun/src/components/run/useRun.ts, /home/user/Arjun/src/contexts/ConversationContext.tsx, /home/user/Arjun/src/pages/Conversations.tsx, /home/user/Arjun/src/pages/Notebooks.tsx, /home/user/Arjun/src/pages/Tasks.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                           0.66 kB │ gzip:   0.41 kB
+dist/assets/pdf.worker.min-Dswkl-cV.mjs               1,265.41 kB
+dist/assets/index-CfTjtTfG.css                          219.03 kB │ gzip:  36.20 kB
+dist/assets/channel-tBgv5BQv.js                           0.12 kB │ gzip:   0.13 kB
+dist/assets/init-Gi6I4Gst.js                              0.15 kB │ gzip:   0.13 kB
+dist/assets/chunk-2Q5K7J3B-WCKIusPd.js                    0.19 kB │ gzip:   0.16 kB
+dist/assets/chunk-JWPE2WC7-CekhLmu5.js                    0.23 kB │ gzip:   0.17 kB
+dist/assets/chunk-XXDRQBXY-2mKEtJ0_.js                    0.23 kB │ gzip:   0.21 kB
+dist/assets/chunk-5VM5RSS4-Db2OTnVr.js                    0.37 kB │ gzip:   0.27 kB
+dist/assets/stateDiagram-v2-MP3YSRHH-yQHFk29U.js          0.43 kB │ gzip:   0.30 kB
+dist/assets/classDiagram-ZZMXUADV-JWbGtf8H.js             0.47 kB │ gzip:   0.32 kB
+dist/assets/classDiagram-v2-VYDZK3BY-JWbGtf8H.js          0.47 kB │ gzip:   0.32 kB
+dist/assets/chunk-POPQ4Y6H-BTiaZDwG.js                    0.51 kB │ gzip:   0.36 kB
+dist/assets/swimlanesDiagram-VR7AAH4N-1iva2eTg.js         0.55 kB │ gzip:   0.37 kB
+dist/assets/infoDiagram-27XIBGKW-Bikw9GK5.js              0.59 kB │ gzip:   0.41 kB
+dist/assets/sizeCapture-INFHLROL-EmC_nyqD.js              0.94 kB │ gzip:   0.53 kB
+dist/assets/ordinal-Cboi1Yqb.js                           1.19 kB │ gzip:   0.57 kB
+dist/assets/railroadDiagram-O6MQD6OU-SJayryi0.js          1.61 kB │ gzip:   0.76 kB
+dist/assets/abnfDiagram-VCTEODGH-ZuTTjxgF.js              1.81 kB │ gzip:   0.89 kB
+dist/assets/chunk-F27PBJKO-BXA14WPJ.js                    1.88 kB │ gzip:   0.83 kB
+dist/assets/pegDiagram-XKGWAZYB-Db7rzCd9.js               1.96 kB │ gzip:   0.92 kB
+dist/assets/ebnfDiagram-PWID7BFC-DnbnXS3G.js              2.01 kB │ gzip:   0.88 kB
+dist/assets/arc-B-08M80l.js                               3.44 kB │ gzip:   1.48 kB
+dist/assets/diagram-Z3DM3KII-2LTHK-wI.js                  4.21 kB │ gzip:   1.83 kB
+dist/assets/defaultLocale-DX6XiGOO.js                     4.69 kB │ gzip:   2.18 kB
+dist/assets/linear-sew2pVdb.js                            5.66 kB │ gzip:   2.31 kB
+dist/assets/diagram-UQ7AKVKN-Ck_VzqDo.js                  6.08 kB │ gzip:   2.62 kB
+dist/assets/pieDiagram-E7YTZNPT-CtVpqViY.js               6.29 kB │ gzip:   2.62 kB
+dist/assets/diagram-S7CK7UJ4-SyvncAvF.js                  8.22 kB │ gzip:   3.67 kB
+dist/assets/cynefinDiagram-5FMLGOSQ-n98gl0f3.js          10.10 kB │ gzip:   3.63 kB
+dist/assets/stateDiagram-D77RDMKH-C2sEXhaA.js            10.36 kB │ gzip:   3.62 kB
+dist/assets/dagre-GXQ25YYZ-CLTdcdYb.js                   10.68 kB │ gzip:   4.03 kB
+dist/assets/diagram-VSXAHHWV-CNDcqWFT.js                 10.72 kB │ gzip:   4.13 kB
+dist/assets/chunk-SVP7TREG-UuQeZdzq.js                   15.74 kB │ gzip:   4.41 kB
+dist/assets/diagram-VX7I27RA-B8fxJliV.js                 15.96 kB │ gzip:   5.70 kB
+dist/assets/ishikawaDiagram-5VMMS53U-kvuigYYL.js         17.47 kB │ gzip:   6.64 kB
+dist/assets/kanban-definition-UXKFOSKX-DdNRm2B9.js       20.29 kB │ gzip:   7.21 kB
+dist/assets/mindmap-definition-YA3MSWOX-LxyAnlh2.js      23.18 kB │ gzip:   7.83 kB
+dist/assets/sankeyDiagram-P5KCCOFB-kSBZWCIy.js           23.20 kB │ gzip:   8.56 kB
+dist/assets/journeyDiagram-3NMN7TZE-F87LAHjQ.js          23.57 kB │ gzip:   8.35 kB
+dist/assets/wardleyDiagram-VM6X3IG4-D25kAq2K.js          25.50 kB │ gzip:   6.79 kB
+dist/assets/gitGraphDiagram-WWUBYQGX-C55uO_KN.js         29.42 kB │ gzip:   8.70 kB
+dist/assets/erDiagram-RLTQ6QDP-CM1G9Bxg.js               30.79 kB │ gzip:  10.59 kB
+dist/assets/timeline-definition-24CTP7MA-CovJv1WD.js     30.83 kB │ gzip:  10.15 kB
+dist/assets/requirementDiagram-BXWQKSXE-Dq_1ozey.js      31.00 kB │ gzip:   9.73 kB
+dist/assets/quadrantDiagram-AXDQQJYC-C4_OtQ2Z.js         34.01 kB │ gzip:   9.98 kB
+dist/assets/layout-CqOfrqWK.js                           35.44 kB │ gzip:  12.75 kB
+dist/assets/chunk-IMKFNOWR-BY_DK2YD.js                   38.08 kB │ gzip:  12.51 kB
+dist/assets/blockDiagram-I7D4REHJ-7VG2kgAE.js            41.76 kB │ gzip:  13.58 kB
+dist/assets/vennDiagram-4TSXK5OY-DJ06_nFM.js             41.96 kB │ gzip:  15.70 kB
+dist/assets/xychartDiagram-S5SC5T6Z-D-Fy2JjK.js          44.51 kB │ gzip:  12.60 kB
+dist/assets/chunk-TICWLB2K-Drpj9iJa.js                   49.18 kB │ gzip:  15.75 kB
+dist/assets/flowDiagram-HODETNUW-sXLcp2h5.js             61.85 kB │ gzip:  19.87 kB
+dist/assets/c4Diagram-7LVT6UL2-CZVW19R-.js               65.47 kB │ gzip:  18.79 kB
+dist/assets/ganttDiagram-EL5Y4UJY-d7DyKpSd.js            69.70 kB │ gzip:  23.56 kB
+dist/assets/cose-bilkent-JH36ORCC-Dtd5B97A.js            81.70 kB │ gzip:  22.48 kB
+dist/assets/swimlanes-42K2YHIH-DNezI_m5.js              115.79 kB │ gzip:  42.52 kB
+dist/assets/sequenceDiagram-WJ2MYXX4-C3AAbfwu.js        116.96 kB │ gzip:  31.14 kB
+dist/assets/architectureDiagram-5GKGNRK7-BMD3wiLb.js    151.83 kB │ gzip:  43.15 kB
+dist/assets/katex-HP8lGamR.js                           261.31 kB │ gzip:  77.57 kB
+dist/assets/pdf-YYBQA8p7.js                             437.74 kB │ gzip: 131.10 kB
+dist/assets/cytoscape.esm-BB4DxJjf.js                   443.04 kB │ gzip: 141.98 kB
+dist/assets/mermaid.core-BPW4DciK.js                    682.78 kB │ gzip: 169.03 kB
+dist/assets/cynefin-OW5HDTMX-Bq1bO8ki.js                687.91 kB │ gzip: 154.14 kB
+dist/assets/index-DApySMA8.js                           733.41 kB │ gzip: 230.48 kB
+dist/assets/GradientOrb-DOMByYg4.js                     897.78 kB │ gzip: 242.37 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 25.26s

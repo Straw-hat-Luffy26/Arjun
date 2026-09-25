@@ -121,6 +121,9 @@ pub struct WorkerServices {
     /// compiler use, so a worker sees the same qualification state and scope
     /// rules as the parent it works for.
     pub retrieval: Arc<crate::knowledge::service::RetrievalService>,
+    /// Calculation records (P08): the checker reads the record it is pointed
+    /// at here and keeps its check beside it.
+    pub calculation_store: Arc<crate::calculation::CalculationStore>,
 }
 
 /// What the document extractor reads an attached document through.
@@ -362,7 +365,9 @@ impl ChildWorker for SpecialistWorker {
         // The retriever holds no card: its search is keyword SQL and, when a
         // qualified embedding model is installed, a CPU embedding call. Holding
         // the GPU for it would make a parallel generation wait on nothing.
-        let holds_card = self.profile != "knowledge-retriever";
+        let checks_records = self.profile == "calculation-checker"
+            && packet.inputs.iter().any(|input| matches!(input, InputRef::Calculation { .. }));
+        let holds_card = self.profile != "knowledge-retriever" && !checks_records;
         let lease = match packet.model_id.as_ref().filter(|_| holds_card) {
             Some(model_id) => match self
                 .services
@@ -421,6 +426,10 @@ impl ChildWorker for SpecialistWorker {
             _ if self.profile == "knowledge-retriever" => {
                 self.retrieve(packet, policy, &session, &cancel).await
             }
+            // Checking a calculation record is recomputation from its cited
+            // inputs (P08). A model loop would be asking a model whether it
+            // agrees, which is exactly what an independent check is not.
+            _ if checks_records => self.check_calculations(packet, policy, &session, memory.as_ref(), &cancel),
             Some(child_loop) => self.via_model(child_loop, packet, policy, &cancel).await,
             // No runtime, or no model. A role that cannot be done without one
             // says so rather than doing a fraction of it.
@@ -1023,12 +1032,20 @@ impl SpecialistWorker {
         Ok(work)
     }
 
-    /// Re-derives figures through the deterministic engine.
+    /// Re-derives figures through the deterministic engine, and checks
+    /// calculation records against their sources (P08).
     ///
-    /// This is the worker that reads what another one published: expressions
-    /// come from the packet *and* from the task's shared memory, so a retriever
-    /// that found a figure produces something this checks without either of
-    /// them exchanging a transcript.
+    /// Two kinds of work, both without a model:
+    ///
+    /// - An **expression** (from the packet, or one a sibling published) is
+    ///   evaluated and its result published, as this worker always has.
+    /// - A **calculation record** (`calc-…`, from the packet or published to
+    ///   the task) is checked independently: every input is re-read from the
+    ///   source it cites -- the memory item at its current revision, the
+    ///   passage, the other record -- and the calculation is recomputed by two
+    ///   paths. The verdict is published resting on the record and on those
+    ///   inputs, so a later correction to an input makes the verification
+    ///   stale too. Nothing asks a model whether it agrees.
     fn check_calculations(
         &self,
         packet: &ChildTaskPacket,
@@ -1039,14 +1056,19 @@ impl SpecialistWorker {
     ) -> Result<Work, String> {
         require(policy, ToolName::RunCalculation)?;
 
-        let mut expressions: Vec<String> = packet
-            .inputs
-            .iter()
-            .filter_map(|input| match input {
-                InputRef::Expression { expression } => Some(expression.clone()),
-                _ => None,
-            })
-            .collect();
+        let mut expressions: Vec<String> = Vec::new();
+        let mut records: Vec<String> = Vec::new();
+        for input in &packet.inputs {
+            match input {
+                InputRef::Expression { expression } => expressions.push(expression.clone()),
+                InputRef::Calculation { calculation_id } => {
+                    if !records.contains(calculation_id) {
+                        records.push(calculation_id.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
 
         // The graph read. Everything a sibling published to this task that
         // looks like something to check -- and, for each, the item and the
@@ -1063,6 +1085,16 @@ impl SpecialistWorker {
                     .read_kind(session, kind)
                     .map_err(|unavailable| unavailable.explain())?;
                 for item in published {
+                    // A published calculation record names itself first.
+                    if let Some(id) = item.content.split(':').next().filter(|id| {
+                        id.starts_with("calc-") && id.len() == 21 && id[5..].chars().all(|c| c.is_ascii_hexdigit())
+                    }) {
+                        if !records.iter().any(|held| held == id) && !item.content.starts_with("check of") {
+                            records.push(id.to_string());
+                            from_memory += 1;
+                        }
+                        continue;
+                    }
                     if let Some(expression) = expression_in(&item.content) {
                         if !expressions.iter().any(|held| held == &expression) {
                             origins.insert(
@@ -1080,10 +1112,10 @@ impl SpecialistWorker {
             }
         }
 
-        if expressions.is_empty() {
+        if expressions.is_empty() && records.is_empty() {
             return Err(
-                "this worker re-derives figures, and neither the task nor the shared memory \
-                 offered one to check. Nothing was calculated."
+                "this worker re-derives figures and checks calculation records, and neither the \
+                 task nor the shared memory offered one to check. Nothing was calculated."
                     .to_string(),
             );
         }
@@ -1099,8 +1131,10 @@ impl SpecialistWorker {
         for expression in expressions {
             cancel.check()?;
             work.turns += 1;
-            match crate::orchestrator::calculation::evaluate(&expression) {
+            let (full, projected) = crate::orchestrator::calculation::evaluate_record(&expression);
+            match projected {
                 Ok(record) => {
+                    let _ = self.services.calculation_store.put(&full, &session.user.id, &packet.child_id);
                     let receipt = self.receipt(
                         packet,
                         ToolName::RunCalculation,
@@ -1116,7 +1150,7 @@ impl SpecialistWorker {
                     let origin = origins.get(&expression).cloned();
                     work.claims.push(Claim {
                         kind: MemoryKind::ToolObservation,
-                        content: format!("{expression}: {}", record.formatted),
+                        content: format!("{expression}: {} ({})", record.formatted, record.id),
                         sources: Vec::new(),
                         artifacts: Vec::new(),
                         confidence: Some(1.0),
@@ -1131,8 +1165,124 @@ impl SpecialistWorker {
                     .push(format!("{expression} could not be evaluated: {}", error.message)),
             }
         }
-        // The engine computed these; nothing was inferred.
-        work.confidence = 1.0;
+
+        let mut verified = 0usize;
+        let checked = records.len();
+        for calc_id in records {
+            cancel.check()?;
+            work.turns += 1;
+            let Some(record) = self.services.calculation_store.get(&calc_id, &session.user.id) else {
+                work.uncertainty.push(format!("{calc_id} is not a calculation record this worker can read, so it was not checked."));
+                continue;
+            };
+            let sources = crate::agent_runtime::calculation_tools::Sources {
+                graph: self.services.graph.as_deref(),
+                index: &self.services.index,
+                store: &self.services.calculation_store,
+                session,
+                passages: Vec::new(),
+            };
+            let report = crate::calculation::check(&record, &sources);
+            let rendered = report.render();
+            let receipt = self.receipt(packet, ToolName::RunCalculation, &format!("check:{calc_id}"), &rendered, &session.user.id, &mut work);
+            let _ = self.services.calculation_store.record_check(
+                &calc_id,
+                &self.profile,
+                report.verdict.as_str(),
+                &serde_json::to_value(&report).unwrap_or_default(),
+                None,
+            );
+            let display = record.first().map(|r| r.display.clone()).unwrap_or_else(|| record.status.as_str().to_string());
+            let verdict = report.verdict.as_str().to_uppercase();
+            work.findings.push(Finding {
+                statement: format!("{calc_id} {verdict}: {} = {display}", record.equation),
+                evidence: Vec::new(),
+            });
+            if report.verdict == crate::calculation::CheckVerdict::Verified {
+                verified += 1;
+            } else {
+                work.uncertainty.push(format!("{calc_id}: {}", report.detail));
+                for input in report.inputs.iter().filter(|i| !i.finding.starts_with("found at the source") && !i.finding.starts_with("matches") && !i.finding.starts_with("taken as stated")) {
+                    work.uncertainty.push(format!(
+                        "{calc_id} input {} = {} [{}]: {}{}",
+                        input.input,
+                        input.as_recorded,
+                        input.source,
+                        input.finding,
+                        input.current_value.as_deref().map(|v| format!("; the source now says {v}")).unwrap_or_default()
+                    ));
+                }
+            }
+            // The verdict rests on the record as published and on the inputs
+            // at the revisions the record used.
+            let (depends_on, sources_cited) = match self.services.graph.as_deref() {
+                Some(graph) => {
+                    let (mut depends_on, cited) = crate::agent_runtime::calculation_tools::lineage(
+                        graph,
+                        &self.services.calculation_store,
+                        session,
+                        &[],
+                        &self.services.index,
+                        &record,
+                    );
+                    if let Some(item) = self.services.calculation_store.graph_item(&calc_id, &session.user.id) {
+                        if let Some(revision) = graph.versions_of(session, &item, None).ok().and_then(|v| v.last().map(|l| l.revision)) {
+                            depends_on.insert(0, Dependency { item_id: item, revision });
+                        }
+                    }
+                    (depends_on, cited)
+                }
+                None => (Vec::new(), Vec::new()),
+            };
+            work.claims.push(Claim {
+                kind: MemoryKind::ToolObservation,
+                content: format!(
+                    "check of {calc_id}: {verdict} — {} = {display}. {} {}",
+                    record.equation,
+                    report.agreement,
+                    report.si_path.as_deref().map(|s| format!("SI path: {s}.")).unwrap_or_default()
+                ),
+                sources: sources_cited,
+                artifacts: Vec::new(),
+                confidence: None,
+                causal_parents: depends_on.iter().map(|d| d.item_id.clone()).collect(),
+                idempotency_key: format!("{}:check:{calc_id}", packet.idempotency_key),
+                receipt,
+                depends_on,
+            });
+            // Recomputed with what the source says now: a new record, kept and
+            // reported, never an edit of the one checked.
+            if let Some(corrected) = &report.corrected {
+                let _ = self.services.calculation_store.put(corrected, &session.user.id, &packet.child_id);
+                let now = corrected.first().map(|r| r.display.clone()).unwrap_or_else(|| corrected.status.as_str().to_string());
+                work.findings.push(Finding {
+                    statement: format!("{calc_id} recomputed with the corrected input(s): {} = {now}", corrected.id),
+                    evidence: Vec::new(),
+                });
+                let receipt = self.receipt(
+                    packet,
+                    ToolName::RunCalculation,
+                    &format!("recompute:{}", corrected.id),
+                    &crate::agent_runtime::calculation_tools::summary(corrected),
+                    &session.user.id,
+                    &mut work,
+                );
+                work.claims.push(Claim {
+                    kind: MemoryKind::ToolObservation,
+                    content: crate::agent_runtime::calculation_tools::summary(corrected),
+                    sources: Vec::new(),
+                    artifacts: Vec::new(),
+                    confidence: None,
+                    causal_parents: Vec::new(),
+                    idempotency_key: format!("{}:recompute:{}", packet.idempotency_key, corrected.id),
+                    receipt,
+                    depends_on: Vec::new(),
+                });
+            }
+        }
+        // Measured, not asserted: the share of records that verified, or 1.0
+        // where only expressions were evaluated.
+        work.confidence = if checked == 0 { 1.0 } else { verified as f32 / checked as f32 };
         Ok(work)
     }
 

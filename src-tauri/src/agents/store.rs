@@ -1088,6 +1088,58 @@ mod tests {
         assert!(after.instructions.contains("Deterministically"));
     }
 
+    /// P08: the checker gains the calculation families; its id, settings and
+    /// the writer denials survive the upgrade.
+    #[test]
+    fn the_calculation_checker_upgrade_keeps_its_identity_and_its_settings() {
+        use crate::orchestrator::tools::ToolName;
+        let sha = |text: &str| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(text.as_bytes()));
+        let old_text = include_str!("testdata/calculation-checker-1.0.0.md");
+        let new_text = include_str!("../../../agents/calculation-checker.md");
+        let old = crate::subagents::profile::compile(old_text, "calculation-checker", &sha(old_text))
+            .expect("1.0.0 compiles");
+        let new = crate::subagents::profile::compile(new_text, "calculation-checker", &sha(new_text))
+            .expect("1.1.0 compiles");
+        assert_eq!(old.name, new.name, "the upgrade renamed the agent");
+
+        let (registry, _dir) = registry();
+        let imported = registry.import_bundled(&old).expect("imports 1.0.0");
+        let mut configured = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+        configured.display_name = "Figure checker".into();
+        configured.color = AGENT_PALETTE[3].into();
+        registry
+            .update(&admin(), &imported.agent_id, imported.definition_version, configured)
+            .expect("configured");
+        let before = registry
+            .get(&imported.agent_id, Visibility::Administrator)
+            .expect("reads");
+
+        let upgraded = registry.import_bundled(&new).expect("imports 1.1.0");
+        assert_eq!(upgraded.agent_id, imported.agent_id, "a second agent was created");
+        assert_eq!(upgraded.definition_version, before.definition_version + 1);
+        let after = registry
+            .get(&upgraded.agent_id, Visibility::Administrator)
+            .expect("reads");
+        assert_eq!(after.display_name, "Figure checker");
+        assert_eq!(after.color, AGENT_PALETTE[3]);
+        for tool in [
+            ToolName::RunCalculation,
+            ToolName::CalculationValidateDimensions,
+            ToolName::CalculationSolve,
+            ToolName::CalculationCompare,
+            ToolName::CalculationSensitivity,
+            ToolName::SearchDocuments,
+        ] {
+            assert!(after.allowed_tools.contains(&tool), "{} was not granted", tool.as_str());
+        }
+        for denied in [ToolName::WriteScopedFile, ToolName::CreateDocx, ToolName::CreateXlsx, ToolName::ExecuteCode] {
+            assert!(after.denied_tools.contains(&denied), "the denial of {} was lost", denied.as_str());
+        }
+        assert!(after.instructions.contains("recomputes by two paths"));
+    }
+
     #[test]
     fn a_registry_survives_a_restart() {
         let dir = tempfile::tempdir().expect("temp dir");

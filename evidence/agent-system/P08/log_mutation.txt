@@ -1,0 +1,34 @@
+M1 absolute temperatures may be added: CAUGHT by 1 test(s)
+    test calculation::eval::tests::absolute_temperatures_subtract_to_a_difference_and_never_add ... FAILED
+M2 the inch is 25 mm: CAUGHT by 2 test(s)
+    test calculation::tests::pack_calc_02_mixed_units_are_converted_not_subtracted_raw ... FAILED
+    test calculation::tests::unit_conversions_are_exact_to_the_table ... FAILED
+M3 no division-by-zero check: CAUGHT by 5 test(s)
+    test agent_runtime::calculation_tests::a_refused_calculation_publishes_nothing_and_says_what_kind_of_refusal ... FAILED
+    test calculation::eval::tests::a_domain_error_is_refused_and_named ... FAILED
+    test calculation::tests::pack_calc_06_a_zero_minimum_is_refused_with_no_number ... FAILED
+    test calculation::tests::zero_and_negative_boundary_inputs_are_computed_or_refused_never_clipped ... FAILED
+    test orchestrator::calculation::tests::division_by_zero_is_refused ... FAILED
+M4 a 5 rounds down: CAUGHT by 4 test(s)
+    test agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected ... FAILED
+    test calculation::decimal::tests::rounding_is_decimal_and_half_away_from_zero ... FAILED
+    test calculation::tests::an_uncertain_input_carries_its_uncertainty_to_the_result_and_to_the_verdict ... FAILED
+    test calculation::tests::rounding_is_stated_and_the_raw_result_is_kept ... FAILED
+M5 a corrected memory item reads as current: CAUGHT by 1 test(s)
+    test agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected ... FAILED
+M6 a record published without its lineage: CAUGHT by 1 test(s)
+    test agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected ... FAILED
+M7 a conclusion without an edition: CAUGHT by 1 test(s)
+    test calculation::tests::a_conclusion_needs_a_sourced_limit_from_a_standard_with_its_edition ... FAILED
+M8 the record id ignores sources: CAUGHT by 1 test(s)
+    test calculation::tests::a_changed_source_value_changes_the_record_id_and_makes_the_old_one_stale ... FAILED
+M9 an artifact ignores its calculation's standing: CAUGHT by 1 test(s)
+    test agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected ... FAILED
+M10 no condition-number limit: CAUGHT by 1 test(s)
+    test calculation::tests::a_linear_system_solves_and_a_singular_or_ill_conditioned_one_refuses ... FAILED
+M11 any number in a source counts as the value: CAUGHT by 2 test(s)
+    test calculation::check::tests::a_source_that_does_not_state_the_value_is_said ... FAILED
+    test calculation::check::tests::a_value_is_stated_in_any_unit_that_converts_to_it ... FAILED
+M12 (first form did not compile: a guarded arm left the match non-exhaustive; rewritten below)
+M12 a gauge pressure may be multiplied: CAUGHT by 1 test(s)
+    test calculation::eval::tests::gauge_pressure_needs_a_stated_atmosphere_to_become_absolute ... FAILED

@@ -113,7 +113,14 @@ pub(crate) fn delegation_inputs(call: &ToolCall) -> Result<Vec<crate::subagents:
         inputs.push(InputRef::WorkspaceFile { path });
     }
     for expression in strings("expressions") {
-        inputs.push(InputRef::Expression { expression });
+        // A calculation record's id (P08) is a reference to check, not an
+        // expression to evaluate.
+        let reference = expression.trim().trim_start_matches('[').trim_end_matches(']').trim_start_matches("C:");
+        if reference.starts_with("calc-") && reference.len() == 21 && reference[5..].chars().all(|c| c.is_ascii_hexdigit()) {
+            inputs.push(InputRef::Calculation { calculation_id: reference.to_string() });
+        } else {
+            inputs.push(InputRef::Expression { expression });
+        }
     }
     // Artifacts carry a revision and a hash, so they arrive as objects rather
     // than as bare names: "the approval note" is not a reference that can be
@@ -1288,6 +1295,16 @@ impl ToolRunner for LocalToolRunner<'_> {
             | ToolName::MemoryNeighbours => Err(format!(
                 "{} is answered on the agent path, which holds the run's scope, evidence and \
                  memory.",
+                tool.as_str()
+            )),
+            // P08: typed inputs resolve against the owner's calculation store
+            // and the run's memory, which this runner does not hold.
+            ToolName::CalculationValidateDimensions
+            | ToolName::CalculationSolve
+            | ToolName::CalculationCompare
+            | ToolName::CalculationSensitivity => Err(format!(
+                "{} is answered on the agent path, which holds the owner's calculation records \
+                 and the run's memory.",
                 tool.as_str()
             )),
             ToolName::SearchDocuments => self.search(call),

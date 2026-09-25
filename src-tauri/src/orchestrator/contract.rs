@@ -286,10 +286,18 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
         ToolName::KnowledgeMultimodalRetrieve => (Runner, "LocalToolRunner::multimodal_retrieve"),
         ToolName::ReadScopedFile => (Runner, "LocalToolRunner::read"),
         ToolName::WriteScopedFile => (Runner, "LocalToolRunner::write"),
+        // P08: on the agent path, because each keeps an immutable record for
+        // the signed-in owner and publishes it into the run's shared memory on
+        // the call's receipt. `LocalToolRunner::calculate` still serves the
+        // legacy loop, expression only.
         ToolName::RunCalculation => (
-            Runner,
-            "LocalToolRunner::calculate, then the run's calculation table",
+            AgentPath,
+            "agent_runtime::calculation_tools::evaluate, then the calculation store, the run's table and shared memory",
         ),
+        ToolName::CalculationValidateDimensions => (AgentPath, "agent_runtime::calculation_tools::validate_dimensions"),
+        ToolName::CalculationSolve => (AgentPath, "agent_runtime::calculation_tools::solve, then the calculation store and shared memory"),
+        ToolName::CalculationCompare => (AgentPath, "agent_runtime::calculation_tools::compare, then the calculation store and shared memory"),
+        ToolName::CalculationSensitivity => (AgentPath, "agent_runtime::calculation_tools::sensitivity, then the calculation store"),
         ToolName::ExecuteCode => (Runner, "LocalToolRunner::execute_code"),
         ToolName::SovereigntyGetEvidence => (Runner, "LocalToolRunner::sovereignty_evidence"),
         ToolName::AgentDelegateReadonly => (
@@ -356,6 +364,12 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         | ToolName::MemoryRecallAuthorized
         | ToolName::MemoryPromoteApproved
         | ToolName::RunCalculation
+        // P08: the engine is in-process and needs nothing a deployment might
+        // lack; the store and memory are there whenever the runtime is.
+        | ToolName::CalculationValidateDimensions
+        | ToolName::CalculationSolve
+        | ToolName::CalculationCompare
+        | ToolName::CalculationSensitivity
         | ToolName::CapabilitySearch
         | ToolName::SovereigntyGetEvidence
         | ToolName::ReadAttachedPages
@@ -390,7 +404,10 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::MediaExtractFindings
         | ToolName::KnowledgeMultimodalRetrieve
         | ToolName::KnowledgeHybridSearch => Evidence,
-        ToolName::RunCalculation => Calculation,
+        ToolName::RunCalculation
+        | ToolName::CalculationSolve
+        | ToolName::CalculationCompare
+        | ToolName::CalculationSensitivity => Calculation,
         ToolName::WriteScopedFile
         | ToolName::CreateDocx
         | ToolName::CreateXlsx
@@ -444,7 +461,9 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         // graph neighbourhood.
         | ToolName::KnowledgeRerank
         | ToolName::KnowledgeSourceVersion
-        | ToolName::MemoryNeighbours => Text,
+        | ToolName::MemoryNeighbours
+        // A dimension report computes no number.
+        | ToolName::CalculationValidateDimensions => Text,
     }
 }
 
@@ -624,8 +643,17 @@ mod tests {
                     // different question.
                     || tool == ToolName::AgentDelegateReadonly
                     // Deterministic arithmetic reads nothing outside the task
-                    // and writes only the run's own calculation table.
-                    || tool == ToolName::RunCalculation,
+                    // and writes only ARJUN's own records of it: the run's
+                    // calculation table, the calculation store and the task's
+                    // memory (P08).
+                    || matches!(
+                        tool,
+                        ToolName::RunCalculation
+                            | ToolName::CalculationValidateDimensions
+                            | ToolName::CalculationSolve
+                            | ToolName::CalculationCompare
+                            | ToolName::CalculationSensitivity
+                    ),
                 "{} is read-only in one table and {} in another",
                 tool.as_str(),
                 contract.effect.as_str()

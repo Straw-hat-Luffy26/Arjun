@@ -1085,17 +1085,76 @@
       "timeoutSeconds": 60
     },
     {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::calculation_tools::compare, then the calculation store and shared memory",
+      "maxResponseBytes": 16384,
+      "name": "calculation.compare",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "inputs"
+        },
+        {
+          "kind": "text",
+          "name": "tolerance"
+        }
+      ],
+      "output": "calculation",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "value"
+        },
+        {
+          "kind": "text",
+          "name": "relation"
+        },
+        {
+          "kind": "text",
+          "name": "limit"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 5
+    },
+    {
       "aliases": [
         "run_calculation"
       ],
       "approvalClass": "automatic",
       "cancellation": "abandonWait",
       "effect": "reversible",
-      "handler": "LocalToolRunner::calculate, then the run's calculation table",
+      "handler": "agent_runtime::calculation_tools::evaluate, then the calculation store, the run's table and shared memory",
       "maxResponseBytes": 16384,
       "name": "calculation.evaluate_with_units",
       "network": "none",
-      "optional": [],
+      "optional": [
+        {
+          "kind": "list",
+          "name": "inputs"
+        },
+        {
+          "kind": "text",
+          "name": "resultUnit"
+        },
+        {
+          "kind": "text",
+          "name": "round"
+        }
+      ],
       "output": "calculation",
       "permission": "useModel",
       "prerequisites": [],
@@ -1111,7 +1170,116 @@
         "reconciliation": "notNeeded",
         "safeToRetry": true
       },
-      "route": "runner",
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 5
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::calculation_tools::sensitivity, then the calculation store",
+      "maxResponseBytes": 16384,
+      "name": "calculation.sensitivity",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "calculationId"
+        },
+        {
+          "kind": "text",
+          "name": "expression"
+        },
+        {
+          "kind": "list",
+          "name": "inputs"
+        }
+      ],
+      "output": "calculation",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::calculation_tools::solve, then the calculation store and shared memory",
+      "maxResponseBytes": 16384,
+      "name": "calculation.solve",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "inputs"
+        }
+      ],
+      "output": "calculation",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "list",
+          "name": "equations"
+        },
+        {
+          "kind": "list",
+          "name": "unknowns"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "reversible",
+      "handler": "agent_runtime::calculation_tools::validate_dimensions",
+      "maxResponseBytes": 8192,
+      "name": "calculation.validate_dimensions",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "inputs"
+        }
+      ],
+      "output": "text",
+      "permission": "useModel",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "expression"
+        }
+      ],
+      "retry": {
+        "maxRetries": 1,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 5
     },

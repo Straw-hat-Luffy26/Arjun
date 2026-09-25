@@ -781,6 +781,10 @@ pub struct ExtractionState(pub Arc<crate::extraction::service::ExtractionService
 /// runtime's tools, the Knowledge Retriever worker and the context compiler.
 pub struct RetrievalState(pub Arc<crate::knowledge::service::RetrievalService>);
 
+/// Calculation records (P08), managed once in `lib.rs` and shared by the
+/// runtime's calculation tools, the checker worker and the artifact tools.
+pub struct CalculationStoreState(pub Arc<crate::calculation::CalculationStore>);
+
 /// The conversation artifact store, as Tauri manages it.
 pub struct ConversationArtifactsState(
     pub Arc<crate::artifacts::conversation_store::ConversationArtifacts>,
@@ -904,6 +908,14 @@ fn runtime(
                     state.index.clone(),
                     "this process has no retrieval service configured",
                 ))
+            }),
+        // The managed store, shared with the checker worker. Where none is
+        // managed (a store that could not be opened, which `lib.rs` logs),
+        // records live for this process only rather than not at all.
+        calculation_store: tauri::Manager::try_state::<CalculationStoreState>(app)
+            .map(|state| Arc::clone(&state.0))
+            .unwrap_or_else(|| {
+                Arc::new(crate::calculation::CalculationStore::in_memory().expect("an in-memory calculation store"))
             }),
         emit_durable,
         // The same channel the loop's own events travel, so an operator sees

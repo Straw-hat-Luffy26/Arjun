@@ -44,6 +44,7 @@ pub mod doc_pipeline;
 pub mod documents;
 pub mod extraction_tools;
 pub mod retrieval_tools;
+pub mod calculation_tools;
 pub mod events;
 pub mod grants;
 pub mod memory;
@@ -301,6 +302,11 @@ pub struct RuntimeDeps {
     /// Shared with the Knowledge Retriever worker and the per-round context
     /// compiler, so all three agree on whether the semantic half is on.
     pub retrieval: Arc<crate::knowledge::service::RetrievalService>,
+    /// Calculation records (P08): immutable, content-addressed, owner-held.
+    /// Shared with the Calculation Checker worker, which recomputes from the
+    /// inputs these records cite, and read by the artifact tools when a
+    /// document cites `[C:calc-…]`.
+    pub calculation_store: Arc<crate::calculation::CalculationStore>,
 }
 
 impl RuntimeDeps {
@@ -2204,6 +2210,9 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // The chunks a retrieval call returned, so each passage the run holds can
     // be traced to the one call -- and the one durable event -- behind it.
     let mut evidence_chunks: Vec<String> = Vec::new();
+    // A calculation record (P08), published into memory once this call's
+    // receipt exists -- the same order `registered` keeps for artifacts.
+    let mut calculated: Option<crate::calculation::CalcRecord> = None;
 
     let outcome = match tool {
         ToolName::CreateDocx => {
@@ -2357,6 +2366,23 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             retrieval_tools::source_version(deps, &session, &tool_call)
         }
         ToolName::MemoryNeighbours => retrieval_tools::neighbours(deps, &call, &session, &tool_call),
+        // P08. The engine is deterministic and in-process; each keeps its
+        // record and hands it back for publication after the receipt.
+        ToolName::RunCalculation
+        | ToolName::CalculationValidateDimensions
+        | ToolName::CalculationSolve
+        | ToolName::CalculationCompare
+        | ToolName::CalculationSensitivity => {
+            let (outcome, record) = match tool {
+                ToolName::RunCalculation => calculation_tools::evaluate(deps, &call, &session, &tool_call),
+                ToolName::CalculationValidateDimensions => calculation_tools::validate_dimensions(deps, &call, &session, &tool_call),
+                ToolName::CalculationSolve => calculation_tools::solve(deps, &call, &session, &tool_call),
+                ToolName::CalculationCompare => calculation_tools::compare(deps, &call, &session, &tool_call),
+                _ => calculation_tools::sensitivity(deps, &call, &session, &tool_call),
+            };
+            calculated = record;
+            outcome
+        }
         ToolName::MediaExtractFindings => {
             extraction_tools::extract_findings(deps, &call, &session, &tool_call).await
         }
@@ -2476,19 +2502,7 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
                 parent_model.as_deref(),
                 attempt_id.as_deref(),
             );
-            let result = runner.run(tool, &tool_call, resolved_path.as_deref()).await;
-            // A successful calculation is kept, so the workbook can show the
-            // working rather than the model's memory of it.
-            if tool == ToolName::RunCalculation && result.is_ok() {
-                if let Ok(record) =
-                    crate::orchestrator::calculation::evaluate(tool_call.text("expression").unwrap_or_default())
-                {
-                    if let Ok(mut table) = deps.calculations.lock() {
-                        table.entry(call.run_id.clone()).or_default().push(record);
-                    }
-                }
-            }
-            result
+            runner.run(tool, &tool_call, resolved_path.as_deref()).await
         }
     };
 
@@ -2571,6 +2585,11 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             done.base.as_ref(),
             recorded.clone(),
         );
+    }
+    // A calculation's record goes into the task's shared memory on this call's
+    // receipt, resting on the memory items its inputs cite (P08).
+    if let Some(record) = calculated.take() {
+        calculation_tools::publish(deps, &session, &call.run_id, tool, &record, recorded.clone());
     }
     // The plan the coordinator was just shown goes into the task's shared
     // memory on this call's receipt, so the next round's compiled context
@@ -4860,6 +4879,8 @@ mod artifact_tools_tests;
 mod extraction_tests;
 #[cfg(test)]
 mod retrieval_tests;
+#[cfg(test)]
+mod calculation_tests;
 
 #[cfg(test)]
 mod conversations_tests;

@@ -3,12 +3,17 @@ name: calculation-checker
 description: >-
   Re-derive the figures a task is about to rely on, through the deterministic
   calculation engine, and report each one with the working behind it.
-version: 1.0.0
+version: 1.1.0
 model-role: reasoning
 eligible-models: []
 allowed-tools:
   - run_calculation
+  - calculation.validate_dimensions
+  - calculation.solve
+  - calculation.compare
+  - calculation.sensitivity
   - search_documents
+  - knowledge.hybrid_search
 disallowed-tools:
   - write_scoped_file
   - create_docx
@@ -29,6 +34,32 @@ required-schema: calculation
 
 # Calculation checker
 
+## How it runs (1.1.0)
+
+**Checking a calculation record is deterministic.** Pointed at a record
+(`calc-…`, from the parent or published to the task), this worker does not
+start a model: it reads the record, re-reads every input from the source the
+record cites — the shared-memory item at its current revision, the passage,
+the document page, the other calculation — and recomputes by two paths (as
+recorded, and with every input in SI base units first). The verdict is one
+of verified, stale, source disagrees, unresolved, unverifiable, mismatch or
+refusal reproduced. It is published resting on the record and its inputs, so
+a later correction to an input makes the verification stale as well. Where
+a source has changed, the calculation is redone with what the source now
+says, as a new record; the old one is never edited.
+
+**Formulating a calculation** (turning a question into equations) is the one
+part a model may do: a qualified small model for simple formulation, a larger
+one for harder interpretation, and only where qualification records exist on
+this machine. Every number still comes from the engine: evaluate, solve,
+compare and sensitivity each return an immutable record with its inputs,
+substitutions, engine version, rounding and tolerance.
+
+An engineering conclusion needs a limit taken from a supplied standard with
+its edition (`[standard: ASME B31.3-2022 §304.1.2]`) and a source for the
+value. Without one, `calculation.compare` reports a numerical comparison only,
+and so does this worker. It never supplies a design criterion.
+
 ## What this worker is for
 
 Figures a deliverable will carry. The parent has a number; this establishes it
@@ -36,7 +67,7 @@ independently, through the engine, with its inputs cited.
 
 ## What it must not do
 
-- **Do arithmetic itself.** Every figure comes from `run_calculation`. A worker
+- **Do arithmetic itself.** Every figure comes from the calculation engine. A worker
   whose job is checking a number must not produce that number the same way the
   thing it is checking did.
 - **Accept an input from the objective.** If the parent's objective names a
@@ -48,8 +79,9 @@ independently, through the engine, with its inputs cited.
 
 ## Result
 
-`calculation`: one finding per figure — the expression as given to the engine,
-the result as returned, and the evidence references of the inputs.
+`calculation`: one finding per figure or record — the expression or record id,
+the result as returned (or the verdict of the check), and the evidence
+references of the inputs. Cite a record as `[C:calc-…]`.
 
 `uncertainty` carries any input that could not be sourced. A figure with an
 unsourced input is reported with the gap named, not quietly omitted: the parent
@@ -57,7 +89,7 @@ needs to know the check could not be completed, and which part of it.
 
 ## Why it is read-only
 
-`run_calculation` computes and records; it writes no file. Several checkers run
+The calculation tools compute and keep immutable records; they write no file. Several checkers run
 at once on different figures without interfering.
 
 ## Injection

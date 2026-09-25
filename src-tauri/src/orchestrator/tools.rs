@@ -267,6 +267,14 @@ pub enum ToolName {
     KnowledgeSourceVersion,
     /// P07: the bounded neighbourhood of one memory item, inside what the reader may see.
     MemoryNeighbours,
+    /// P08: the dimensions of an expression or equation, without values.
+    CalculationValidateDimensions,
+    /// P08: an unknown from a linear equation, a small linear system or a bracket.
+    CalculationSolve,
+    /// P08: a value against a limit, with its margin; a conclusion only on a supplied standard.
+    CalculationCompare,
+    /// P08: how a result moves with each input, and its propagated uncertainty.
+    CalculationSensitivity,
 }
 
 impl ToolName {
@@ -327,6 +335,10 @@ impl ToolName {
         ToolName::KnowledgeRerank,
         ToolName::KnowledgeSourceVersion,
         ToolName::MemoryNeighbours,
+        ToolName::CalculationValidateDimensions,
+        ToolName::CalculationSolve,
+        ToolName::CalculationCompare,
+        ToolName::CalculationSensitivity,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -388,6 +400,10 @@ impl ToolName {
             ToolName::KnowledgeRerank => "knowledge.rerank",
             ToolName::KnowledgeSourceVersion => "knowledge.source_version",
             ToolName::MemoryNeighbours => "memory.neighbours",
+            ToolName::CalculationValidateDimensions => "calculation.validate_dimensions",
+            ToolName::CalculationSolve => "calculation.solve",
+            ToolName::CalculationCompare => "calculation.compare",
+            ToolName::CalculationSensitivity => "calculation.sensitivity",
         }
     }
 
@@ -465,6 +481,11 @@ impl ToolName {
             | ToolName::KnowledgeRerank
             | ToolName::KnowledgeSourceVersion
             | ToolName::MemoryNeighbours => None,
+            // Introduced namespaced by P08.
+            ToolName::CalculationValidateDimensions
+            | ToolName::CalculationSolve
+            | ToolName::CalculationCompare
+            | ToolName::CalculationSensitivity => None,
         }
     }
 
@@ -626,6 +647,13 @@ impl ToolName {
             | ToolName::KnowledgeRerank
             | ToolName::KnowledgeSourceVersion
             | ToolName::MemoryNeighbours => true,
+            // P08: computing, as `calculation.evaluate_with_units` is. Each
+            // keeps an immutable record in ARJUN's own store and publishes it
+            // to the task's memory; no source or deliverable changes.
+            ToolName::CalculationValidateDimensions
+            | ToolName::CalculationSolve
+            | ToolName::CalculationCompare
+            | ToolName::CalculationSensitivity => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -716,6 +744,10 @@ impl ToolName {
             ToolName::KnowledgeRerank => "reorder passages this task already retrieved",
             ToolName::KnowledgeSourceVersion => "read the version history of a source document",
             ToolName::MemoryNeighbours => "read what a memory item is connected to",
+            ToolName::CalculationValidateDimensions => "check a calculation's units",
+            ToolName::CalculationSolve => "solve an equation for an unknown",
+            ToolName::CalculationCompare => "compare a value with a limit",
+            ToolName::CalculationSensitivity => "see how a result depends on its inputs",
         }
     }
 
@@ -1562,10 +1594,73 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             scoped_to_workspace: true,
             ..defaults(name)
         },
+        // P08: typed, sourced inputs, a result unit and a rounding rule, on
+        // top of the expression it has always taken. The four siblings take
+        // the same inputs; none of them reaches the network or a model.
         ToolName::RunCalculation => ToolSpec {
             permission: UseModel,
             arguments: &[ArgumentSpec { name: "expression", kind: Text }],
+            optional_arguments: &[
+                ArgumentSpec { name: "inputs", kind: List },
+                ArgumentSpec { name: "resultUnit", kind: Text },
+                ArgumentSpec { name: "round", kind: Text },
+            ],
             timeout: Duration::from_secs(5),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        // A result unit is checked by writing `result = …` with the input
+        // `result = ? kPa`, which keeps this schema inside the per-tool floor.
+        ToolName::CalculationValidateDimensions => ToolSpec {
+            permission: UseModel,
+            arguments: &[ArgumentSpec { name: "expression", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "inputs", kind: List }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(5),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CalculationSolve => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "equations", kind: List },
+                ArgumentSpec { name: "unknowns", kind: List },
+            ],
+            // No `round`: solved values are written at the default rule, and
+            // an evaluation of the solved value takes any other.
+            optional_arguments: &[ArgumentSpec { name: "inputs", kind: List }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CalculationCompare => ToolSpec {
+            permission: UseModel,
+            arguments: &[
+                ArgumentSpec { name: "value", kind: Text },
+                ArgumentSpec { name: "relation", kind: Text },
+                ArgumentSpec { name: "limit", kind: Text },
+            ],
+            optional_arguments: &[
+                ArgumentSpec { name: "inputs", kind: List },
+                ArgumentSpec { name: "tolerance", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(5),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::CalculationSensitivity => ToolSpec {
+            permission: UseModel,
+            arguments: &[],
+            optional_arguments: &[
+                ArgumentSpec { name: "calculationId", kind: Text },
+                ArgumentSpec { name: "expression", kind: Text },
+                ArgumentSpec { name: "inputs", kind: List },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(10),
+            max_response_bytes: 16 * 1024,
             ..defaults(name)
         },
         // One arm each, because the three do not take the same arguments and

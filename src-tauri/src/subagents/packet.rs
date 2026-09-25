@@ -92,6 +92,10 @@ pub enum InputRef {
         #[serde(default)]
         source_sha256s: Vec<String>,
     },
+    /// A calculation record to check (P08), by its content address. The
+    /// checker reads the record itself, then goes back to each input's source;
+    /// the parent passes the id, never the numbers.
+    Calculation { calculation_id: String },
 }
 
 impl InputRef {
@@ -120,6 +124,7 @@ impl InputRef {
             InputRef::GraphItem { item_id, revision } => {
                 format!("shared memory item {item_id} revision {revision}")
             }
+            InputRef::Calculation { calculation_id } => format!("calculation record {calculation_id}"),
         }
     }
 }

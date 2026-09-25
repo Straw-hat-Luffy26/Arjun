@@ -1,0 +1,634 @@
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Block`, `Document`, `Properties`, and `Section`
+    --> src/artifacts/content.rs:1255:39
+     |
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+     |                                       ^^^^^                            ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^
+
+warning: unused import: `crate::agent_runtime::audit_health::AuditHealth`
+    --> src/agent_runtime/tests.rs:1344:9
+     |
+1344 |     use crate::agent_runtime::audit_health::AuditHealth;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Modality`
+   --> src/registry/scan.rs:496:27
+    |
+496 |     use crate::registry::{Modality, ModelRole};
+    |                           ^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+    --> src/ai_engine/runtime.rs:1415:76
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                                                                            ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1900:9
+     |
+1900 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+    --> src/ai_engine/runtime.rs:1415:31
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                               ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:384:13
+    |
+384 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:396:13
+    |
+396 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:408:13
+    |
+408 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1258:8
+     |
+1258 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1798:9
+     |
+1796 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1797 |         _dir: tempfile::TempDir,
+1798 |         root: PathBuf,
+     |         ^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib test) generated 79 warnings (run `cargo fix --lib -p sarathi --tests` to apply 53 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+
+running 4 tests
+test agent_runtime::calculation_tests::a_refused_calculation_publishes_nothing_and_says_what_kind_of_refusal ... --- refused ---
+calc-14f28481c460bccb · evaluate · refused · arjun-calc 2.0.0 (units f3deca3b)
+Equation: (t_min - t_meas) / t_min
+Inputs:
+  t_min = 0.0 mm [user] (sourced)
+  t_meas = 6.4 mm [user] (sourced)
+Substituted: (0.0 mm - 6.4 mm) / (0.0 mm)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Refused — division_by_zero: Division by zero: the divisor 0.0 mm is zero, so there is no result. The input is not usable as given. No number was produced.
+ok
+test agent_runtime::calculation_tests::an_unsourced_input_is_provisional_and_its_check_is_unresolved ... ok
+test agent_runtime::calculation_tests::the_other_families_run_through_the_runtime_and_keep_their_records ... --- compare ---
+calc-26ad265b5fb636af · compare · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: t_meas >= t_req
+Inputs:
+  t_meas = 8.2 mm [user] (sourced)
+  t_req = 7.938 mm [user] [standard: ASME B31.3-2022 §304.1.2] (sourced)
+Result t_meas: 8.2 mm (raw 8.2 mm; SI 0.0082 m)
+Result t_req: 7.938 mm (raw 7.938 mm; SI 0.007938 m)
+Comparison: 8.2 mm >= 7.938 mm → HOLDS (margin 0.262 mm, 3.3% of the limit). compared in SI; engine tolerance relative 1e-12
+Conclusion: 8.2 mm >= 7.938 mm holds: the criterion of ASME B31.3-2022 §304.1.2 is met (criterion t_req [stated by the requester]; standard as supplied: ASME B31.3-2022 §304.1.2)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Assumptions: t_req is taken from ASME B31.3-2022 §304.1.2, as supplied
+Cite it as [C:calc-26ad265b5fb636af] and quote the result exactly as displayed; do not recompute or re-round it.
+ok
+test agent_runtime::calculation_tests::two_agents_consume_one_verified_calculation_and_both_go_stale_when_an_input_is_corrected ... --- calculation.evaluate_with_units ---
+calc-47fd7a4f707e30da · evaluate · computed · arjun-calc 2.0.0 (units f3deca3b)
+Equation: wall_loss = (t_min - t_meas) / t_min
+Inputs:
+  t_min = 9.0 mm [M:mi-3732a641-5774-4bc7-aa6e-146753535f64@1] [note: V-101 shell, inspection plan revision 3] (sourced)
+  t_meas = 8.2 mm ±0.05 mm [M:mi-b1abaf96-1beb-407a-b6dc-bc41167ec405@1] (sourced)
+Substituted: (9.0 mm - 8.2 mm) / (9.0 mm)
+Working:
+  9.0 mm - 8.2 mm = 0.8 mm
+  0.8 mm / 9.0 mm = 0.0888888889
+Result wall_loss: 8.889 % ±0.56 % (raw 8.888888888888896 %; SI 0.0888888889)
+Rounding: 4 significant figures, half away from zero. Tolerance: relative 1e-12 — IEEE-754 binary64 arithmetic, at most 256 operations each rounded once; display rounding is separate.
+Assumptions: t_min: V-101 shell, inspection plan revision 3; uncertainty propagated to first order from the inputs' stated ± values, assuming they are independent; no coverage factor applied
+Cite it as [C:calc-47fd7a4f707e30da] and quote the result exactly as displayed; do not recompute or re-round it.
+--- calculation-checker ---
+Subagent calculation-checker ran as child 61e0c0af-8603-465b-9f41-6474e20c8a16 (status: completed).
+
+Findings:
+- calc-47fd7a4f707e30da VERIFIED: wall_loss = (t_min - t_meas) / t_min = 8.889 %
+
+Detail:
+Read the task's shared memory at revision 5.
+Published mi-25bc3bc4-eede-4134-a511-cd8a3ac70ab0 revision 1 at graph revision 6 (admitted).
+
+
+--- brief.pptx after the correction ---
+art-file-180190483d32ead1@1 cites 1 marker(s) and rests on 1 recorded dependenc(ies).
+- [C:calc-47fd7a4f707e30da] at slide:2/body:1, slide:5/body:1 → calculation calc-47fd7a4f707e30da — stale: something it rests on was corrected or withdrawn
+- template briefing_deck@1 — current
+- its memory graph node — stale: the shared memory graph marked it stale: something it rests on changed
+0 unbound citation(s); 1 stale or unreadable binding(s). It is not publishable as it stands.
+
+--- note.docx after the correction ---
+art-file-1d61644a669d47f9@1 cites 1 marker(s) and rests on 1 recorded dependenc(ies).
+- [C:calc-47fd7a4f707e30da] at p:7 → calculation calc-47fd7a4f707e30da — stale: something it rests on was corrected or withdrawn
+- template document_model@1 — current
+- its memory graph node — stale: the shared memory graph marked it stale: something it rests on changed
+0 unbound citation(s); 1 stale or unreadable binding(s). It is not publishable as it stands.
+
+--- calculation-checker after the correction ---
+Subagent calculation-checker ran as child 89723334-cbc6-4b76-816d-0c1b78260c99 (status: completed).
+
+Findings:
+- calc-47fd7a4f707e30da STALE: wall_loss = (t_min - t_meas) / t_min = 8.889 %
+- calc-47fd7a4f707e30da recomputed with the corrected input(s): calc-1115cce3871036cf = 12.22 %
+
+Uncertainty:
+- calc-47fd7a4f707e30da: An input's source has changed since this was calculated. Anything built on this figure is stale until it is recalculated from the current source.
+- calc-47fd7a4f707e30da input t_meas = 8.2 mm [M:mi-b1abaf96-1beb-407a-b6dc-bc41167ec405@1]: CHANGED: mi-b1abaf96-1beb-407a-b6dc-bc41167ec405 was corrected by mi-18238099-c41f-43e2-8d9c-dc7d883d57e8; the source now says 7.9 mm
+
+Detail:
+Read the task's shared memory at revision 17.
+Published mi-66d98335-4049-4db4-90b6-42a762d05b47 revision 1 at graph revision 18 (stale).
+Published mi-0015f2d3-ae07-468f-b157-d3692ad89d33 revision 1 at graph revision 19 (admitted).
+
+
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2983 filtered out; finished in 1.12s
+
