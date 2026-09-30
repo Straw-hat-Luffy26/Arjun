@@ -93,6 +93,10 @@ pub const fn is_side_effecting(tool: ToolName) -> bool {
             // must neither publish twice nor stack a second edit on the first.
             | ToolName::ArtifactRegisterVersion
             | ToolName::ArtifactEdit
+            // P09: a composed document and a patched section, each a new
+            // version a resumed run must not write twice.
+            | ToolName::DocumentCompose
+            | ToolName::DocumentPatchSection
     )
 }
 

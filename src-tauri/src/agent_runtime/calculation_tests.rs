@@ -67,6 +67,7 @@ impl World {
             retrieval: retrieval.clone(),
             // One store: what the parent computed is what the checker reads.
             calculation_store: store.clone(),
+            tools: Default::default(),
         });
         let profiles = load_profiles(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents")).profiles;
         let mut manager = SubagentManager::new(profiles.clone(), base.events.clone()).with_cancellations(cancellations);

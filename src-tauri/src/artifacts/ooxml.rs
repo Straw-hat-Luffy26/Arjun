@@ -69,6 +69,23 @@ pub fn write_parts(path: &Path, parts: &[(&str, String)]) -> Result<()> {
     Ok(())
 }
 
+/// The same package, as bytes in memory: for a writer whose output is
+/// registered as an immutable version rather than left at a path.
+pub fn package_bytes(parts: &[(&str, String)]) -> Result<Vec<u8>> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut out);
+        let options: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, body) in parts {
+            zip.start_file(*name, options)?;
+            zip.write_all(body.as_bytes())?;
+        }
+        zip.finish()?;
+    }
+    Ok(out.into_inner())
+}
+
 /// Reads one part out of an Office package, for checking a file after writing it.
 ///
 /// The read is bounded so a malicious package cannot exhaust memory by

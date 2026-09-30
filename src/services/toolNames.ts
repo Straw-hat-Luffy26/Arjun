@@ -78,6 +78,12 @@ export const CANONICAL_TOOL_NAMES = [
   'calculation.compare',
   'calculation.solve',
   'calculation.sensitivity',
+  // P09's Document Author tools.
+  'document.template_list',
+  'document.compose',
+  'document.patch_section',
+  'document.render_pages',
+  'artifact.validate_document',
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -181,6 +187,11 @@ const TOOL_LABELS: Readonly<Record<CanonicalToolName, string>> = {
   'calculation.compare': 'Comparing a value with a limit',
   'calculation.solve': 'Solving for an unknown',
   'calculation.sensitivity': 'Seeing how a result depends on its inputs',
+  'document.template_list': 'Listing the document templates',
+  'document.compose': 'Writing a Word document',
+  'document.patch_section': 'Rewriting one section of a document',
+  'document.render_pages': 'Laying out every page',
+  'artifact.validate_document': 'Checking a Word document',
 };
 
 /**

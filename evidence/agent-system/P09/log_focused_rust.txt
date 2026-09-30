@@ -1,0 +1,14 @@
+$ cargo test --lib artifacts::
+test result: ok. 336 passed; 0 failed; 1 ignored; 0 measured; 2675 filtered out; finished in 4.83s
+$ cargo test --lib agent_runtime::
+test agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring ... FAILED
+thread 'agent_runtime::tests::a_relative_path_that_climbs_out_is_still_refused_after_anchoring' (30099) panicked at src/agent_runtime/tests.rs:607:9:
+test result: FAILED. 829 passed; 1 failed; 0 ignored; 0 measured; 2182 filtered out; finished in 25.87s
+$ cargo test --lib subagents::
+test result: ok. 109 passed; 0 failed; 0 ignored; 0 measured; 2903 filtered out; finished in 16.30s
+$ cargo test --lib orchestrator::
+test result: ok. 222 passed; 0 failed; 0 ignored; 0 measured; 2790 filtered out; finished in 0.52s
+$ cargo test --lib calculation::
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 2933 filtered out; finished in 0.02s
+$ cargo test --lib agents::
+test result: ok. 150 passed; 0 failed; 0 ignored; 0 measured; 2862 filtered out; finished in 16.26s

@@ -1692,6 +1692,7 @@ fn p05_world(coordinator: &str) -> (Arc<RuntimeDeps>, tempfile::TempDir) {
             conversations: base.run_to_conversation.clone(),
         }),
         calculation_store: base.calculation_store.clone(),
+        tools: Default::default(),
         retrieval: base.retrieval.clone(),
     });
     let profiles = sarathi_lib::subagents::load_profiles(

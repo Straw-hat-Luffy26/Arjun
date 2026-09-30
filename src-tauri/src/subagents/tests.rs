@@ -187,6 +187,7 @@ fn every_shipped_profile_compiles() {
             "artifact-reviewer",
             "calculation-checker",
             "code-worker",
+            "document-author",
             "document-extractor",
             "knowledge-retriever",
         ]

@@ -517,7 +517,7 @@ pub(super) fn link_to_graph(
         revision: 1,
         kind: MemoryKind::ArtifactRef,
         agent_id: record.producer.agent.clone().unwrap_or_else(|| "arjun".into()),
-        scope: MemoryScope::Task { task_id: run_id.to_string() },
+        scope: MemoryScope::Task { task_id: crate::subagents::tool_port::task_of(run_id) },
         classification: classes[0],
         acl: acl_for(&classes, &session.user.id),
         creator_model_id: record.producer.model_id.clone(),
@@ -763,6 +763,14 @@ pub(super) fn manifest(deps: &Arc<RuntimeDeps>, call: &CallParams, session: &Ses
             "classification": record.classification,
         },
         "graphItem": record.graph_item_id,
+        // A document's sections by stable id, with what each rests on (P09).
+        "sections": deps
+            .conversation_artifacts
+            .sections(&session.user.id, &record.reference())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(_, lineage)| serde_json::from_str::<Value>(&lineage).ok())
+            .collect::<Vec<_>>(),
         "latestValidation": validation_json,
         "renders": render_json,
     });

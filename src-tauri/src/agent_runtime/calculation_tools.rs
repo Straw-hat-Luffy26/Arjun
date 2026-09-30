@@ -294,7 +294,7 @@ pub fn publish(
         revision: 1,
         kind: if record.status.has_result() { MemoryKind::ToolObservation } else { MemoryKind::OpenQuestion },
         agent_id: "arjun".into(),
-        scope: MemoryScope::Task { task_id: run_id.to_string() },
+        scope: MemoryScope::Task { task_id: crate::subagents::tool_port::task_of(run_id) },
         classification: classes[0],
         acl: super::artifact_tools::acl_for(&classes, owner),
         creator_model_id: None,

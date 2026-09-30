@@ -993,6 +993,14 @@ pub fn run() {
                     analyst: Some(analyst),
                     retrieval,
                     calculation_store,
+                    tools: {
+                        // Filled by `commands::agent::runtime` when the runtime
+                        // starts; empty until then, and a worker that needs it
+                        // says it is blocked.
+                        let slot: subagents::tool_port::ToolPortSlot = Default::default();
+                        app.manage(commands::agent::ToolPortState(StdArc::clone(&slot)));
+                        slot
+                    },
                 });
 
                 for worker in

@@ -38,7 +38,8 @@ prompts P00–P16. One ledger, updated at the end of each phase.
 | P06 | Document & Vision Analyst with Unlimited-OCR | **Complete for portable code and the production path with deterministic OCR transport**; every real-model read and the vision probe are the open target gate — see below |
 | P07 | Knowledge Retriever and local retrieval tools | **Complete for portable code and the production path, keyword retrieval measured and semantic retrieval through deterministic transport**; qualifying and measuring a real embedding model is the open target gate — see below |
 | P08 | Calculation Analyst & Checker and numerical tools | **Complete for portable code and the production path, fully deterministic**; formulation by a qualified model is the open gate (no model is qualified for it) — see below |
-| P09–P16 | — | Not started |
+| P09 | Document Author and Word authoring tools | **Complete for portable code and the production path, with real rendering on a Linux machine and no model**; authoring by a model (Qwen3.5 9B Q4), the independent model review (P10) and the render on the Windows target are open gates — see below |
+| P10–P16 | — | Not started |
 
 ---
 
@@ -1524,3 +1525,197 @@ and expected answers are the pack's; `log_known_answers.txt`):
 documents cite `[C:calc-…]` and `[E…]`, and P08's staleness reaches them. Then
 qualify a formulation model on the target, before routing any calculation
 formulation to one.
+
+---
+
+# P09 — The Document Author and Word authoring tools
+
+Worked on 2026-09-25 and 2026-09-30 on branch `claude/hopeful-brahmagupta-1eol9d`
+from HEAD `8d591c2` (P08), in a **Linux cloud container** (a fresh one on
+2026-09-30; the working tree carried over). No model runs anywhere in P09's
+evidence. The Document Author's model (Qwen3.5 9B Q4) is not present here; the
+production worker's no-model path is what ran, and it writes no business
+content of its own. LibreOffice 24.2.7.2 and PyMuPDF 1.28.2 *are* present, so
+every page in the evidence was laid out and rasterised for real.
+
+**P03 is not started.** Raw output: `evidence/agent-system/P09/` (index in its
+`README.md`).
+
+## Found before, or while, building it
+
+| # | Finding | Where | Now |
+|---|---|---|---|
+| 1 | **The model path's Word writer produced a four-part package**: content types, relationships, core properties and the body. No `styles.xml`, so the `Heading1`–`6` styles it referenced did not exist and Word drew every heading as Normal; no numbering (lists were typed indents), no header, footer, settings or page setup. | `artifacts/docx.rs::write_document_model` | `artifacts::authoring::write_docx`: a complete package — styles, numbering, settings, header, footer (with `PAGE`/`NUMPAGES` fields), core and app properties, A4 page setup. The older writer is left as it was for the paths that use it. |
+| 2 | **Nothing identified a section.** A section could be reached only by its heading's text or a paragraph locator, and `artifact.edit` changes text inside one run of one unit: there was no way to replace a section and keep the rest. | — | Every section is wrapped in a body-level bookmark `_sec_<id>`; `document.patch_section` replaces the bytes between the markers and proves everything else identical. |
+| 3 | The legacy approval-note writer marked no sections either, so a note from `artifact.create_approval_note` could not be patched. | `artifacts/docx.rs::document_xml` | It now writes a body-level bookmark per field, named by the field key. Its checks and its tests are unchanged. |
+| 4 | **P08's figure reader read citation markers as figures**: the digits in `[M:mi-82a…@1]` were "82 a" (82 Julian years), so every note citing a memory item failed its own figure check. Found by the first end-to-end run. | `calculation/check.rs::quantities_in` via the new checks | `authoring::figures_in` blanks every citation marker before reading figures. The P08 checker's own use is unchanged (it reads source text, which carries no markers). |
+| 5 | **A version a child registered was filed under the child's run as its task.** `link_to_graph` and the calculation publisher scope by the calling run, so a delegated producer's versions, records and open questions were invisible to the parent task's memory — the lineage stopped at the delegation. Found by the delegated end-to-end test. | `agent_runtime/{artifact_tools,calculation_tools}.rs` | A child run is adopted into its parent's task when it is opened (`subagents::tool_port::adopt`) and released when it closes; publication scopes by `task_of(run)`. |
+| 6 | Delegation refused any role other than the retriever when the call named no documents, files, expressions or artifacts. The author's input is the task's memory. | `agent_runtime/delegation.rs` | `document-author` is allowed to start with no named inputs. |
+| 7 | **The reviewer the review step dispatches only checks that a file exists.** Given an artifact id (`art-…`), it looks for a workspace file of that name, finds none and reports uncertainty; it never reads the bytes. So `task.request_review`'s independent line cannot pass for any P09 document. | `subagents/worker.rs::review` | Left as it is: replacing it is P10. P09 does not manufacture a verdict. |
+| 8 | `artifact.verify_docx` (legacy `validate_artifact`) is a reopen plus a template check for a file this run produced, and an existence-and-size check otherwise. It renders nothing, checks no citation and decides nothing. Its answer already says so. | `agent_runtime/mod.rs::validate` | Unchanged; recorded for P10, which must not mistake it for a review. |
+| 9 | Two P09 mistakes the repository's own gates caught: the OOXML namespace URIs declared as Rust constants read as unapproved hosts (`check:egress`), and the new `fc-list` spawn was not in the deployment gate's ledger (`check:deployment`). | P09 code | Namespaces are written in their `xmlns` attributes, where the gate exempts them; `fc-list` is in the reviewed ledger as optional (absent on Windows, where font versions are reported unrecorded). |
+
+## Implemented
+
+| Area | What | Files |
+|---|---|---|
+| **Specification and templates** | `DocumentSpec` (audience, template id and version, ordered stable section ids, blocks, citations, calculation records, mandatory fields, output name). `inspection_approval_note@1` and `authored_document@1`, and the legacy `approval_note@1` described in the same terms for checking and patching. The template catalogue lists both new templates, with each section's citation rule inside the definition hash. | `artifacts/authoring.rs` (new), `artifacts/templates.rs`, `artifacts/validation.rs` |
+| **Compose** | Every problem found before anything is written: fields, sections (order, duplicates, ids, generated, empty), gaps, bounds, placeholders, the document model's structure, and per unit — every claim cites where the section requires it, a calculation line cites a record, every marker resolves to something current, every figure is stated by what it cites. | `artifacts/authoring.rs::{compose, check_section}` |
+| **The package** | The complete Word package described in contract map §13, with a DRAFT banner, a DRAFT footer on every page, generated references and a provenance section carrying the visible stamp. | `artifacts/authoring.rs::write_docx`, `artifacts/ooxml.rs::package_bytes` |
+| **Section patch** | Stale-write refusal, unpreservable-feature refusal, tracked-revision refusal, the raw-copy splice, the byte-identity proof, the list dialect of the target document. | `artifacts/section_patch.rs` (new), `artifacts/edit.rs::rewrite_parts` (factored out) |
+| **Document checks** | Format and render checks, reported apart, as contract map §13 lists. Per-page fonts and off-page text from the rasteriser; each font's installed file and version from `fc-list`. | `artifacts/document_checks.rs` (new), `artifacts/render.rs`, `sidecars/document_sidecar/render_pages.py` |
+| **Lineage** | Section lineage per version in the conversation store, shown by `artifact.manifest`; gaps as open questions `PartOf` the version's graph node, on the call's receipt. | `artifacts/conversation_store.rs`, `agent_runtime/{document_tools,artifact_tools}.rs` |
+| **Tools** | `document.template_list`, `document.compose`, `document.patch_section`, `document.render_pages`, `artifact.validate_document`, wired through every P01 layer: enum, spec, contract (agent path), policy class, runner refusal, idempotency, plan (where a Word deliverable is produced or worked on; the four before the P04 family, the check inside it), dispatcher, TS catalogue, names, conformance, budget and UI labels. `tool-contract.json` regenerated. `document.compose` names the version it registered. `task.request_review` holds a Word version to the document checks with every page rendered. | `orchestrator/{tools,contract,runner,grammar}.rs`, `agent_runtime/{mod,planning,tool_policy,delegation}.rs`, `agent_runtime/events/idempotency.rs`, `agent-runtime/src/*`, `src/services/toolNames.ts` |
+| **The worker's gateway** | `ToolPort`: a worker's calls go through `authorize` → `execute` under a plan narrowed to its granted tools, bound to the parent's conversation, adopted into the parent's task, each a receipt. Late-bound into `WorkerServices.tools`, filled when the runtime starts. | `subagents/tool_port.rs` (new), `agent_runtime/tool_port.rs` (new), `subagents/worker.rs`, `lib.rs`, `commands/agent.rs` |
+| **The agent** | `document-author` 1.0.0, performable; the no-model path, the repair path, the model path's conversation binding; a partial result names each gap. | `agents/document-author.md` (new), `subagents/worker.rs`, `subagents/worker/author.rs` (new) |
+
+## Contract decisions
+
+1. **Checked before written.** A specification is refused with every problem
+   at once, and nothing is written. The refusal says how to fix what the
+   evidence can fix and to declare the rest.
+2. **A gap is not a refusal and not content.** A section or field the
+   evidence cannot supply is declared (`gap`, or `?` for a field). It is
+   written visibly, returned as a clarification request and published as an
+   open question. A document with a gap is written as an incomplete draft and
+   is never accepted.
+3. **A figure is held to what its sentence cites.** The same amount, in any
+   convertible unit, must be stated by the cited passage, memory item or
+   record. That is how an unsupported claim with a plausible number is caught.
+4. **A section is a stable id, not a heading.** Patching one needs the exact
+   version and its full hash, and the newest version. Anything the editor
+   cannot carry through a rewrite is a refusal before writing, not a loss.
+5. **Byte-identical outside the section, and proven.** Every other part is
+   copied raw, and the written package is re-read and compared before it is
+   kept. Citations that change rewrite the generated references in a second,
+   reported splice.
+6. **Format and render are separate, and unavailable is not passed.** A
+   version is accepted only when every blocking and major check ran and
+   passed.
+7. **Draft under the current policy.** An authored document says DRAFT on
+   every page. The approval check fails a document that claims approval. The
+   author holds no publishing tool; `final` still needs an accepted
+   validation and a person.
+8. **Workers use the gateway.** A worker reaches a tool only through the
+   runtime's own authorisation, under its narrowed plan, on its own run, with
+   receipts, and its outputs belong to its parent's task.
+9. **No model, no content.** The no-model author writes only what the task's
+   memory holds, each item cited at its revision; a recipient nobody named and
+   a recommendation nobody decided are gaps.
+10. **Order and budget.** The four document tools follow the page tools and
+    precede the P04 family, and `artifact.validate_document` sits in that
+    family. The model-facing block schemas are loose (`blocks` is a list); the
+    handler checks them and names every problem. That keeps the catalogue at
+    96 tokens per tool or less.
+
+## Tests
+
+| What the prompt names | Test (`agent_runtime::document_tests` unless noted) |
+|---|---|
+| inspection evidence → cited approval note | `inspection_evidence_becomes_a_cited_editable_approval_note_that_reopens_and_renders`: a UT reading, the SOP minimum, a recipient and a decision in memory; the wall loss computed by the engine; `document.compose` through `authorize` → `execute`; the package reopened (styles, numbering, header, footer, settings), sections at their ids, dependencies bound, section lineage in the manifest, graph edges (`DerivedFrom` the facts, `Cites` the record), and `artifact.validate_document` passing every check with every page rendered. It stays a candidate. |
+| missing fields; unsupported claim | `missing_fields_and_unsupported_claims_are_refused_or_reported_and_never_filled`: a missing mandatory field and section refused by name; an uncited claim and a figure no source states refused; nothing written; then declared gaps → a visible note, two open questions, and not accepted. Also `artifacts::authoring::tests`. |
+| long table | `a_long_table_repeats_its_header_on_every_page_it_runs_onto`: 60 cited rows run over four pages; `document.long_tables` and `render.table_headers` pass on the real pages. Also `artifacts::document_checks::tests::a_long_note_renders_…`: the header's repeat removed, and the render check fails. |
+| stale patch; one-section edit; unrelated content preserved | `a_patch_needs_the_exact_version_and_hash_and_changes_one_section_and_nothing_else`: a wrong hash, an unversioned reference and an old version are each refused; the patch changes the recommendation, every other part is byte-identical, every other section's text is unchanged, the references follow the new citation, the diff agrees, the manifest shows derivation and lineage, and v2's pages render. Also `artifacts::section_patch::tests` (pictures, tracked changes, unknown and provenance sections refused; a legacy note patched by field key). |
+| a correction arriving during generation; parent delegation through the production runtime; actual graph lineage | `a_delegated_author_writes_the_note_and_repairs_it_after_a_correction`: `agent.delegate` (a person approves: the role writes) → the production `document-author` composes v1 through its tool port under its narrowed plan (its own calls, with receipts) → a person corrects the reading → v1's check names the stale reading and the stale record → the coordinator recomputes from the correction → a repair job patches exactly the findings (v2) and the calculation (v3) → v3 validates; its graph node is `DerivedFrom` the previous version and rests on the correction. |
+| gaps from delegation | `a_delegated_author_reports_what_the_memory_lacks_as_gaps_and_a_partial_result`: no recipient and no decision in memory → the job is **partial**, naming both. |
+| the author cannot approve its own note | `the_author_cannot_register_its_own_note_as_final`: the profile denies `artifact.register_version`, and the gateway refuses it on the author's narrowed plan. |
+| the compatible path | `a_compatible_request_goes_through_the_approval_note_writer_and_is_patchable_by_field_key`. |
+| the engine | `artifacts::{authoring, section_patch, document_checks}::tests`, `subagents::worker::author::tests` |
+
+**Seen failing** (`log_mutation.txt`): twelve mutations, each applied, the named
+tests run and the file restored. The first run caught ten and **missed two**,
+and both misses were weak tests:
+
+- M9, a page without the table header passing the render check: the render
+  test removed the header marking entirely, so a different branch caught it.
+  `artifacts::document_checks::tests::a_marked_header_missing_from_a_continuation_page_is_found`
+  now exercises that branch.
+- M12, the author writing a recommendation nobody decided: the partial-result
+  test looked only for the word "recommendation" in the job result. It now
+  asserts the job's `missing` list and the document's own gap note.
+
+Re-run after strengthening: both caught, **12 of 12**. The other ten were: an
+uncited claim allowed, any figure taken as supported, a corrected source cited
+as standing, a picture rewritten, a tracked document rewritten, a patch
+ignoring its hash, a patch of an old version, a long table without a
+repeating header, a gap written without saying information is needed, and a
+banner claiming approval.
+
+## Measured
+
+**P09-OBS-1: pages.** LibreOffice 24.2.7.2 and PyMuPDF 1.28.2 laid out every
+authored document in the evidence. The approval note is two pages. The 60-row
+survey is four, with the table's header repeated on every page it runs onto and
+the text after the page break starting on a later page.
+Every page drew with Liberation Sans (regular, bold, italic), embedded, from
+`/usr/share/fonts/truetype/liberation/LiberationSans-*.ttf` at font version
+2.100: the documents ask for Arial, and this machine substitutes. The Windows
+target has Arial; its render is the open target gate.
+
+**P09-OBS-2: the catalogue at 65 tools** is 6,212 estimated tokens at
+`minimal` (95.6 per tool, under the 96 floor). The grammar preamble is 1,532
+bytes; its bound moved from 1,500 to 1,600 with the measurement recorded.
+
+| Window | What the fitter drops |
+|---|---|
+| 8k | the P09 check, the artifact family, the four document tools, the page tools, the P08 families, then P07's four; `create_approval_note` and `evaluate_with_units` stay |
+| 10,240 | the P09 check, the artifact family, the four document tools and the last two page tools |
+| 12,288 | the P09 check and six artifact tools |
+| 14,336 | nothing |
+
+## Checks run
+
+| Check | Result |
+|---|---|
+| `cargo test --lib --no-fail-fast` | **3,006 passed, 2 failed**, 3 ignored: the two Windows-path tests that fail at `20061fc`. `log_lib_full.txt` |
+| focused suites (`log_focused_rust.txt`) | artifacts 336 (1 ignored), agent_runtime 829 (and the one Windows-path failure), subagents 109, orchestrator 222, calculation 79, agents 150; P09 end to end 8 |
+| `npm run test:integration` | **65 passed**, 2 ignored (as at P08) |
+| `npm run runtime:typecheck`, `npm run runtime:test` | pass; **2,422** tests (131 files) |
+| `npx tsc --noEmit`, `npm run test:ui`, `npm run build` | pass; 618 UI tests. `build` first stopped at the egress gate (finding 9), and passes after the fix |
+| `runtime:build`, `check:bundle`, `check:bundle:self`, `check:offline`, `check:no-lora`, `check:ipc`, `check:reachable`, `check:targets`, `check:whitespace` | pass (no new IPC command) |
+| `check:egress`, `check:deployment` | failed on finding 9; pass after the fix (the re-run is in `log_gates.txt`) |
+| `check:lint-budget` | **fails, 53 > 40, pre-existing**: unchanged from P06–P08 |
+| `check:generated` | compares against the committed SBOM; the runtime bundle's hash changed with the catalogue, and the regenerated SBOM is committed with this phase |
+| `node scripts/agent-baseline.mjs` | 39 cases: 8 executed, 6 passed, 2 failed (P04's CRLF hashes, as at P08), 31 blocked. The four document cases (`art-docx-02`…`04`, `art-evidence-03`) now name P10's model run as their blocker, with the deterministic half's command. A first run reported the driver group as failed: the container's disk allowance was full and the driver target could not link; after clearing the incremental build cache it runs as before |
+
+## Unverified, open or deliberately left
+
+| What | State | Owner / command |
+|---|---|---|
+| **Authoring by a model** | Not run: no model here. With a runtime and a routed model the author runs as a model loop, bound to the parent's conversation, and its versions are collected from its own calls. Qwen3.5 9B Q4 is registered on the target but not qualified for document synthesis. | A document-synthesis qualification set on the target, then a live run |
+| **The independent review** | Not manufactured. `task.request_review` holds a Word candidate to the document checks with every page rendered, and dispatches the P05 `artifact-reviewer`, which (finding 7) cannot pass a P09 document. | P10 |
+| **Rendering on the Windows target** | LibreOffice is not provisioned there (P04's open gate), so `render.*` checks will be *unavailable* there, and a version is then not accepted — as designed. | P04/P16 provisioning, then `cargo test --lib agent_runtime::document_tests -- --nocapture` there |
+| Arial on this machine | Substituted by Liberation Sans (metric-compatible). Recorded per render; a layout difference on the target is possible and is what the target render will show. | — |
+| Slides and workbooks | Not authored here: P12/P13. | — |
+| A documents UI | None beyond the existing artifact preview; versions, lineage and checks are reached through the tools and the manifest. | P14 |
+| Windows target, installed app | Not run there; not rebuilt or redeployed from here. | P16 |
+
+## P09 close-out
+
+- **Implemented**:
+  - a structured specification;
+  - two authoring templates and the legacy one described alike;
+  - compose checked before writing;
+  - a complete Word package with stable section ids;
+  - exact-version section patches, proven byte-identical elsewhere;
+  - format and render checks reported apart, with per-page fonts and font
+    versions;
+  - section lineage;
+  - gaps as visible notes, clarification requests and open questions.
+- **Wired**:
+  - five tools through every P01 layer;
+  - the `document-author` agent through the production delegation path;
+  - a worker tool port through the runtime's own gateway;
+  - adoption of a child's outputs into its parent's task;
+  - `task.request_review` on the document checks.
+- **Tested**: every case the prompt names, through the production runtime,
+  with real pages, and mutation-checked.
+- **Unverified or blocked**:
+  - authoring by a qualified model;
+  - the independent model review (P10);
+  - rendering on the Windows target.
+- **Remaining**: nothing else in P09's portable scope.
+
+**Exact next step:** P10, the Deliverable Reviewer. It replaces the existence
+check (finding 7) with format-aware, render, citation, calculation and test
+review of exact versions, and records a typed verdict the backend verifies.

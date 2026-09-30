@@ -1,0 +1,25 @@
+P09 mutation check: each mutation applied, the named tests run, the file restored.
+
+M1 a claim in a section that must cite may cite nothing [src/artifacts/authoring.rs]: CAUGHT — agent_runtime::document_tests::missing_fields_and_unsupported_claims_are_refused_or_reported_and_never_filled 
+M2 a figure is taken as supported whatever it cites [src/artifacts/authoring.rs]: CAUGHT — agent_runtime::document_tests::missing_fields_and_unsupported_claims_are_refused_or_reported_and_never_filled 
+M3 a corrected source is cited as though it stood [src/artifacts/authoring.rs]: CAUGHT — artifacts::authoring::tests::a_corrected_source_and_an_unbound_marker_are_refused 
+M4 a section holding a picture is rewritten anyway [src/artifacts/section_patch.rs]: CAUGHT — artifacts::section_patch::tests::what_the_editor_cannot_carry_is_refused_before_writing 
+M5 a document that tracks revisions is rewritten silently [src/artifacts/section_patch.rs]: CAUGHT — artifacts::section_patch::tests::a_tracked_document_an_unknown_section_and_provenance_are_refused 
+M6 a patch ignores the hash it was given [src/agent_runtime/document_tools.rs]: CAUGHT — agent_runtime::document_tests::a_patch_needs_the_exact_version_and_hash_and_changes_one_section_and_nothing_else 
+M7 a patch of an old version is accepted [src/agent_runtime/document_tools.rs]: CAUGHT — agent_runtime::document_tests::a_patch_needs_the_exact_version_and_hash_and_changes_one_section_and_nothing_else 
+M8 a long table without a repeating header passes [src/artifacts/document_checks.rs]: CAUGHT — artifacts::document_checks::tests::an_uncited_claim_a_gap_and_an_unmarked_long_table_are_found 
+M9 a page without the table header passes the render check [src/artifacts/document_checks.rs]: MISSED — all selected tests passed
+M10 a gap is written without saying information is needed [src/artifacts/authoring.rs]: CAUGHT — agent_runtime::document_tests::missing_fields_and_unsupported_claims_are_refused_or_reported_and_never_filled 
+M11 the draft banner claims approval [src/artifacts/authoring.rs]: CAUGHT — artifacts::document_checks::tests::a_sound_note_passes_its_format_checks_and_leaves_resolution_unavailable 
+M12 the author writes a recommendation nobody decided [src/subagents/worker/author.rs]: MISSED — all selected tests passed
+
+Result of the first run: 10 of 12 caught; M9 and M12 MISSED.
+- M9 was missed because the render test removed the header marking entirely, so the 'no header row' branch caught it and the 'header not repeated on a page' branch was never exercised. Added artifacts::document_checks::tests::a_marked_header_missing_from_a_continuation_page_is_found.
+- M12 was missed because the partial-result test only looked for the word 'recommendation' anywhere in the job result, which a fabricated recommendation also satisfies. The test now asserts the job's missing list names the recommendation and the document's recommendation section is a stated gap.
+
+Second run, M9 and M12 only, after strengthening the tests:
+
+M9 a page without the table header passes the render check [src/artifacts/document_checks.rs]: CAUGHT — artifacts::document_checks::tests::a_marked_header_missing_from_a_continuation_page_is_found 
+M12 the author writes a recommendation nobody decided [src/subagents/worker/author.rs]: CAUGHT — agent_runtime::document_tests::a_delegated_author_reports_what_the_memory_lacks_as_gaps_and_a_partial_result 
+
+Final: 12 of 12 caught.

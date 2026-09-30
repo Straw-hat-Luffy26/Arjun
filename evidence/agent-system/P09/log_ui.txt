@@ -1,0 +1,99 @@
+$ npx tsc --noEmit
+EXIT 0
+$ npm run test:ui
+
+> arjun@0.2.0 test:ui
+> tsc -p tsconfig.test.json && node agent-runtime/node_modules/vitest/vitest.mjs run --config vitest.config.mjs
+
+
+ RUN  v3.2.7 /home/user/Arjun
+
+ ✓ src/components/graph/simulation.test.ts (19 tests) 81ms
+ ✓ src/components/graph/labelGeometry.test.ts (22 tests) 157ms
+ ✓ src/contexts/__tests__/RunReducer.test.ts (26 tests) 255ms
+ ✓ src/components/graph/memoryModel.test.ts (34 tests) 34ms
+ ✓ src/components/chat/CodeBlock.test.ts (16 tests) 38ms
+ ✓ src/components/run/context-ledger.test.ts (27 tests) 30ms
+ ✓ src/components/chat/mermaidTheme.test.ts (15 tests) 15ms
+ ✓ src/utils/relativeTime.test.ts (7 tests) 24ms
+ ✓ src/services/runOutcome.test.ts (42 tests) 32ms
+ ✓ src/components/run/recovery.test.ts (39 tests) 19ms
+ ✓ src/components/chat/runProgress.test.ts (33 tests) 22ms
+ ✓ src/services/artifactKind.test.ts (7 tests) 10ms
+ ✓ src/components/chat/mermaidDiagram.test.ts (21 tests) 9ms
+ ✓ src/contexts/activeRun.test.ts (19 tests) 12ms
+ ✓ src/components/chat/markdownFence.test.ts (11 tests) 12ms
+ ✓ src/components/chat/notebookScope.test.ts (30 tests) 8ms
+ ✓ src/components/chat/widgetDocument.test.ts (16 tests) 7ms
+ ✓ src/components/graph/typingOutcome.test.ts (12 tests) 9ms
+ ✓ src/contexts/conversationStartup.test.ts (13 tests) 14ms
+ ✓ src/components/run/context-entities.test.ts (25 tests) 9ms
+ ✓ src/components/chat/assistantFooter.test.ts (8 tests) 10ms
+ ✓ src/services/artifactPreview.test.ts (10 tests) 8ms
+ ✓ src/components/chat/composerStop.test.ts (6 tests) 11ms
+ ✓ src/components/graph/agentColor.test.ts (13 tests) 7ms
+ ✓ src/components/chat/mermaidParse.test.ts (9 tests) 9ms
+ ✓ src/components/chat/notebookHandoff.test.ts (9 tests) 5ms
+ ✓ src/services/ocr.service.test.ts (11 tests) 14ms
+ ✓ src/components/notebook/addOutcomes.test.ts (8 tests) 4ms
+ ✓ src/components/graph/memoryFeed.test.ts (18 tests) 10ms
+ ✓ src/components/graph/flow.test.ts (8 tests) 5ms
+ ✓ src/components/chat/inspectorStop.test.ts (7 tests) 9ms
+ ✓ src/contexts/__tests__/runIdPublication.test.ts (6 tests) 6ms
+ ✓ src/components/run/MilestoneGate.test.ts (2 tests) 5ms
+ ✓ src/contexts/PermissionsContext.test.ts (6 tests) 11ms
+ ✓ src/services/reading.test.ts (13 tests) 7ms
+ ✓ src/components/chat/useTokenMetrics.test.ts (7 tests) 4ms
+ ✓ src/components/chat/TaskPanel.test.ts (6 tests) 6ms
+ ✓ src/components/chat/parseThinking.test.ts (9 tests) 7ms
+ ✓ src/pages/auditNetwork.test.ts (9 tests) 5ms
+ ✓ src/components/graph/claimLabel.test.ts (9 tests) 5ms
+ ✓ src/components/graph/edgeLabel.test.ts (7 tests) 3ms
+ ✓ src/contexts/__tests__/ConversationContext.test.ts (2 tests) 4ms
+ ✓ src/components/graph/layout.test.ts (1 test) 3ms
+
+ Test Files  43 passed (43)
+      Tests  618 passed (618)
+   Start at  12:46:44
+   Duration  5.47s (transform 1.21s, setup 0ms, collect 2.58s, tests 959ms, environment 13ms, prepare 3.28s)
+
+EXIT 0
+$ npm run build
+
+> arjun@0.2.0 build
+> npm run check:egress && npm run check:no-lora && tsc && vite build
+
+
+> arjun@0.2.0 check:egress
+> node scripts/check-egress.mjs
+
+egress gate: FAIL — 2 finding(s)
+
+  src-tauri/src/artifacts/authoring.rs:822
+    [unapproved host] schemas.openxmlformats.org is not on the allowlist in scripts/check-egress.mjs
+
+  src-tauri/src/artifacts/authoring.rs:823
+    [unapproved host] schemas.openxmlformats.org is not on the allowlist in scripts/check-egress.mjs
+
+Route the call through src-tauri/src/sovereignty/broker.rs, add the host to
+ALLOWED_HOSTS with a reason, or annotate the line `arjun-egress-ok: <reason>`.
+EXIT 1
+
+=== Re-run of npm run build after the egress fix ===
+$ npm run build
+dist/assets/sequenceDiagram-WJ2MYXX4-D4U0feDP.js        116.96 kB │ gzip:  31.14 kB
+dist/assets/architectureDiagram-5GKGNRK7--StMH9Hi.js    151.83 kB │ gzip:  43.15 kB
+dist/assets/katex-HP8lGamR.js                           261.31 kB │ gzip:  77.57 kB
+dist/assets/pdf-YYBQA8p7.js                             437.74 kB │ gzip: 131.10 kB
+dist/assets/cytoscape.esm-BB4DxJjf.js                   443.04 kB │ gzip: 141.98 kB
+dist/assets/mermaid.core-ChN4sBY8.js                    682.78 kB │ gzip: 169.02 kB
+dist/assets/cynefin-OW5HDTMX-CVPr5FMe.js                687.91 kB │ gzip: 154.14 kB
+dist/assets/index-BqCdteEz.js                           733.80 kB │ gzip: 230.58 kB
+dist/assets/GradientOrb-a9v86d7O.js                     897.78 kB │ gzip: 242.37 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 21.13s
+EXIT 0

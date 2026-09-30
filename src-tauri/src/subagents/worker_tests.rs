@@ -118,6 +118,7 @@ fn services(
         cancellations,
         analyst: None,
         calculation_store: Arc::new(crate::calculation::CalculationStore::in_memory().expect("a calculation store")),
+        tools: Default::default(),
         retrieval: Arc::new(crate::knowledge::service::RetrievalService::lexical_only(
             index_for_retrieval,
             "no embedding model in these tests",

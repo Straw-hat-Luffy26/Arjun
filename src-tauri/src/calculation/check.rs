@@ -139,7 +139,7 @@ impl CheckReport {
 }
 
 /// Numbers with their units in a source's text: `9.0 mm`, `8.20mm`, `0.354 in`.
-fn quantities_in(text: &str) -> Vec<(String, String)> {
+pub fn quantities_in(text: &str) -> Vec<(String, String)> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -199,6 +199,22 @@ fn states(text: &str, input: &CalcInput) -> bool {
             _ => false,
         }
     })
+}
+
+/// Whether `text` states the figure `number unit` (the same amount, in any
+/// unit that converts to it). Used by the document author (P09) to hold a
+/// figure in a sentence to the passage or calculation the sentence cites.
+pub fn text_states(text: &str, number: &str, unit: &str) -> bool {
+    let input = CalcInput {
+        id: "figure".into(),
+        value: Some(number.to_string()),
+        unit: unit.to_string(),
+        source: InputSource::Requester,
+        standard: None,
+        uncertainty: None,
+        assumptions: Vec::new(),
+    };
+    input.quantity().is_ok() && states(text, &input)
 }
 
 /// The value of the same kind the replacement text now states, if exactly

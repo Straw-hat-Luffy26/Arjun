@@ -94,6 +94,9 @@ pub fn catalogue() -> Vec<TemplateInfo> {
             vec!["title".into(), "sections".into()],
             vec!["classification".into()],
         ),
+        // P09: the Document Author's templates, with stable section ids.
+        authoring(&super::authoring::INSPECTION_APPROVAL_NOTE),
+        authoring(&super::authoring::AUTHORED_DOCUMENT),
         definition(
             "briefing_deck",
             "1",
@@ -132,6 +135,44 @@ pub fn catalogue() -> Vec<TemplateInfo> {
     ]
 }
 
+fn authoring(template: &super::authoring::AuthoringTemplate) -> TemplateInfo {
+    let sections = |required: bool| {
+        template
+            .sections
+            .iter()
+            .filter(|s| s.required == required)
+            .map(|s| {
+                // The rules are part of the definition, so part of its hash.
+                let rule = match (s.generated, s.citations) {
+                    (true, _) => " (generated from the citations)",
+                    (false, super::authoring::CitationRule::Required) => " (every claim cites)",
+                    (false, super::authoring::CitationRule::Calculation) => " (every line cites a calculation record)",
+                    (false, super::authoring::CitationRule::Optional) => "",
+                };
+                format!("section:{}{rule}", s.id)
+            })
+            .collect::<Vec<_>>()
+    };
+    let fields = |required: bool| template.fields.iter().filter(|f| f.required == required).map(|f| format!("field:{}", f.key)).collect::<Vec<_>>();
+    let mut required = fields(true);
+    required.extend(sections(true));
+    let mut optional = fields(false);
+    optional.extend(sections(false));
+    if template.free_sections {
+        optional.push("any section id".into());
+    }
+    definition(
+        template.id,
+        template.version,
+        DetectedFormat::Docx,
+        "document.compose",
+        if template.free_sections { "structure" } else { "template" },
+        template.description,
+        required,
+        optional,
+    )
+}
+
 /// One template by id.
 pub fn find(id: &str) -> Option<TemplateInfo> {
     catalogue().into_iter().find(|t| t.id == id)
@@ -144,6 +185,8 @@ pub fn used_by(tool: crate::orchestrator::tools::ToolName, arguments: &serde_jso
         ToolName::CreateDocx if arguments.get("sections").is_some() => "document_model",
         ToolName::CreateDocx => arguments.get("template").and_then(|t| t.as_str()).unwrap_or("approval_note"),
         ToolName::CreatePptx => "briefing_deck",
+        // P09: `inspection_approval_note@1` names the definition by id.
+        ToolName::DocumentCompose => arguments.get("template").and_then(|t| t.as_str()).map(|t| t.split('@').next().unwrap_or(t))?,
         ToolName::CreateXlsx if arguments.get("sheets").is_some() => "workbook_model",
         ToolName::CreateXlsx => "calculation_workbook",
         _ => return None,

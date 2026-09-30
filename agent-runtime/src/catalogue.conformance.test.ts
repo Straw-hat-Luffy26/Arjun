@@ -100,6 +100,11 @@ const RUST_WIRE_NAMES: ReadonlySet<string> = new Set([
   "calculation.compare",
   "calculation.solve",
   "calculation.sensitivity",
+  "document.template_list",
+  "document.compose",
+  "document.patch_section",
+  "document.render_pages",
+  "artifact.validate_document",
 ]);
 
 /**
@@ -214,6 +219,11 @@ const EXPECTED_READ_ONLY: ReadonlyMap<string, boolean> = new Map([
   ["calculation.compare", true],
   ["calculation.solve", true],
   ["calculation.sensitivity", true],
+  ["document.template_list", true],
+  ["document.compose", false],
+  ["document.patch_section", false],
+  ["document.render_pages", true],
+  ["artifact.validate_document", true],
 ]);
 
 describe("the shared canonicalisation layer agrees with this file's tables", () => {

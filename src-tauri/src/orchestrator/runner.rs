@@ -1307,6 +1307,17 @@ impl ToolRunner for LocalToolRunner<'_> {
                  and the run's memory.",
                 tool.as_str()
             )),
+            // P09: each resolves citations against the run's evidence and
+            // reads or registers versions in the owner's conversation store.
+            ToolName::DocumentTemplateList
+            | ToolName::DocumentCompose
+            | ToolName::DocumentPatchSection
+            | ToolName::DocumentRenderPages
+            | ToolName::ArtifactValidateDocument => Err(format!(
+                "{} is answered on the agent path, which holds the run's evidence and the \
+                 conversation's artifact store.",
+                tool.as_str()
+            )),
             ToolName::SearchDocuments => self.search(call),
             ToolName::LoadMoreEvidence => self.load_more_evidence(call),
             ToolName::MediaExtractFindings => self.extract_findings(call),

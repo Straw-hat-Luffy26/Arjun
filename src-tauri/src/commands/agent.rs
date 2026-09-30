@@ -785,6 +785,9 @@ pub struct RetrievalState(pub Arc<crate::knowledge::service::RetrievalService>);
 /// runtime's calculation tools, the checker worker and the artifact tools.
 pub struct CalculationStoreState(pub Arc<crate::calculation::CalculationStore>);
 
+/// The slot a worker's tool port is filled into when the runtime starts (P09).
+pub struct ToolPortState(pub crate::subagents::tool_port::ToolPortSlot);
+
 /// The conversation artifact store, as Tauri manages it.
 pub struct ConversationArtifactsState(
     pub Arc<crate::artifacts::conversation_store::ConversationArtifacts>,
@@ -922,6 +925,14 @@ fn runtime(
         // one sequence of what happened rather than two interleaved by luck.
         emit: emit.clone(),
     });
+
+    // Workers that write or check a deliverable call tools through the same
+    // gateway, under their own narrowed plans (P09).
+    if let Some(port) = tauri::Manager::try_state::<ToolPortState>(app) {
+        if let Ok(mut slot) = port.0.write() {
+            *slot = Some(Arc::new(crate::agent_runtime::tool_port::RuntimeToolPort::new(&deps)));
+        }
+    }
 
     let started =
         AgentRuntime::spawn(deps, emit, bundle_path(app)).map_err(|error| error.to_string())?;

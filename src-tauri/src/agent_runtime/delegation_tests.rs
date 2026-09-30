@@ -159,6 +159,7 @@ impl World {
                 conversations: base.run_to_conversation.clone(),
             }),
             calculation_store: base.calculation_store.clone(),
+            tools: Default::default(),
             retrieval: base.retrieval.clone(),
         });
         let profiles = load_profiles(&profiles_dir()).profiles;

@@ -242,7 +242,27 @@ fn edit_package(bytes: &[u8], format: DetectedFormat, edits: &[Edit]) -> Result<
         rewritten.push((part.clone(), xml));
     }
 
-    // Everything but the rewritten parts is copied raw.
+    let (bytes, untouched) = rewrite_parts(&mut archive, &rewritten)?;
+    applied.sort_by(|a, b| a.locator.cmp(&b.locator));
+    Ok(EditOutcome {
+        bytes,
+        applied,
+        changed_parts: rewritten.into_iter().map(|(part, _)| part).collect(),
+        untouched_parts: untouched,
+        notes,
+    })
+}
+
+/// Writes the package again with `rewritten` parts replaced and every other
+/// entry copied **raw** — compressed bytes, CRC and header untouched — in the
+/// original order. Returns the bytes and how many entries were copied.
+///
+/// Shared by the targeted edit and the section patch (P09): both change one
+/// part and must leave the other nine hundred exactly as they were.
+pub fn rewrite_parts<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    rewritten: &[(String, String)],
+) -> Result<(Vec<u8>, usize), String> {
     let mut out = Cursor::new(Vec::new());
     let mut untouched = 0usize;
     {
@@ -266,14 +286,7 @@ fn edit_package(bytes: &[u8], format: DetectedFormat, edits: &[Edit]) -> Result<
         }
         writer.finish().map_err(|e| format!("the package could not be finished: {e}"))?;
     }
-    applied.sort_by(|a, b| a.locator.cmp(&b.locator));
-    Ok(EditOutcome {
-        bytes: out.into_inner(),
-        applied,
-        changed_parts: rewritten.into_iter().map(|(part, _)| part).collect(),
-        untouched_parts: untouched,
-        notes,
-    })
+    Ok((out.into_inner(), untouched))
 }
 
 fn escape_text(text: &str) -> String {

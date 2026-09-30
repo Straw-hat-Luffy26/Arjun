@@ -1049,6 +1049,49 @@
       "timeoutSeconds": 120
     },
     {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::document_tools::validate_document",
+      "maxResponseBytes": 24576,
+      "name": "artifact.validate_document",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "text",
+          "name": "render"
+        }
+      ],
+      "output": "text",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
+    },
+    {
       "aliases": [
         "validate_artifact"
       ],
@@ -1315,6 +1358,61 @@
     {
       "aliases": [],
       "approvalClass": "automatic",
+      "cancellation": "abandonWaitWithIntent",
+      "effect": "side_effecting",
+      "handler": "agent_runtime::document_tools::compose, then the conversation store, section lineage and shared memory",
+      "maxResponseBytes": 16384,
+      "name": "document.compose",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "object",
+          "name": "fields"
+        }
+      ],
+      "output": "artifact",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "template"
+        },
+        {
+          "kind": "text",
+          "name": "title"
+        },
+        {
+          "kind": "text",
+          "name": "audience"
+        },
+        {
+          "kind": "text",
+          "name": "output"
+        },
+        {
+          "kind": "list",
+          "name": "sections"
+        }
+      ],
+      "retry": {
+        "maxRetries": 0,
+        "reconciliation": "inspectArtifact",
+        "safeToRetry": false
+      },
+      "route": "agentPath",
+      "sideEffecting": true,
+      "timeoutSeconds": 60
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
       "cancellation": "abandonWait",
       "effect": "read_only",
       "handler": "agent_runtime::extraction_tools::extract_tables",
@@ -1464,6 +1562,61 @@
     {
       "aliases": [],
       "approvalClass": "automatic",
+      "cancellation": "abandonWaitWithIntent",
+      "effect": "side_effecting",
+      "handler": "agent_runtime::document_tools::patch_section, then artifacts::section_patch and the conversation store",
+      "maxResponseBytes": 16384,
+      "name": "document.patch_section",
+      "network": "none",
+      "optional": [
+        {
+          "kind": "list",
+          "name": "blocks"
+        },
+        {
+          "kind": "text",
+          "name": "heading"
+        },
+        {
+          "kind": "text",
+          "name": "gap"
+        }
+      ],
+      "output": "artifact",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        }
+      ],
+      "readOnly": false,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        },
+        {
+          "kind": "text",
+          "name": "sha256"
+        },
+        {
+          "kind": "text",
+          "name": "section"
+        }
+      ],
+      "retry": {
+        "maxRetries": 0,
+        "reconciliation": "inspectArtifact",
+        "safeToRetry": false
+      },
+      "route": "agentPath",
+      "sideEffecting": true,
+      "timeoutSeconds": 60
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
       "cancellation": "abandonWait",
       "effect": "read_only",
       "handler": "agent_runtime::read_attached_pages",
@@ -1498,6 +1651,44 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::document_tools::render_pages",
+      "maxResponseBytes": 24576,
+      "name": "document.render_pages",
+      "network": "none",
+      "optional": [],
+      "output": "text",
+      "permission": "generateArtifact",
+      "prerequisites": [
+        {
+          "checkedAt": "handler",
+          "requires": "conversationArtifacts"
+        },
+        {
+          "checkedAt": "handler",
+          "requires": "pageRenderer"
+        }
+      ],
+      "readOnly": true,
+      "required": [
+        {
+          "kind": "text",
+          "name": "artifact"
+        }
+      ],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 120
     },
     {
       "aliases": [],
@@ -1578,6 +1769,30 @@
       "route": "agentPath",
       "sideEffecting": false,
       "timeoutSeconds": 10
+    },
+    {
+      "aliases": [],
+      "approvalClass": "automatic",
+      "cancellation": "abandonWait",
+      "effect": "read_only",
+      "handler": "agent_runtime::document_tools::template_list",
+      "maxResponseBytes": 8192,
+      "name": "document.template_list",
+      "network": "none",
+      "optional": [],
+      "output": "text",
+      "permission": "searchKnowledge",
+      "prerequisites": [],
+      "readOnly": true,
+      "required": [],
+      "retry": {
+        "maxRetries": 2,
+        "reconciliation": "notNeeded",
+        "safeToRetry": true
+      },
+      "route": "agentPath",
+      "sideEffecting": false,
+      "timeoutSeconds": 5
     },
     {
       "aliases": [],

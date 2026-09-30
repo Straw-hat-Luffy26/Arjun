@@ -72,6 +72,8 @@ use super::packet::{ChildTaskPacket, InputRef};
 use super::result::{ChildResult, ChildStatus, EvidenceRef, Finding};
 use super::scheduling::ModelScheduler;
 
+mod author;
+
 #[path = "worker_analyst.rs"]
 mod analyst;
 pub use analyst::{requested_fields, requested_question};
@@ -124,6 +126,11 @@ pub struct WorkerServices {
     /// Calculation records (P08): the checker reads the record it is pointed
     /// at here and keeps its check beside it.
     pub calculation_store: Arc<crate::calculation::CalculationStore>,
+    /// The runtime's tool gateway (P09), for a worker that writes or checks a
+    /// deliverable: every call authorised against its narrowed plan and
+    /// recorded as a receipt, exactly as a model loop's. Filled when the
+    /// runtime starts; empty before, and a worker then says it is blocked.
+    pub tools: super::tool_port::ToolPortSlot,
 }
 
 /// What the document extractor reads an attached document through.
@@ -170,6 +177,9 @@ impl SpecialistWorker {
         "document-extractor",
         "calculation-checker",
         "artifact-reviewer",
+        // P09: composes and repairs Word deliverables through the gateway,
+        // with a model when one is routed and from task memory when not.
+        "document-author",
         // Registerable now that a child can drive a model — a worker for this
         // role without one would have nothing to write. It is the one profile
         // that *requires* the loop: see `NEEDS_A_MODEL`.
@@ -430,6 +440,16 @@ impl ChildWorker for SpecialistWorker {
             // inputs (P08). A model loop would be asking a model whether it
             // agrees, which is exactly what an independent check is not.
             _ if checks_records => self.check_calculations(packet, policy, &session, memory.as_ref(), &cancel),
+            // A document author with a model composes through its own loop,
+            // bound to the parent's conversation so the versions it registers
+            // land where the parent and the reviewer can reach them (P09).
+            Some(child_loop) if self.profile == "document-author" => {
+                let _bound = self.bind_conversation(packet);
+                self.via_model(child_loop, packet, policy, &cancel).await.map(|mut work| {
+                    author::collect_versions(&mut work);
+                    work
+                })
+            }
             Some(child_loop) => self.via_model(child_loop, packet, policy, &cancel).await,
             // No runtime, or no model. A role that cannot be done without one
             // says so rather than doing a fraction of it.
@@ -445,6 +465,10 @@ impl ChildWorker for SpecialistWorker {
                     self.check_calculations(packet, policy, &session, memory.as_ref(), &cancel)
                 }
                 "artifact-reviewer" => self.review(packet, policy, &session, &cancel),
+                // Without a model the author assembles the specification from
+                // the task's shared memory and declares a gap for every
+                // section it does not supply (P09).
+                "document-author" => self.author(packet, policy, &session, memory.as_ref(), &cancel).await,
                 other => Err(format!(
                     "this build has no worker for the {other} role, so nothing was done"
                 )),
@@ -515,17 +539,52 @@ impl ChildWorker for SpecialistWorker {
             detail.push_str(&format!("Published {}.\n", published.describe()));
         }
 
-        let mut result = ChildResult::completed(
-            &packet.child_id,
-            &packet.profile,
-            packet.required_schema,
-            work.findings,
-            work.confidence,
-            work.uncertainty,
-            work.turns,
-        );
+        // Something named as not done makes the result partial: the part
+        // that was done is real, and the rest is not presented as though it
+        // were (a document with a gap is not a finished document).
+        let mut result = if work.missing.is_empty() {
+            ChildResult::completed(
+                &packet.child_id,
+                &packet.profile,
+                packet.required_schema,
+                work.findings,
+                work.confidence,
+                work.uncertainty,
+                work.turns,
+            )
+        } else {
+            let mut partial = ChildResult::ended(
+                &packet.child_id,
+                &packet.profile,
+                ChildStatus::Partial,
+                packet.required_schema,
+                work.findings,
+                format!("not done: {}", work.missing.join("; ")),
+                work.turns,
+            );
+            partial.uncertainty = work.uncertainty;
+            partial
+        };
+        for artifact in work.artifacts {
+            result = result.with_artifact(artifact);
+        }
+        for check in work.validation {
+            result = result.with_validation(check);
+        }
+        for receipt in work.receipts {
+            match result.clone().with_receipt(receipt) {
+                Ok(sealed) => result = sealed,
+                Err(problem) => result.uncertainty.push(problem),
+            }
+        }
+        for what in work.missing {
+            result = result.with_missing(what);
+        }
         if !detail.is_empty() {
-            result.detail = Some(detail);
+            result.detail = Some(match result.detail.take() {
+                Some(existing) => format!("{existing}\n{detail}"),
+                None => detail,
+            });
         }
         // Where the findings landed, as ids a sibling can read for itself. The
         // detail string above says the same thing in prose for a person; this
@@ -551,6 +610,15 @@ struct Work {
     uncertainty: Vec<String>,
     confidence: f32,
     turns: u32,
+    /// Versions this child produced through the gateway (P09).
+    artifacts: Vec<super::result::ArtifactVersion>,
+    /// Checks it ran on them, as the tool reported each.
+    validation: Vec<super::result::ValidationCheck>,
+    /// The gateway events its results rest on.
+    receipts: Vec<super::result::ReceiptRef>,
+    /// What it could not do: a gap in a document is named here, and the
+    /// result is then partial rather than completed.
+    missing: Vec<String>,
 }
 
 impl Work {
@@ -562,6 +630,10 @@ impl Work {
             uncertainty: Vec::new(),
             confidence: 0.0,
             turns: 0,
+            artifacts: Vec::new(),
+            validation: Vec::new(),
+            receipts: Vec::new(),
+            missing: Vec::new(),
         }
     }
 }

@@ -32,6 +32,7 @@
 pub mod approval;
 pub mod artifacts;
 mod artifact_tools;
+pub(crate) mod document_tools;
 pub mod audit_health;
 pub mod cancellation;
 pub mod chat_memory_bus;
@@ -63,6 +64,7 @@ pub mod state_commit;
 pub mod task_plan;
 pub mod tasks;
 pub mod tool_policy;
+pub mod tool_port;
 pub mod turn_context;
 pub mod workspace;
 
@@ -2213,6 +2215,9 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // A calculation record (P08), published into memory once this call's
     // receipt exists -- the same order `registered` keeps for artifacts.
     let mut calculated: Option<crate::calculation::CalcRecord> = None;
+    // A composed or patched document's section lineage and reported gaps
+    // (P09), recorded once the version and this call's receipt exist.
+    let mut composed: Option<document_tools::Composed> = None;
 
     let outcome = match tool {
         ToolName::CreateDocx => {
@@ -2433,6 +2438,34 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             effect_key.as_deref(),
             &mut registered,
         ),
+        // The Document Author's tools (P09).
+        ToolName::DocumentTemplateList => document_tools::template_list(),
+        ToolName::DocumentCompose => {
+            document_tools::compose(deps, &call, &session, &tool_call, &mut written, &mut composed)
+        }
+        ToolName::DocumentPatchSection => document_tools::patch_section(
+            deps,
+            &call,
+            &session,
+            &tool_call,
+            effect_key.as_deref(),
+            &mut registered,
+            &mut composed,
+        ),
+        // Laying pages out starts external programs, so off the serving thread.
+        ToolName::DocumentRenderPages | ToolName::ArtifactValidateDocument => {
+            let (deps, call, session, tool_call) =
+                (deps.clone(), call.clone(), session.clone(), tool_call.clone());
+            tokio::task::spawn_blocking(move || {
+                if tool == ToolName::DocumentRenderPages {
+                    document_tools::render_pages(&deps, &call, &session, &tool_call)
+                } else {
+                    document_tools::validate_document(&deps, &call, &session, &tool_call)
+                }
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("the check stopped unexpectedly: {error}")))
+        }
         // The orchestrator's plan and delegation tools (P05). Answered here
         // because each reads or writes the run's plan and job records, keyed
         // by the run, and a job's child is narrowed from this run's grant.
@@ -2567,6 +2600,16 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             registered = Some(produced);
         }
     }
+    // A composed document names the version it became, so the next call --
+    // a validation, a patch against its exact hash -- can address it (P09).
+    let outcome = match (tool, outcome, registered.as_ref()) {
+        (ToolName::DocumentCompose, Ok(text), Some(done)) => Ok(format!(
+            "{text}Registered as {} (sha-256 {}), a candidate.\n",
+            done.record.reference(),
+            done.record.sha256
+        )),
+        (_, outcome, _) => outcome,
+    };
     // The durable event first, so the in-memory record can carry the receipt
     // it was written as -- a child's findings name *this* event, not the first
     // call, the parent run or whichever event happened to be last.
@@ -2574,8 +2617,10 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
     // The version this call registered goes into the memory graph on this
     // call's receipt, resting on the memory items it cites -- so a correction
     // to one of them reaches the artifact through the graph's own staleness.
+    let registered_record = registered.as_ref().map(|done| done.record.clone());
+    let mut artifact_item: Option<String> = None;
     if let (Ok(_), Some(done)) = (&outcome, registered.take()) {
-        artifact_tools::link_to_graph(
+        artifact_item = artifact_tools::link_to_graph(
             deps,
             &session,
             &call.run_id,
@@ -2583,6 +2628,20 @@ async fn execute(params: Value, deps: &Arc<RuntimeDeps>) -> Result<Value, WireEr
             &done.record,
             &done.dependencies,
             done.base.as_ref(),
+            recorded.clone(),
+        );
+    }
+    // A document's section lineage, and each gap it reported as an open
+    // question on the version (P09).
+    if let (Ok(_), Some(record), Some(done)) = (&outcome, registered_record, composed.take()) {
+        document_tools::after_receipt(
+            deps,
+            &session,
+            &call.run_id,
+            tool,
+            &record,
+            artifact_item.as_deref(),
+            done,
             recorded.clone(),
         );
     }
@@ -2707,7 +2766,7 @@ fn remember_if_produced(
     effect_key: Option<&str>,
 ) -> Option<artifact_tools::Registered> {
     let kind = match tool {
-        ToolName::CreateDocx => artifacts::Kind::Document,
+        ToolName::CreateDocx | ToolName::DocumentCompose => artifacts::Kind::Document,
         ToolName::CreateXlsx => artifacts::Kind::Workbook,
         ToolName::CreatePptx => artifacts::Kind::Deck,
         ToolName::CreatePdf => artifacts::Kind::Pdf,
@@ -2726,7 +2785,7 @@ fn remember_if_produced(
     };
     let path = resolved_path?;
 
-    let template = if tool == ToolName::CreateDocx {
+    let template = if matches!(tool, ToolName::CreateDocx | ToolName::DocumentCompose) {
         tool_call.text("template").map(str::to_string)
     } else {
         None
@@ -4881,6 +4940,8 @@ mod extraction_tests;
 mod retrieval_tests;
 #[cfg(test)]
 mod calculation_tests;
+#[cfg(test)]
+mod document_tests;
 
 #[cfg(test)]
 mod conversations_tests;

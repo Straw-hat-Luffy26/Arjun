@@ -109,6 +109,12 @@ export const CANONICAL_TOOL_NAMES = [
   "calculation.compare",
   "calculation.solve",
   "calculation.sensitivity",
+  // P09's Document Author tools.
+  "document.template_list",
+  "document.compose",
+  "document.patch_section",
+  "document.render_pages",
+  "artifact.validate_document",
 ] as const;
 
 export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
@@ -205,6 +211,9 @@ const ARTIFACT_PRODUCING: ReadonlySet<CanonicalToolName> = new Set([
   "artifact.create_chart",
   // A targeted edit writes a new version of the file it names.
   "artifact.edit",
+  // P09: a composed document, and a new version of one section.
+  "document.compose",
+  "document.patch_section",
 ]);
 
 /**
@@ -239,6 +248,9 @@ const SIDE_EFFECTING: ReadonlySet<CanonicalToolName> = new Set([
   // before each, and a resumption must repeat neither.
   "artifact.register_version",
   "artifact.edit",
+  // P09: the same for a composed document and a patched section.
+  "document.compose",
+  "document.patch_section",
 ]);
 
 /** Whether this tool returns numbered evidence. Accepts either spelling. */

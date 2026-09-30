@@ -312,6 +312,65 @@ pub struct PageRender {
     pub text_characters: usize,
     #[serde(default, skip_serializing)]
     pub text: String,
+    /// Fonts the page draws with, as the rasteriser read them (P09).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fonts: Vec<PageFont>,
+    /// Text laid out wholly or partly outside the page: present in the file,
+    /// never seen by a reader (P09).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clipped: Vec<String>,
+}
+
+/// A font a rendered page uses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageFont {
+    pub name: String,
+    #[serde(default)]
+    pub r#type: String,
+    pub embedded: bool,
+}
+
+/// A font file on this machine that a family name resolves to, with its
+/// version, so a render records what it was drawn with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontFile {
+    pub family: String,
+    pub file: String,
+    pub version: Option<String>,
+}
+
+/// The installed font file behind each PostScript name a render drew with,
+/// and its version, from one `fc-list` listing. Matched exactly: a name no
+/// installed font carries is reported with no file rather than resolved to a
+/// fallback. A machine without fontconfig answers `None`, and the versions
+/// are then said to be unrecorded.
+pub fn font_files(postscript_names: &[String]) -> Option<Vec<FontFile>> {
+    let mut command = crate::system_analyzer::process_utils::create_hidden_command("fc-list");
+    command.arg("--format=%{postscriptname}\t%{file}\t%{fontversion}\n");
+    let output = run_bounded(command, Duration::from_secs(20)).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let listing = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut out = Vec::new();
+    for name in postscript_names.iter().take(40) {
+        let found = listing.lines().find_map(|line| {
+            let mut fields = line.split('\t');
+            (fields.next()? == name).then(|| (fields.next().unwrap_or_default().to_string(), fields.next().unwrap_or_default().to_string()))
+        });
+        out.push(match found {
+            // fontconfig reports the head table's revision as 16.16 fixed point.
+            Some((file, version)) => FontFile {
+                family: name.clone(),
+                file,
+                version: version.trim().parse::<u64>().ok().map(|v| format!("{:.3}", v as f64 / 65536.0)),
+            },
+            None => FontFile { family: name.clone(), file: String::new(), version: None },
+        });
+    }
+    Some(out)
 }
 
 /// The adapter and version that produced a render.
@@ -336,6 +395,10 @@ pub struct RenderOutcome {
     /// The intermediate PDF's hash, when one was produced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_sha256: Option<String>,
+    /// The installed font files the pages were drawn with, and their
+    /// versions (P09). Empty when fontconfig could not be asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub font_files: Vec<FontFile>,
 }
 
 impl RenderOutcome {
@@ -348,6 +411,7 @@ impl RenderOutcome {
             total_pages: 0,
             pages: Vec::new(),
             pdf_sha256: None,
+            font_files: Vec::new(),
         }
     }
 }
@@ -522,12 +586,27 @@ pub fn render(
             blank,
             text_characters: text.chars().filter(|c| !c.is_whitespace()).count(),
             text,
+            fonts: page
+                .get("fonts")
+                .and_then(|f| serde_json::from_value::<Vec<PageFont>>(f.clone()).ok())
+                .unwrap_or_default(),
+            clipped: page
+                .get("clipped")
+                .and_then(|c| serde_json::from_value::<Vec<String>>(c.clone()).ok())
+                .unwrap_or_default(),
         });
     }
     if total_pages == 0 {
         problems.push("the laid-out document has no pages".to_string());
     }
     let state = if pages.is_empty() { RenderState::Failed } else { RenderState::Rendered };
+    let mut drawn_with: Vec<String> = Vec::new();
+    for font in pages.iter().flat_map(|p| p.fonts.iter()) {
+        if !drawn_with.contains(&font.name) {
+            drawn_with.push(font.name.clone());
+        }
+    }
+    let font_files = font_files(&drawn_with).unwrap_or_default();
     RenderOutcome {
         state,
         detail: format!(
@@ -540,6 +619,7 @@ pub fn render(
         total_pages,
         pages,
         pdf_sha256: Some(pdf_sha256),
+        font_files,
     }
 }
 

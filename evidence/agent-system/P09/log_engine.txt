@@ -1,0 +1,406 @@
+$ cargo test --lib artifacts::authoring -- --nocapture
+7 | use std::path::PathBuf;
+230 |     use std::fmt::Write as _;
+272 |     use std::fmt::Write as _;
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+1349 |     use crate::agent_runtime::audit_health::AuditHealth;
+496 |     use crate::registry::{Modality, ModelRole};
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+5 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+6 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+5 | use anyhow::{anyhow, Result};
+7 | use std::path::{Path, PathBuf};
+9 | use sysinfo::{Disks, System};
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+10 | use crate::memory_engine::providers::mock::MockProvider;
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+18 | use std::collections::BTreeSet;
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+7 | use std::collections::BTreeMap;
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+1911 |     let mut request = {
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+144 |     let mut push = |units: &mut Vec<BodyUnit>, section: &Option<(String, String)>, kind: BodyKind, text: String, cells: Vec<String>...
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+135 |     let total = metadata.len();
+616 |     document_sha256: String,
+617 |     page: u32,
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+516 |             let mut conversation = match self.read_path(&path) {
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+45 |     let mut virtualization_supported = false;
+25 |     let mut memory_type = "System Memory".to_string();
+26 |     let mut speed_mts: Option<u32> = None;
+27 |     let mut total_slots: Option<u32> = None;
+28 |     let mut populated_slots: Option<u32> = None;
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+23 |     let mut edition = "Standard".to_string();
+16 |     let mut cmd = Command::new(program);
+49 |     let child_id = child.id();
+229 |         (Error, Loading) => true,
+...
+247 |         (Error, Loading) => true,
+384 |         let mut sink = TelemetrySink::new();
+396 |         let mut sink = TelemetrySink::new();
+408 |         let mut sink = TelemetrySink::new();
+157 |         let mut stmt = if let Some(pid) = project_id {
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+173 | pub struct MemoryEnclave {
+...
+182 |     os_handle: Option<usize>,
+1258 |     fn metadata() -> DocumentMetadata {
+61 | const TAG_SUFFIX: &str = ".hmac";
+1807 |     struct MultimodalFixture {
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+11 | struct CimProcessorInfo {
+335 | fn check_rocm_runtime() -> bool {
+393 | struct CimGpuInfo {
+11 | struct CimRamModule {
+10 | struct CimOsInfo {
+10 | struct CimDiskInfo {
+407 |     const MB: u64 = 1_048_576;
+105 | pub struct RequestRegistry {
+106 |     next_id: AtomicU64,
+51 | pub struct PersistenceManager {
+52 |     db_path: PathBuf,
+21 | pub struct MemoryManager {
+...
+29 |     compressor: Arc<Compressor>,
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+running 5 tests
+test artifacts::authoring::tests::a_corrected_source_and_an_unbound_marker_are_refused ... ok
+test artifacts::authoring::tests::a_sound_spec_composes_with_generated_references_and_a_reported_gap ... ok
+test artifacts::authoring::tests::a_missing_mandatory_field_or_section_is_refused_by_name ... ok
+test artifacts::authoring::tests::an_unsupported_claim_or_figure_is_refused ... ok
+test artifacts::authoring::tests::the_package_is_a_complete_word_document_with_section_markers ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 0.01s
+$ cargo test --lib artifacts::section_patch -- --nocapture
+7 | use std::path::PathBuf;
+230 |     use std::fmt::Write as _;
+272 |     use std::fmt::Write as _;
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+1349 |     use crate::agent_runtime::audit_health::AuditHealth;
+496 |     use crate::registry::{Modality, ModelRole};
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+5 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+6 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+5 | use anyhow::{anyhow, Result};
+7 | use std::path::{Path, PathBuf};
+9 | use sysinfo::{Disks, System};
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+10 | use crate::memory_engine::providers::mock::MockProvider;
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+18 | use std::collections::BTreeSet;
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+7 | use std::collections::BTreeMap;
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+1911 |     let mut request = {
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+144 |     let mut push = |units: &mut Vec<BodyUnit>, section: &Option<(String, String)>, kind: BodyKind, text: String, cells: Vec<String>...
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+135 |     let total = metadata.len();
+616 |     document_sha256: String,
+617 |     page: u32,
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+516 |             let mut conversation = match self.read_path(&path) {
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+45 |     let mut virtualization_supported = false;
+25 |     let mut memory_type = "System Memory".to_string();
+26 |     let mut speed_mts: Option<u32> = None;
+27 |     let mut total_slots: Option<u32> = None;
+28 |     let mut populated_slots: Option<u32> = None;
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+23 |     let mut edition = "Standard".to_string();
+16 |     let mut cmd = Command::new(program);
+49 |     let child_id = child.id();
+229 |         (Error, Loading) => true,
+...
+247 |         (Error, Loading) => true,
+384 |         let mut sink = TelemetrySink::new();
+396 |         let mut sink = TelemetrySink::new();
+408 |         let mut sink = TelemetrySink::new();
+157 |         let mut stmt = if let Some(pid) = project_id {
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+173 | pub struct MemoryEnclave {
+...
+182 |     os_handle: Option<usize>,
+1258 |     fn metadata() -> DocumentMetadata {
+61 | const TAG_SUFFIX: &str = ".hmac";
+1807 |     struct MultimodalFixture {
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+11 | struct CimProcessorInfo {
+335 | fn check_rocm_runtime() -> bool {
+393 | struct CimGpuInfo {
+11 | struct CimRamModule {
+10 | struct CimOsInfo {
+10 | struct CimDiskInfo {
+407 |     const MB: u64 = 1_048_576;
+105 | pub struct RequestRegistry {
+106 |     next_id: AtomicU64,
+51 | pub struct PersistenceManager {
+52 |     db_path: PathBuf,
+21 | pub struct MemoryManager {
+...
+29 |     compressor: Arc<Compressor>,
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+running 4 tests
+test artifacts::section_patch::tests::a_legacy_approval_note_is_patchable_by_field_key ... ok
+test artifacts::section_patch::tests::one_section_changes_and_everything_else_is_byte_identical ... ok
+test artifacts::section_patch::tests::what_the_editor_cannot_carry_is_refused_before_writing ... ok
+test artifacts::section_patch::tests::a_tracked_document_an_unknown_section_and_provenance_are_refused ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3008 filtered out; finished in 0.02s
+$ cargo test --lib artifacts::document_checks -- --nocapture
+7 | use std::path::PathBuf;
+230 |     use std::fmt::Write as _;
+272 |     use std::fmt::Write as _;
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+1349 |     use crate::agent_runtime::audit_health::AuditHealth;
+496 |     use crate::registry::{Modality, ModelRole};
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+5 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+6 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+5 | use anyhow::{anyhow, Result};
+7 | use std::path::{Path, PathBuf};
+9 | use sysinfo::{Disks, System};
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+10 | use crate::memory_engine::providers::mock::MockProvider;
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+18 | use std::collections::BTreeSet;
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+7 | use std::collections::BTreeMap;
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+1911 |     let mut request = {
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+144 |     let mut push = |units: &mut Vec<BodyUnit>, section: &Option<(String, String)>, kind: BodyKind, text: String, cells: Vec<String>...
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+135 |     let total = metadata.len();
+616 |     document_sha256: String,
+617 |     page: u32,
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+516 |             let mut conversation = match self.read_path(&path) {
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+45 |     let mut virtualization_supported = false;
+25 |     let mut memory_type = "System Memory".to_string();
+26 |     let mut speed_mts: Option<u32> = None;
+27 |     let mut total_slots: Option<u32> = None;
+28 |     let mut populated_slots: Option<u32> = None;
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+23 |     let mut edition = "Standard".to_string();
+16 |     let mut cmd = Command::new(program);
+49 |     let child_id = child.id();
+229 |         (Error, Loading) => true,
+...
+247 |         (Error, Loading) => true,
+384 |         let mut sink = TelemetrySink::new();
+396 |         let mut sink = TelemetrySink::new();
+408 |         let mut sink = TelemetrySink::new();
+157 |         let mut stmt = if let Some(pid) = project_id {
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+173 | pub struct MemoryEnclave {
+...
+182 |     os_handle: Option<usize>,
+1258 |     fn metadata() -> DocumentMetadata {
+61 | const TAG_SUFFIX: &str = ".hmac";
+1807 |     struct MultimodalFixture {
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+11 | struct CimProcessorInfo {
+335 | fn check_rocm_runtime() -> bool {
+393 | struct CimGpuInfo {
+11 | struct CimRamModule {
+10 | struct CimOsInfo {
+10 | struct CimDiskInfo {
+407 |     const MB: u64 = 1_048_576;
+105 | pub struct RequestRegistry {
+106 |     next_id: AtomicU64,
+51 | pub struct PersistenceManager {
+52 |     db_path: PathBuf,
+21 | pub struct MemoryManager {
+...
+29 |     compressor: Arc<Compressor>,
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+running 5 tests
+test artifacts::document_checks::tests::a_sound_note_passes_its_format_checks_and_leaves_resolution_unavailable ... ok
+test artifacts::document_checks::tests::an_unrendered_document_has_unavailable_render_checks ... ok
+test artifacts::document_checks::tests::a_marked_header_missing_from_a_continuation_page_is_found ... ok
+test artifacts::document_checks::tests::an_uncited_claim_a_gap_and_an_unmarked_long_table_are_found ... ok
+P09-RENDER state=Rendered pages=3 renderers=[RendererUsed { name: "LibreOffice", version: "24.2.7.2" }, RendererUsed { name: "PyMuPDF", version: "1.28.2" }]
+P09-RENDER page 1 fonts=[PageFont { name: "LiberationSans", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Bold", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Italic", type: "TrueType", embedded: true }] clipped=0
+P09-RENDER page 2 fonts=[PageFont { name: "LiberationSans", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Bold", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Italic", type: "TrueType", embedded: true }] clipped=0
+P09-RENDER page 3 fonts=[PageFont { name: "LiberationSans", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Bold", type: "TrueType", embedded: true }, PageFont { name: "LiberationSans-Italic", type: "TrueType", embedded: true }] clipped=0
+P09-RENDER render.pages Pass all 3 pages rendered, none blank
+P09-RENDER render.text_visible Pass all 82 text units are on a page and inside it
+P09-RENDER render.table_headers Pass 1 table(s) run over pages; each repeats its header
+P09-RENDER render.page_breaks Pass 1 page break(s); text after each starts on a later page
+P09-RENDER font files [FontFile { family: "LiberationSans", file: "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", version: Some("2.100") }, FontFile { family: "LiberationSans-Bold", file: "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", version: Some("2.100") }, FontFile { family: "LiberationSans-Italic", file: "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf", version: Some("2.100") }]
+test artifacts::document_checks::tests::a_long_note_renders_with_its_header_repeated_and_its_break_landing ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 4.95s
+$ cargo test --lib subagents::worker::author -- --nocapture
+7 | use std::path::PathBuf;
+230 |     use std::fmt::Write as _;
+272 |     use std::fmt::Write as _;
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+1349 |     use crate::agent_runtime::audit_health::AuditHealth;
+496 |     use crate::registry::{Modality, ModelRole};
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+5 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+6 | use std::time::Duration;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+5 | use anyhow::{anyhow, Result};
+7 | use std::path::{Path, PathBuf};
+9 | use sysinfo::{Disks, System};
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+4 | use anyhow::Result;
+10 | use crate::memory_engine::providers::mock::MockProvider;
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+18 | use std::collections::BTreeSet;
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+7 | use std::collections::BTreeMap;
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+1911 |     let mut request = {
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+144 |     let mut push = |units: &mut Vec<BodyUnit>, section: &Option<(String, String)>, kind: BodyKind, text: String, cells: Vec<String>...
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+135 |     let total = metadata.len();
+616 |     document_sha256: String,
+617 |     page: u32,
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+516 |             let mut conversation = match self.read_path(&path) {
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+45 |     let mut virtualization_supported = false;
+25 |     let mut memory_type = "System Memory".to_string();
+26 |     let mut speed_mts: Option<u32> = None;
+27 |     let mut total_slots: Option<u32> = None;
+28 |     let mut populated_slots: Option<u32> = None;
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+23 |     let mut edition = "Standard".to_string();
+16 |     let mut cmd = Command::new(program);
+49 |     let child_id = child.id();
+229 |         (Error, Loading) => true,
+...
+247 |         (Error, Loading) => true,
+384 |         let mut sink = TelemetrySink::new();
+396 |         let mut sink = TelemetrySink::new();
+408 |         let mut sink = TelemetrySink::new();
+157 |         let mut stmt = if let Some(pid) = project_id {
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+173 | pub struct MemoryEnclave {
+...
+182 |     os_handle: Option<usize>,
+1258 |     fn metadata() -> DocumentMetadata {
+61 | const TAG_SUFFIX: &str = ".hmac";
+1807 |     struct MultimodalFixture {
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+11 | struct CimProcessorInfo {
+335 | fn check_rocm_runtime() -> bool {
+393 | struct CimGpuInfo {
+11 | struct CimRamModule {
+10 | struct CimOsInfo {
+10 | struct CimDiskInfo {
+407 |     const MB: u64 = 1_048_576;
+105 | pub struct RequestRegistry {
+106 |     next_id: AtomicU64,
+51 | pub struct PersistenceManager {
+52 |     db_path: PathBuf,
+21 | pub struct MemoryManager {
+...
+29 |     compressor: Arc<Compressor>,
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+running 3 tests
+test subagents::worker::author::tests::a_version_and_its_hash_are_read_from_a_tool_answer ... ok
+test subagents::worker::author::tests::checks_are_read_as_reported_and_unavailable_is_not_passed ... ok
+test subagents::worker::author::tests::a_subject_line_never_restates_a_figure ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3009 filtered out; finished in 0.00s

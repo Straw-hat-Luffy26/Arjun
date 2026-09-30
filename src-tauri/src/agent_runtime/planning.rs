@@ -741,6 +741,21 @@ pub fn derive(prompt: &str) -> DerivedPlan {
         ToolName::DocumentRenderRegions,
     ]);
 
+    // The Document Author's tools (P09): templates with stable section ids,
+    // composition from a structured spec, a one-section patch and a render of
+    // every page. Where a Word deliverable is produced or worked on. Before
+    // the P04 family, which stays last; `artifact.validate_document` joins
+    // that family beside `artifact.validate`.
+    let works_on_document = produces_document || mentions(&lower, ARTIFACT_WORK_WORDS);
+    if works_on_document {
+        permitted.extend([
+            ToolName::DocumentTemplateList,
+            ToolName::DocumentCompose,
+            ToolName::DocumentPatchSection,
+            ToolName::DocumentRenderPages,
+        ]);
+    }
+
     // The shared artifact tools (P04): manifest, bounded reads, templates,
     // validation, rendering, diff, evidence resolution, registration and
     // targeted edits. Offered where a deliverable is produced or an existing
@@ -769,6 +784,9 @@ pub fn derive(prompt: &str) -> DerivedPlan {
             ToolName::ArtifactRegisterVersion,
             ToolName::ArtifactEdit,
         ]);
+        if works_on_document {
+            permitted.push(ToolName::ArtifactValidateDocument);
+        }
     }
 
     // The sovereignty filter, applied once and last.

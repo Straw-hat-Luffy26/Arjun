@@ -38,15 +38,16 @@ function catalogue(): BudgetableTool[] {
  * A budget of `1` would also reach the smallest stage, but it reaches it by
  * amputating the catalogue down to one tool — which is a different question
  * from "how small can the whole catalogue be made". The budget has to sit
- * between the `minimal` size and the next stage up. Measured at P08 (60 tools)
- * as 5,755 tokens at `minimal` (95.9 per tool), so 5,800 still compresses to
- * `minimal` and drops nothing. At P07 (56 tools) it was 5,350 (95.5 per tool);
+ * between the `minimal` size and the next stage up. Measured at P09 (65 tools)
+ * as 6,212 tokens at `minimal` (95.6 per tool), so 6,250 still compresses to
+ * `minimal` and drops nothing. At P08 (60 tools) it was 5,755 (95.9 per tool);
+ * at P07 (56 tools) 5,350 (95.5 per tool);
  * at P06 (52 tools) 4,990 / 5,619; it was
  * 4,800 at 48 tools (P05: 4,521 / 5,089),
  * 4,000 at 43 (P04: 3,902 / 4,399) and 3,000 at 33.
  */
 function minimalCatalogue(): BudgetableTool[] {
-  const fitted = fitToolsToBudget(catalogue(), 5_800);
+  const fitted = fitToolsToBudget(catalogue(), 6_250);
   if (fitted.report.stage !== "minimal" || fitted.report.dropped.length > 0) {
     throw new Error(
       `expected the whole catalogue at the smallest stage, got ${fitted.report.stage} with ` +
@@ -108,6 +109,22 @@ const P08_CALCULATION_TOOLS: ReadonlySet<string> = new Set([
   "calculation.sensitivity",
 ]);
 
+/**
+ * The four Document Author tools P09 added, listed after the page tools and
+ * before the artifact family. `artifact.validate_document` joins that family
+ * at its tail and is in `P09_VALIDATE` below. `artifact.create_approval_note`
+ * sits in the core and keeps a note producible when a window is too small.
+ */
+const P09_DOCUMENT_TOOLS: ReadonlySet<string> = new Set([
+  "document.template_list",
+  "document.compose",
+  "document.patch_section",
+  "document.render_pages",
+]);
+
+/** P09's document check, last in the catalogue with the artifact family. */
+const P09_VALIDATE = "artifact.validate_document";
+
 /** Every `properties` key in a schema, at every depth. */
 function propertyNames(schema: unknown, found: string[] = []): string[] {
   if (Array.isArray(schema)) {
@@ -148,7 +165,9 @@ describe("the tool catalogue against a small window", () => {
         !P04_ARTIFACT_TOOLS.has(tool.name) &&
         !P06_PAGE_TOOLS.has(tool.name) &&
         !P07_RETRIEVAL_TOOLS.has(tool.name) &&
-        !P08_CALCULATION_TOOLS.has(tool.name),
+        !P08_CALCULATION_TOOLS.has(tool.name) &&
+        !P09_DOCUMENT_TOOLS.has(tool.name) &&
+        tool.name !== P09_VALIDATE,
     );
     const fitted = fitToolsToBudget(core, budget);
 
@@ -186,23 +205,41 @@ describe("the tool catalogue against a small window", () => {
    * P08 adds four calculation families between the P07 tools and the page
    * tools (5,755 tokens for 60). At 8k they go after the page tools and
    * before the P07 tools; `calculation.evaluate_with_units` stays.
+   *
+   * P09 adds four document tools between the page tools and the artifact
+   * family, and `artifact.validate_document` at the family's tail (6,212
+   * tokens for 65). At 8k they go with the family, before any page tool;
+   * `artifact.create_approval_note` stays.
    */
-  it("drops only the P04, P06, P07 and P08 additions, from the tail, when the whole catalogue meets an 8k window", () => {
+  it("drops only the P04, P06, P07, P08 and P09 additions, from the tail, when the whole catalogue meets an 8k window", () => {
     const budget = toolBudgetFor(8_192, "You are ARJUN.".repeat(80), "Write bubble sort");
     const fitted = fitToolsToBudget(catalogue(), budget);
     const droppable = (name: string) =>
       P04_ARTIFACT_TOOLS.has(name) ||
       P06_PAGE_TOOLS.has(name) ||
       P07_RETRIEVAL_TOOLS.has(name) ||
-      P08_CALCULATION_TOOLS.has(name);
+      P08_CALCULATION_TOOLS.has(name) ||
+      P09_DOCUMENT_TOOLS.has(name) ||
+      name === P09_VALIDATE;
 
     expect(fitted.report.overBudget).toBe(false);
     expect(fitted.report.dropped.length).toBeGreaterThan(0);
     for (const name of fitted.report.dropped) {
       expect(droppable(name), `${name} was dropped`).toBe(true);
     }
-    // From the tail: the whole artifact family goes before any page tool does.
+    // From the tail: the whole artifact family, with the document check, goes
+    // before any P09 document tool, and those before any page tool.
     const dropped = fitted.report.dropped;
+    if (dropped.some((name) => P09_DOCUMENT_TOOLS.has(name))) {
+      for (const name of [...P04_ARTIFACT_TOOLS, P09_VALIDATE]) {
+        expect(dropped.includes(name), `${name} kept while a P09 tool was dropped`).toBe(true);
+      }
+    }
+    if (dropped.some((name) => P06_PAGE_TOOLS.has(name))) {
+      for (const name of P09_DOCUMENT_TOOLS) {
+        expect(dropped.includes(name), `${name} kept while a page tool was dropped`).toBe(true);
+      }
+    }
     const firstPageTool = dropped.findIndex((name) => P06_PAGE_TOOLS.has(name));
     if (firstPageTool >= 0) {
       for (const name of P04_ARTIFACT_TOOLS) {
@@ -223,31 +260,39 @@ describe("the tool catalogue against a small window", () => {
       }
     }
     expect(fitted.tools.some((kept) => kept.name === "calculation.evaluate_with_units")).toBe(true);
+    expect(fitted.tools.some((kept) => kept.name === "artifact.create_approval_note")).toBe(true);
     for (const tool of catalogue().filter((t) => !droppable(t.name))) {
       expect(fitted.tools.some((kept) => kept.name === tool.name), `${tool.name} kept`).toBe(true);
     }
   });
 
-  it("keeps every P07 and P08 tool at a 10k window, dropping only artifact and page tools from the tail", () => {
+  it("keeps every P07 and P08 tool at a 10k window, dropping only artifact, document and page tools from the tail", () => {
     const budget = toolBudgetFor(10_240, "You are ARJUN.".repeat(80), "Write bubble sort");
     const fitted = fitToolsToBudget(catalogue(), budget);
     for (const name of [...P07_RETRIEVAL_TOOLS, ...P08_CALCULATION_TOOLS]) {
       expect(fitted.tools.some((kept) => kept.name === name), `${name} kept`).toBe(true);
     }
     for (const name of fitted.report.dropped) {
-      expect(P04_ARTIFACT_TOOLS.has(name) || P06_PAGE_TOOLS.has(name), `${name} was dropped`).toBe(true);
+      expect(
+        P04_ARTIFACT_TOOLS.has(name) || P06_PAGE_TOOLS.has(name) || P09_DOCUMENT_TOOLS.has(name) || name === P09_VALIDATE,
+        `${name} was dropped`,
+      ).toBe(true);
     }
-    // Measured at P08: the ten artifact tools and the last two page tools.
+    // Measured at P08 and again at P09: after the artifact family and the P09
+    // document tools, the last two page tools.
     expect(fitted.report.dropped.filter((name) => P06_PAGE_TOOLS.has(name))).toEqual([
       "document.ocr_regions",
       "document.extract_tables",
     ]);
   });
 
-  it("keeps every page tool at a 12k window and everything at 14k", () => {
+  it("keeps every page and P09 document tool at a 12k window and everything at 14k", () => {
     const twelve = fitToolsToBudget(catalogue(), toolBudgetFor(12_288, "You are ARJUN.".repeat(80), "Write bubble sort"));
     for (const name of twelve.report.dropped) {
-      expect(P04_ARTIFACT_TOOLS.has(name), `${name} was dropped at 12k`).toBe(true);
+      expect(P04_ARTIFACT_TOOLS.has(name) || name === P09_VALIDATE, `${name} was dropped at 12k`).toBe(true);
+    }
+    for (const name of P09_DOCUMENT_TOOLS) {
+      expect(twelve.tools.some((kept) => kept.name === name), `${name} kept at 12k`).toBe(true);
     }
     const fourteen = fitToolsToBudget(catalogue(), toolBudgetFor(14_336, "You are ARJUN.".repeat(80), "Write bubble sort"));
     expect(fourteen.report.dropped).toEqual([]);

@@ -260,6 +260,20 @@ pub const fn route_of(tool: ToolName) -> (Route, &'static str) {
         ToolName::ArtifactResolveEvidence => (AgentPath, "agent_runtime::artifact_tools::resolve_evidence"),
         ToolName::ArtifactRegisterVersion => (AgentPath, "agent_runtime::artifact_tools::register_version"),
         ToolName::ArtifactEdit => (AgentPath, "agent_runtime::artifact_tools::edit_version"),
+        // P09. On the agent path because each resolves citations against the
+        // run's evidence and registers or reads versions for the signed-in
+        // owner in the run's conversation.
+        ToolName::DocumentTemplateList => (AgentPath, "agent_runtime::document_tools::template_list"),
+        ToolName::DocumentCompose => (
+            AgentPath,
+            "agent_runtime::document_tools::compose, then the conversation store, section lineage and shared memory",
+        ),
+        ToolName::DocumentPatchSection => (
+            AgentPath,
+            "agent_runtime::document_tools::patch_section, then artifacts::section_patch and the conversation store",
+        ),
+        ToolName::DocumentRenderPages => (AgentPath, "agent_runtime::document_tools::render_pages"),
+        ToolName::ArtifactValidateDocument => (AgentPath, "agent_runtime::document_tools::validate_document"),
         // P06. On the agent path because each authorises the document against
         // the run's conversation and the signed-in owner. `extract_findings`
         // still answers for a knowledge-base document through the runner.
@@ -337,6 +351,12 @@ pub const fn prerequisites_of(tool: ToolName) -> &'static [Prerequisite] {
         ToolName::ExecuteCode => &[ContainerSandbox],
         ToolName::KnowledgeMultimodalRetrieve => &[MultimodalIndex],
         ToolName::ArtifactValidate | ToolName::ArtifactRender => &[ConversationArtifacts, PageRenderer],
+        // P09: composing registers in the conversation, and names its own
+        // file inside the run's workspace (no path argument for the gateway to
+        // resolve, as `create_pdf`); rendering and validating lay pages out.
+        ToolName::DocumentCompose | ToolName::DocumentPatchSection => &[ConversationArtifacts],
+        ToolName::DocumentRenderPages | ToolName::ArtifactValidateDocument => &[ConversationArtifacts, PageRenderer],
+        ToolName::DocumentTemplateList => &[],
         ToolName::ArtifactManifest
         | ToolName::ArtifactReadVersion
         | ToolName::ArtifactReadRegion
@@ -416,7 +436,9 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::CreateDiagram
         | ToolName::CreatePdf
         | ToolName::CreateTable
-        | ToolName::ArtifactEdit => Artifact,
+        | ToolName::ArtifactEdit
+        | ToolName::DocumentCompose
+        | ToolName::DocumentPatchSection => Artifact,
         ToolName::ExecuteCode => Execution,
         ToolName::AgentDelegateReadonly
         | ToolName::AgentDelegate
@@ -463,7 +485,11 @@ pub const fn output_of(tool: ToolName) -> OutputKind {
         | ToolName::KnowledgeSourceVersion
         | ToolName::MemoryNeighbours
         // A dimension report computes no number.
-        | ToolName::CalculationValidateDimensions => Text,
+        | ToolName::CalculationValidateDimensions
+        // A template listing, pages as handles and a check report.
+        | ToolName::DocumentTemplateList
+        | ToolName::DocumentRenderPages
+        | ToolName::ArtifactValidateDocument => Text,
     }
 }
 

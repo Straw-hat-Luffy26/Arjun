@@ -240,6 +240,13 @@ pub const fn class_of(tool: ToolName) -> ToolClass {
         | ToolName::CalculationSolve
         | ToolName::CalculationCompare
         | ToolName::CalculationSensitivity => ToolClass::Reversible,
+        // P09: listing templates reads; rendering and validating keep
+        // observations about immutable bytes in ARJUN's own store, as
+        // `artifact.render` and `artifact.validate` do.
+        ToolName::DocumentTemplateList | ToolName::DocumentRenderPages | ToolName::ArtifactValidateDocument => ToolClass::ReadOnly,
+        // A new candidate version, and a file in the run's own workspace, as
+        // `artifact.edit` writes; the version it started from is untouched.
+        ToolName::DocumentCompose | ToolName::DocumentPatchSection => ToolClass::SideEffecting,
 
         // Writes into the project's memory, under an approval granted for that
         // exact fact. Reversible because `memory_forgotten` can take it back

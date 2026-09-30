@@ -18,12 +18,14 @@
 //!   Always returns an error; see its module docs for the written-out
 //!   reasoning so the refusal survives the contributor who inherits it.
 
+pub mod authoring;
 pub mod chart;
 pub mod captured_blocks;
 pub mod content;
 pub mod conversation_store;
 pub mod diagram;
 pub mod doc_model;
+pub mod document_checks;
 pub mod edit;
 pub mod docx;
 pub mod live_source;
@@ -34,6 +36,7 @@ pub mod pdf_validate;
 pub mod pptx;
 pub mod produce_model;
 pub mod render;
+pub mod section_patch;
 pub mod production;
 pub mod stego_watermark;
 pub mod svg_validate;

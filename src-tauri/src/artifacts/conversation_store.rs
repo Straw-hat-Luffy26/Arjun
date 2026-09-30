@@ -580,6 +580,15 @@ impl ConversationArtifacts {
                 state         TEXT NOT NULL,
                 outcome       TEXT NOT NULL,
                 created_at    TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS conversation_artifact_sections (
+                artifact_id   TEXT NOT NULL,
+                version       INTEGER NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                ordinal       INTEGER NOT NULL,
+                section_id    TEXT NOT NULL,
+                lineage       TEXT NOT NULL,
+                PRIMARY KEY (artifact_id, version, owner_user_id, ordinal)
              );",
         )?;
         Ok(())
@@ -1036,6 +1045,38 @@ impl ConversationArtifacts {
             ],
         )?;
         Ok(())
+    }
+
+    /// Which sources and calculations each section of a version rests on
+    /// (P09). Written once per version; a version's lineage never changes.
+    pub fn record_sections(&self, owner_user_id: &str, reference: &ArtifactRef, sections: &[(String, String)]) -> Result<()> {
+        self.get(owner_user_id, &reference.artifact_id, Some(reference.version))?
+            .with_context(|| format!("{reference} is not an artifact this account holds"))?;
+        let conn = self.conn.lock().expect("artifact store lock poisoned");
+        for (ordinal, (section_id, lineage)) in sections.iter().enumerate() {
+            conn.execute(
+                "INSERT OR IGNORE INTO conversation_artifact_sections
+                    (artifact_id, version, owner_user_id, ordinal, section_id, lineage)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![&reference.artifact_id, reference.version, owner_user_id, ordinal as i64, section_id, lineage],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A version's section lineage, in document order, as `(section id,
+    /// lineage JSON)`.
+    pub fn sections(&self, owner_user_id: &str, reference: &ArtifactRef) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().expect("artifact store lock poisoned");
+        let mut statement = conn.prepare(
+            "SELECT section_id, lineage FROM conversation_artifact_sections
+              WHERE artifact_id = ?1 AND version = ?2 AND owner_user_id = ?3
+              ORDER BY ordinal",
+        )?;
+        let rows = statement.query_map(params![&reference.artifact_id, reference.version, owner_user_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().context("the version's section lineage could not be read")
     }
 
     /// One render, for the owner who asked for it.

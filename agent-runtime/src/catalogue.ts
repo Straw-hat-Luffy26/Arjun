@@ -1488,6 +1488,87 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       toPage: Type.Optional(Type.Integer({ minimum: 1, description: "Last page; at most 10." })),
     }),
   },
+  // P09: the Document Author's tools. Section ids are stable across versions;
+  // bounds (30 sections, 300 blocks, 500-row tables) are enforced in Rust.
+  {
+    name: "document.template_list",
+    label: "List document templates",
+    readOnly: true,
+    description:
+      "Lists the document templates: each one's sections by stable id, which sections are " +
+      "required, the citation rule for each, and the definition hash. " +
+      "Use it before document.compose to choose a template and its section ids. " +
+      "Do not use it for decks or workbooks (artifact.list_templates). " +
+      "Effects: none. Limits: Word templates only. " +
+      "If it lists nothing you need, use authored_document@1 with your own section ids.",
+    parameters: closed({}),
+  },
+  {
+    name: "document.compose",
+    label: "Write a Word document",
+    readOnly: false,
+    description:
+      "Writes an editable Word document from a structured spec, checked against its template " +
+      "and this task's evidence: required fields and sections, a citation on every claim that " +
+      "needs one, every figure stated by what it cites. " +
+      "Use it for an approval note or report drawn from evidence. " +
+      "Do not use it to invent content: a section the evidence cannot support is a gap. " +
+      "Effects: a new candidate version, DRAFT until a person approves it. " +
+      "Limits: templates from document.template_list. " +
+      "If it refuses: nothing was written; fix each problem it names.",
+    parameters: closed({
+      template: Type.String({ description: '"inspection_approval_note@1".' }),
+      title: Type.String(),
+      audience: Type.String(),
+      output: Type.String({ description: 'A file name: "v101-note.docx".' }),
+      // Field and block shapes are checked by the handler, which names every
+      // problem; spelling them out here would cost every run the tokens.
+      fields: Type.Optional(Type.Object({}, { description: 'Field key to text; "?" = unknown.' })),
+      sections: Type.Array(
+        Type.Object({
+          id: Type.String(),
+          blocks: Type.Optional(Type.Array(Type.Unknown())),
+          gap: Type.Optional(Type.String({ description: "What information is missing." })),
+        }),
+        { description: "Each may also carry a heading." },
+      ),
+    }),
+  },
+  {
+    name: "document.patch_section",
+    label: "Rewrite one section",
+    readOnly: false,
+    description:
+      "Replaces one section of an exact Word version, found by its stable id, and keeps every " +
+      "other part of the file byte for byte: other sections, styles, headers, footers, numbering. " +
+      "Use it for a correction or a repair of one section. " +
+      "Do not use it on a version that has moved on. " +
+      "Effects: a new candidate version derived from the one named. " +
+      "Limits: refuses sections holding pictures, fields, comments or tracked changes. " +
+      "If it refuses as stale, read the newest version and its hash.",
+    parameters: closed({
+      artifact: Type.String({ description: '"art-7@4".' }),
+      sha256: Type.String(),
+      section: Type.String(),
+      blocks: Type.Optional(Type.Array(Type.Unknown())),
+      heading: Type.Optional(Type.String()),
+      gap: Type.Optional(Type.String()),
+    }),
+  },
+  {
+    name: "document.render_pages",
+    label: "Lay out every page",
+    readOnly: true,
+    description:
+      "Lays every page of a Word version out with the pinned local renderer, keeps each page " +
+      "as an image, and checks that all text is on a page, long tables repeat their header and " +
+      "page breaks land. Reports the renderer and font versions. " +
+      "Use it to see the pages a reader will see. " +
+      "Do not use it for other formats (artifact.render). " +
+      "Effects: none. Limits: 50 pages. " +
+      "If it reports the renderer unavailable, say so; that is not a pass.",
+    parameters: closed({ artifact: Type.String() }),
+  },
   {
     name: "artifact.manifest",
     label: "Read an artifact's manifest",
@@ -1717,6 +1798,23 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
         { minItems: 1, maxItems: 50 },
       ),
       version: Type.Optional(Type.String({ description: "The version, when the id does not carry it." })),
+    }),
+  },
+  {
+    name: "artifact.validate_document",
+    label: "Check a Word document",
+    readOnly: true,
+    description:
+      "Runs the format ladder and the document checks on one Word version: required sections " +
+      "written, no gaps, claims cited, citations current, figures supported, long tables, " +
+      "approval status, and, rendered, every page. Format and render results are reported apart. " +
+      "Use it before asking for review. " +
+      "Do not use it to approve anything. " +
+      "Effects: none; the result is recorded. Limits: Word only. " +
+      "If it reports a check unavailable, that check has not passed.",
+    parameters: closed({
+      artifact: Type.String(),
+      render: Type.Optional(Type.String({ description: '"no" to skip rendering.' })),
     }),
   },
 ] as const;

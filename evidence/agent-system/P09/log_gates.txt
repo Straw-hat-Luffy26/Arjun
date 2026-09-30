@@ -1,0 +1,208 @@
+$ npm run runtime:build
+
+> arjun@0.2.0 runtime:build
+> npm --prefix agent-runtime run build
+
+
+> @arjun/agent-runtime@0.1.0 build
+> node scripts/build.mjs
+
+
+  dist/arjun-agent-runtime.mjs      1.8mb ⚠️
+  dist/arjun-agent-runtime.mjs.map  6.1mb
+
+⚡ Done in 412ms
+bundled 1096 modules -> dist/arjun-agent-runtime.mjs (1795 KiB)
+sha256 48410dba273f3038c1767e761c26bc0d498cea924512e1b7a259aa0938e22ce7
+EXIT 0
+
+$ npm run check:bundle
+
+> arjun@0.2.0 check:bundle
+> node scripts/check-bundle.mjs
+
+bundle gate: pass — 1.8 MiB, adapters: openai-completions, 6 reviewed vendor hostname(s), all defences present
+EXIT 0
+
+$ npm run check:bundle:self
+
+> arjun@0.2.0 check:bundle:self
+> node scripts/check-bundle.test.mjs
+
+bundle gate self-test — each case reintroduces one thing the gate must catch
+
+  a-second-adapter … caught
+  a-channel … caught
+  cloud-code-execution … caught
+  missing-loopback-guard … caught
+  missing-grant-check … caught
+  an-unreviewed-host … caught
+  a-grown-host-surface … caught
+  a-blind-gate … caught
+
+bundle gate self-test: pass — the gate refuses every regression it claims to catch
+EXIT 0
+
+$ npm run check:offline
+
+> arjun@0.2.0 check:offline
+> node scripts/check-offline-build.mjs
+
+  Rust dependencies resolve from the local registry … ok
+  Node dependencies resolve from the npm cache … ok
+  TypeScript compiles … ok
+
+offline gate: pass — the build needs no network
+EXIT 0
+
+$ npm run check:egress
+
+> arjun@0.2.0 check:egress
+> node scripts/check-egress.mjs
+
+egress gate: FAIL — 2 finding(s)
+
+  src-tauri/src/artifacts/authoring.rs:822
+    [unapproved host] schemas.openxmlformats.org is not on the allowlist in scripts/check-egress.mjs
+
+  src-tauri/src/artifacts/authoring.rs:823
+    [unapproved host] schemas.openxmlformats.org is not on the allowlist in scripts/check-egress.mjs
+
+Route the call through src-tauri/src/sovereignty/broker.rs, add the host to
+ALLOWED_HOSTS with a reason, or annotate the line `arjun-egress-ok: <reason>`.
+EXIT 1
+
+$ npm run check:no-lora
+
+> arjun@0.2.0 check:no-lora
+> node scripts/check-no-lora.mjs
+
+LoRA removal gate passed across 680 product files.
+EXIT 0
+
+$ npm run check:deployment
+
+> arjun@0.2.0 check:deployment
+> node scripts/check-deployment.mjs
+
+  ok  agent-runtime ships as agent-runtime/dist/arjun-agent-runtime.mjs
+  ok  document-sidecar ships as sidecars/document_sidecar/main.py
+  ok  document-extractor ships as sidecars/document_sidecar/attachment_extract.py
+  ok  page-rasteriser ships as sidecars/document_sidecar/render_pages.py
+  ok  graph-sidecar ships as sidecars/graph_sidecar/main.py
+  ok  intent-sidecar ships as sidecars/intent_sidecar/main.py
+  ok  memory-sidecar ships as sidecars/memory_engine_sidecar/main.py
+  ok  voice-sidecar ships as sidecars/voice_sidecar/voice_bridge.py
+  ok  node is spawned through deployment::program(), not a bare literal
+  ok  python is spawned through deployment::program(), not a bare literal
+  ok  llama-server is spawned through deployment::program(), not a bare literal
+  ok  office-renderer is spawned through deployment::program(), not a bare literal
+
+Deployment gate FAILED with 1 problem(s):
+
+  x  src-tauri/src/artifacts/render.rs spawns "fc-list", which is neither in the dependency table nor in this gate's reviewed ledger. Add it to DEPENDENCIES in src-tauri/src/deployment/mod.rs so the preflight can report it, or to LEDGER here with the reason it is not ARJUN's to ship.
+
+Each of these means an installed build would look for something the installer does not contain.
+
+EXIT 1
+
+$ npm run check:ipc
+
+> arjun@0.2.0 check:ipc
+> node scripts/check-ipc.mjs
+
+IPC contract OK: 187 commands (18 admin, 3 external, 146 frontend, 20 frontend-pending).
+EXIT 0
+
+$ npm run check:reachable
+
+> arjun@0.2.0 check:reachable
+> node scripts/check-reachable.mjs
+
+Reachability OK: 200 module(s) reachable from the entry points, 1 reached only by tests.
+EXIT 0
+
+$ npm run check:targets
+    |             help: remove this `mut`
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1258:8
+     |
+1258 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1809:9
+     |
+1807 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+     |         ^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: `sarathi` (lib test) generated 80 warnings (69 duplicates) (run `cargo fix --lib -p sarathi --tests` to apply 6 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 26s
+EXIT 0
+
+$ npm run check:lint-budget
+
+> arjun@0.2.0 check:lint-budget
+> node scripts/check-lint-budget.mjs
+
+Unused-code budget exceeded: 53 warnings, ceiling is 40.
+
+This change left new dead code behind. Remove it, or — if it is genuinely
+needed and unused for a stated reason — say so at the definition rather than
+raising the number in scripts/lint-budget.json.
+EXIT 1
+
+$ npm run sbom
+
+> arjun@0.2.0 sbom
+> node scripts/make-sbom.mjs
+
+sbom: wrote 1153 component(s) to evidence/sbom.cdx.json and evidence/sbom.md
+  note: The document sidecar's Python dependencies are installed by the deployment rather than by this repository, so they are not listed here. They belong in the deployment record.
+  note: The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because the dependency is far heavier: it pins torch and transformers in its own requirements.txt. An air-gapped install must vendor those wheels; nothing in this repository fetches them.
+  note: The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
+EXIT 0
+
+$ npm run check:generated
+
+> arjun@0.2.0 check:generated
+> node scripts/make-sbom.mjs && git diff --quiet --exit-code -- evidence/sbom.cdx.json evidence/sbom.md || (echo "The committed SBOM is stale. Run npm run sbom and commit evidence/." && exit 1)
+
+sbom: wrote 1153 component(s) to evidence/sbom.cdx.json and evidence/sbom.md
+  note: The document sidecar's Python dependencies are installed by the deployment rather than by this repository, so they are not listed here. They belong in the deployment record.
+  note: The same is true of the graph sidecar (sidecars/graph_sidecar), stated separately because the dependency is far heavier: it pins torch and transformers in its own requirements.txt. An air-gapped install must vendor those wheels; nothing in this repository fetches them.
+  note: The relation model that sidecar loads, Babelscape/rebel-large, is CC BY-NC-SA 4.0 - non-commercial. It is not redistributed here and is not in the installer; a deployment downloads it deliberately, and ModelEntry::license_allowed gates its use. A commercial distribution of ARJUN cannot ship or rely on it.
+The committed SBOM is stale. Run npm run sbom and commit evidence/.
+EXIT 1
+
+$ npm run check:whitespace
+
+> arjun@0.2.0 check:whitespace
+> git diff --check
+
+EXIT 0
+
+
+=== Re-run after the fixes (namespaces inlined into xmlns attributes; fc-list added to the deployment gate's reviewed ledger) ===
+$ npm run check:egress
+> arjun@0.2.0 check:egress
+> node scripts/check-egress.mjs
+
+egress gate: pass — one chokepoint, no unapproved hosts
+EXIT 0
+$ npm run check:deployment
+  ok  llama-server is spawned through deployment::program(), not a bare literal
+  ok  office-renderer is spawned through deployment::program(), not a bare literal
+
+Deployment gate passed: everything the code resolves, the installer ships.
+EXIT 0

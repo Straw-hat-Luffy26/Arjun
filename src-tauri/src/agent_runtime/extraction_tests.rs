@@ -366,6 +366,7 @@ impl World {
                 conversations: base.run_to_conversation.clone(),
             }),
             calculation_store: base.calculation_store.clone(),
+            tools: Default::default(),
             retrieval: base.retrieval.clone(),
         });
         let profiles_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agents");

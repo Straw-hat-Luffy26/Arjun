@@ -1,0 +1,1062 @@
+   Compiling sarathi v0.2.0 (/home/user/Arjun/src-tauri)
+warning: unused import: `std::path::PathBuf`
+ --> src/commands/config.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:230:9
+    |
+230 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Write as _`
+   --> src/commands/artifact_preview.rs:272:9
+    |
+272 |     use std::fmt::Write as _;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Block`, `Document`, `Properties`, and `Section`
+    --> src/artifacts/content.rs:1255:39
+     |
+1255 |     use crate::artifacts::doc_model::{Block, Column, ColumnType, Deck, Document, Properties, Section, Sheet, SlideModel, Workbook};
+     |                                       ^^^^^                            ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^
+
+warning: unused import: `crate::agent_runtime::audit_health::AuditHealth`
+    --> src/agent_runtime/tests.rs:1349:9
+     |
+1349 |     use crate::agent_runtime::audit_health::AuditHealth;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Modality`
+   --> src/registry/scan.rs:496:27
+    |
+496 |     use crate::registry::{Modality, ModelRole};
+    |                           ^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/cpu_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/cpu_collector.rs:5:5
+  |
+5 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `create_hidden_command` and `run_command_with_timeout`
+ --> src/system_analyzer/memory_collector.rs:3:45
+  |
+3 | use crate::system_analyzer::process_utils::{create_hidden_command, run_command_with_timeout};
+  |                                             ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> src/system_analyzer/memory_collector.rs:6:5
+  |
+6 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/os_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::system_analyzer::process_utils::create_hidden_command`
+ --> src/system_analyzer/storage_collector.rs:3:5
+  |
+3 | use crate::system_analyzer::process_utils::create_hidden_command;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> src/model_recommendation/pack_manager.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `PathBuf`
+ --> src/model_manager/manager.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `System`
+ --> src/model_manager/manager.rs:9:22
+  |
+9 | use sysinfo::{Disks, System};
+  |                      ^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/ollama_library/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/ollama_library/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `ModelMetadata`
+ --> src/model_providers/local/mod.rs:3:69
+  |
+3 | use crate::model_providers::provider::{ModelProvider, ProviderType, ModelMetadata};
+  |                                                                     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+ --> src/model_providers/local/mod.rs:4:5
+  |
+4 | use anyhow::Result;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::memory_engine::providers::mock::MockProvider`
+  --> src/memory_engine/extractor.rs:10:5
+   |
+10 | use crate::memory_engine::providers::mock::MockProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryNodeRecord`
+  --> src/memory_engine/manager.rs:12:41
+   |
+12 | use crate::memory_engine::persistence::{MemoryNodeRecord, PersistenceManager, ProjectRecord, UserProfileRecord};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeSet`
+  --> src/sih_workflow/pipeline.rs:18:5
+   |
+18 | use std::collections::BTreeSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ApprovalError`
+  --> src/sih_workflow/pipeline.rs:26:55
+   |
+26 | use crate::sih_workflow::approval::{ApprovalDecision, ApprovalError, ApprovalRecord};
+   |                                                       ^^^^^^^^^^^^^
+
+warning: unused imports: `DraftStatus` and `EvidenceRef`
+  --> src/sih_workflow/pipeline.rs:28:24
+   |
+28 |     ApprovalNoteDraft, DraftStatus, EvidenceRef, Finding as DraftFinding, UncertaintyNote,
+   |                        ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/sih_workflow/evidence_package.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:354:71
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                                       ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:430:63
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                                                               ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:599:75
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |                                                                           ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+   --> src/ai_engine/runtime.rs:847:74
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                                                                          ^^^^^^^^
+
+warning: use of deprecated unit variant `llama_cpp_2::model::Special::Tokenize`: This enum is a mixture of options for llama cpp providing less flexibility it only used with deprecated methods and will be removed in the future.
+    --> src/ai_engine/runtime.rs:1415:76
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                                                                            ^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/commands/agent.rs:1911:9
+     |
+1911 |     let mut request = {
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:354:26
+    |
+354 |                         .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                          ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:430:18
+    |
+430 |                 .token_to_str(t, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:599:14
+    |
+599 |             .token_to_str(model.token_bos(), llama_cpp_2::model::Special::Tokenize)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+   --> src/ai_engine/runtime.rs:847:18
+    |
+847 |                 .token_to_str(new_token_id, llama_cpp_2::model::Special::Tokenize)
+    |                  ^^^^^^^^^^^^
+
+warning: use of deprecated method `llama_cpp_2::model::LlamaModel::token_to_str`: Use `token_to_piece` instead
+    --> src/ai_engine/runtime.rs:1415:31
+     |
+1415 |         let piece = |t| model.token_to_str(t, llama_cpp_2::model::Special::Tokenize).unwrap_or_default();
+     |                               ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/artifacts/document_checks.rs:144:9
+    |
+144 |     let mut push = |units: &mut Vec<BodyUnit>, section: &Option<(String, String)>, kind: BodyKind, text: String, cells: Vec<String>...
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/artifacts/pdf.rs:253:9
+    |
+253 |     let mut push = |line: Line, page: &mut Page, used: &mut f64, pages: &mut Vec<Page>| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `total`
+   --> src/audit/model_integrity.rs:135:9
+    |
+135 |     let total = metadata.len();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `document_sha256`
+   --> src/knowledge/multimodal.rs:616:5
+    |
+616 |     document_sha256: String,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_document_sha256`
+
+warning: unused variable: `page`
+   --> src/knowledge/multimodal.rs:617:5
+    |
+617 |     page: u32,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_page`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:361:18
+    |
+361 |         let Some(mut conversation) = self.read_raw(id)? else {
+    |                  ----^^^^^^^^^^^^
+    |                  |
+    |                  help: remove this `mut`
+
+warning: unused variable: `id`
+   --> src/agent_runtime/conversations.rs:379:32
+    |
+379 |     fn migrate_in_place(&self, id: &str, file: &mut ConversationFile) {
+    |                                ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> src/agent_runtime/conversations.rs:516:17
+    |
+516 |             let mut conversation = match self.read_path(&path) {
+    |                 ----^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:41:9
+   |
+41 |     let mut logical_processors = sys.cpus().len() as u32;
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:42:9
+   |
+42 |     let mut physical_cores = sys.physical_core_count().unwrap_or(logical_processors as usize) as u32;
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:43:9
+   |
+43 |     let mut base_frequency_mhz = if !cpus.is_empty() { cpus[0].frequency() } else { 0 };
+   |         ----^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:44:9
+   |
+44 |     let mut boost_frequency_mhz = cpus.iter().map(|c| c.frequency()).max().unwrap_or(base_frequency_mhz);
+   |         ----^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/cpu_collector.rs:45:9
+   |
+45 |     let mut virtualization_supported = false;
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:25:9
+   |
+25 |     let mut memory_type = "System Memory".to_string();
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:26:9
+   |
+26 |     let mut speed_mts: Option<u32> = None;
+   |         ----^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:27:9
+   |
+27 |     let mut total_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/memory_collector.rs:28:9
+   |
+28 |     let mut populated_slots: Option<u32> = None;
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:20:9
+   |
+20 |     let mut name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:21:9
+   |
+21 |     let mut version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:22:9
+   |
+22 |     let mut build_number = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+   |         ----^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/os_collector.rs:23:9
+   |
+23 |     let mut edition = "Standard".to_string();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/system_analyzer/process_utils.rs:16:9
+   |
+16 |     let mut cmd = Command::new(program);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `child_id`
+  --> src/system_analyzer/process_utils.rs:49:9
+   |
+49 |     let child_id = child.id();
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_child_id`
+
+warning: unreachable pattern
+   --> src/ai_engine/orchestrator_state.rs:247:9
+    |
+229 |         (Error, Loading) => true,
+    |         ---------------- matches all the relevant values
+...
+247 |         (Error, Loading) => true,
+    |         ^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:384:13
+    |
+384 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:396:13
+    |
+396 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/model_intelligence/telemetry.rs:408:13
+    |
+408 |         let mut sink = TelemetrySink::new();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `pid`
+   --> src/memory_engine/persistence.rs:157:36
+    |
+157 |         let mut stmt = if let Some(pid) = project_id {
+    |                                    ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: unused variable: `package`
+   --> src/sih_workflow/pipeline.rs:591:9
+    |
+591 |     let package = export_evidence_package(output_dir, artifacts, provenance)
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_package`
+
+warning: field `os_handle` is never read
+   --> src/sovereignty/enclave.rs:182:5
+    |
+173 | pub struct MemoryEnclave {
+    |            ------------- field in this struct
+...
+182 |     os_handle: Option<usize>,
+    |     ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `metadata` is never used
+    --> src/artifacts/content.rs:1258:8
+     |
+1258 |     fn metadata() -> DocumentMetadata {
+     |        ^^^^^^^^
+
+warning: constant `TAG_SUFFIX` is never used
+  --> src/audit/provenance_hmac.rs:61:7
+   |
+61 | const TAG_SUFFIX: &str = ".hmac";
+   |       ^^^^^^^^^^
+
+warning: field `root` is never read
+    --> src/orchestrator/runner.rs:1809:9
+     |
+1807 |     struct MultimodalFixture {
+     |            ----------------- field in this struct
+1808 |         _dir: tempfile::TempDir,
+1809 |         root: PathBuf,
+     |         ^^^^
+
+warning: struct `CimProcessorInfo` is never constructed
+  --> src/system_analyzer/cpu_collector.rs:11:8
+   |
+11 | struct CimProcessorInfo {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `check_rocm_runtime` is never used
+   --> src/system_analyzer/gpu_collector.rs:335:4
+    |
+335 | fn check_rocm_runtime() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: struct `CimGpuInfo` is never constructed
+   --> src/system_analyzer/gpu_collector.rs:393:8
+    |
+393 | struct CimGpuInfo {
+    |        ^^^^^^^^^^
+
+warning: struct `CimRamModule` is never constructed
+  --> src/system_analyzer/memory_collector.rs:11:8
+   |
+11 | struct CimRamModule {
+   |        ^^^^^^^^^^^^
+
+warning: struct `CimOsInfo` is never constructed
+  --> src/system_analyzer/os_collector.rs:10:8
+   |
+10 | struct CimOsInfo {
+   |        ^^^^^^^^^
+
+warning: struct `CimDiskInfo` is never constructed
+  --> src/system_analyzer/storage_collector.rs:10:8
+   |
+10 | struct CimDiskInfo {
+   |        ^^^^^^^^^^^
+
+warning: constant `MB` is never used
+   --> src/model_recommendation/estimator.rs:407:11
+    |
+407 |     const MB: u64 = 1_048_576;
+    |           ^^
+
+warning: field `next_id` is never read
+   --> src/ai_engine/request_context.rs:106:5
+    |
+105 | pub struct RequestRegistry {
+    |            --------------- field in this struct
+106 |     next_id: AtomicU64,
+    |     ^^^^^^^
+
+warning: field `db_path` is never read
+  --> src/memory_engine/persistence.rs:52:5
+   |
+51 | pub struct PersistenceManager {
+   |            ------------------ field in this struct
+52 |     db_path: PathBuf,
+   |     ^^^^^^^
+
+warning: field `compressor` is never read
+  --> src/memory_engine/manager.rs:29:5
+   |
+21 | pub struct MemoryManager {
+   |            ------------- field in this struct
+...
+29 |     compressor: Arc<Compressor>,
+   |     ^^^^^^^^^^
+
+warning: constant `BENCH_PROMPTS` is never used
+  --> src/benchmarks/mod.rs:70:7
+   |
+70 | const BENCH_PROMPTS: &[(&str, &str, &str)] = &[
+   |       ^^^^^^^^^^^^^
+
+warning: `sarathi` (lib test) generated 80 warnings (run `cargo fix --lib -p sarathi --tests` to apply 54 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.45s
+     Running unittests src/lib.rs (target/debug/deps/sarathi_lib-a8f2cbd9a33d4c37)
+
+running 8 tests
+test agent_runtime::document_tests::a_compatible_request_goes_through_the_approval_note_writer_and_is_patchable_by_field_key ... ok
+test agent_runtime::document_tests::a_delegated_author_reports_what_the_memory_lacks_as_gaps_and_a_partial_result ... --- partial job ---
+Some(
+    Object {
+        "artifacts": Array [
+            String("art-file-97125694afdde37b@1"),
+        ],
+        "artifactsAccepted": Bool(false),
+        "evidenced": Number(0),
+        "findings": Number(2),
+        "graphRevision": Number(9),
+        "kept": Array [
+            Object {
+                "evidence": Array [],
+                "statement": String("Composed art-file-97125694afdde37b@1 (sha-256 72d252e1f2d2) from inspection_approval_note@1: subject, findings ([M:mi-80376f86-6f65-4a5d-a25b-908cc668c8dd@1]), recommendation (gap), assumptions."),
+            },
+            Object {
+                "evidence": Array [],
+                "statement": String("art-file-97125694afdde37b@1 is not accepted by the backend checks (13 check(s): 11 passed, 2 failed, 0 unavailable). It is a candidate; the independent review is the reviewer's."),
+            },
+        ],
+        "missing": Array [
+            String("the recipient: nobody named one, and the author does not guess"),
+            String("a recommendation: no decision has been recorded for this task, and the author does not make one"),
+        ],
+        "published": Array [],
+        "status": String("partial"),
+        "subagentStoppedSeq": Number(8),
+        "summary": String("document-author did part of the work; what it did not do is listed, and the rest is not done — 2 finding(s), 0 citing a source, 0 published: not done: the recipient: nobody named one, and the author does not guess; a recommendation: no decision has been recorded for this task, and the author does not make one"),
+        "superseded": Bool(false),
+        "uncertainty": Array [],
+    },
+)
+ok
+test agent_runtime::document_tests::a_delegated_author_writes_the_note_and_repairs_it_after_a_correction ... --- write job ---
+Some(
+    Object {
+        "artifacts": Array [
+            String("art-file-97125694afdde37b@1"),
+        ],
+        "artifactsAccepted": Bool(true),
+        "evidenced": Number(0),
+        "findings": Number(2),
+        "graphRevision": Number(14),
+        "kept": Array [
+            Object {
+                "evidence": Array [],
+                "statement": String("Composed art-file-97125694afdde37b@1 (sha-256 5951a0eb19d0) from inspection_approval_note@1: subject, findings ([M:mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2@1] [M:mi-6d7b6ae8-8fc6-4079-bfaa-7b94c0b042a4@1]), calculation ([C:calc-114c30ee7ed031d2]), recommendation ([M:mi-1b9baad1-6588-470a-9d56-ab938af"),
+            },
+            Object {
+                "evidence": Array [],
+                "statement": String("art-file-97125694afdde37b@1 is accepted by the backend checks (13 check(s): 13 passed, 0 failed, 0 unavailable). It is a candidate; the independent review is the reviewer's."),
+            },
+        ],
+        "missing": Array [],
+        "published": Array [],
+        "status": String("completed"),
+        "subagentStoppedSeq": Number(11),
+        "summary": String("document-author finished — 2 finding(s), 0 citing a source, 0 published"),
+        "superseded": Bool(false),
+        "uncertainty": Array [],
+    },
+)
+write produced art-file-97125694afdde37b@1
+--- the author's own calls ---
+document.compose Succeeded event Some(3)
+artifact.validate_document Succeeded event Some(6)
+--- v1 after the correction ---
+Validation 2 of art-file-97125694afdde37b@1 (sha-256 5951a0eb19d0, Word document (OOXML)):
+Format ladder:
+- file created: passed — 5760 bytes, sha-256 5951a0eb19d0
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses
+- content checked: passed — 25 unit(s) of content, 4 citation(s) each bound to evidence, and everything the inspection_approval_note template promises
+Document checks (format and render reported apart; unavailable is never a pass):
+- document.reopen [Blocking]: pass — reopened: 11 parts, 25 body units, 7 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of inspection_approval_note@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: FAIL — section:findings unit:11: [M:mi-6d7b6ae8-8fc6-4079-bfaa-7b94c0b042a4@1] no longer stands: revision 1 was replaced by revision 2; section:calculation unit:13: [C:calc-114c30ee7ed031d2] no longer stands: something it rests on was corrected or withdrawn
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+- render.pages [Blocking]: unavailable — rendering was not asked for
+- render.text_visible [Blocking]: unavailable — rendering was not asked for
+- render.table_headers [Blocking]: unavailable — rendering was not asked for
+- render.page_breaks [Blocking]: unavailable — rendering was not asked for
+Not accepted. Fix what failed, answer what is missing, or say what could not be checked.
+
+--- repair job ---
+Some(
+    Object {
+        "artifacts": Array [
+            String("art-file-97125694afdde37b@3"),
+        ],
+        "artifactsAccepted": Bool(true),
+        "evidenced": Number(0),
+        "findings": Number(3),
+        "graphRevision": Number(35),
+        "kept": Array [
+            Object {
+                "evidence": Array [],
+                "statement": String("Repaired section findings of art-file-97125694afdde37b@1 as art-file-97125694afdde37b@2: it now rests on [M:mi-3f279e92-5a6d-4563-b6ee-5302973a73ce@1] [M:mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2@1]."),
+            },
+            Object {
+                "evidence": Array [],
+                "statement": String("Repaired section calculation of art-file-97125694afdde37b@2 as art-file-97125694afdde37b@3: it now rests on [C:calc-b9decb5d7ed75333]."),
+            },
+            Object {
+                "evidence": Array [],
+                "statement": String("art-file-97125694afdde37b@3 is accepted by the backend checks (13 check(s): 13 passed, 0 failed, 0 unavailable). It is a candidate; the independent review is the reviewer's."),
+            },
+        ],
+        "missing": Array [],
+        "published": Array [],
+        "status": String("completed"),
+        "subagentStoppedSeq": Number(24),
+        "summary": String("document-author finished — 3 finding(s), 0 citing a source, 0 published"),
+        "superseded": Bool(false),
+        "uncertainty": Array [],
+    },
+)
+--- manifest of art-file-97125694afdde37b@3 ---
+Manifest of art-file-97125694afdde37b@3 — candidate (not yet accepted).
+{
+  "artifact": "art-file-97125694afdde37b@3",
+  "bytes": 5779,
+  "classification": "Internal",
+  "current": true,
+  "dependencies": [
+    {
+      "because": null,
+      "id": "mi-3f279e92-5a6d-4563-b6ee-5302973a73ce",
+      "kind": "memoryItem",
+      "label": "UT survey of V-101, August, corrected after recalibration: governing shell readi",
+      "locator": null,
+      "marker": "[M:mi-3f279e92-5a6d-4563-b6ee-5302973a73ce@1]",
+      "standing": "current",
+      "version": "1"
+    },
+    {
+      "because": null,
+      "id": "mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2",
+      "kind": "memoryItem",
+      "label": "SOP-114 rev D section 3.1: minimum allowable shell thickness for V-101 where pit",
+      "locator": null,
+      "marker": "[M:mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2@1]",
+      "standing": "current",
+      "version": "1"
+    },
+    {
+      "because": null,
+      "id": "calc-b9decb5d7ed75333",
+      "kind": "calculation",
+      "label": "wall_loss = (t_min - t_meas) / t_min",
+      "locator": null,
+      "marker": "[C:calc-b9decb5d7ed75333]",
+      "standing": "current",
+      "version": "12.22 %"
+    },
+    {
+      "because": null,
+      "id": "mi-1b9baad1-6588-470a-9d56-ab938af4a811",
+      "kind": "memoryItem",
+      "label": "Re-survey point C within 14 days and hold V-101 below its reduced operating limi",
+      "locator": null,
+      "marker": "[M:mi-1b9baad1-6588-470a-9d56-ab938af4a811@1]",
+      "standing": "current",
+      "version": "1"
+    }
+  ],
+  "derivedFrom": "art-file-97125694afdde37b@2",
+  "graphItem": "mi-art-art-file-97125694afdde37b-v3",
+  "kind": "document",
+  "latestValidation": {
+    "accepted": true,
+    "at": "2026-09-30T13:03:04.731992945+00:00",
+    "contentChecked": {
+      "state": "passed",
+      "validator": "content-checks@arjun-0.2.0"
+    },
+    "fileCreated": {
+      "state": "passed",
+      "validator": "artifact-store@arjun-0.2.0"
+    },
+    "formatReopened": {
+      "state": "passed",
+      "validator": "format-reader@arjun-0.2.0"
+    },
+    "ofSha256": "2f67de4899fe313f66a1651e16fda66a15aa6724a029ccb9d787a90164c46d3e",
+    "renderChecked": {
+      "state": "passed",
+      "validator": "LibreOffice 24.2.7.2 + PyMuPDF 1.28.2"
+    },
+    "validationId": 3
+  },
+  "mime": {
+    "format": "Word document (OOXML)",
+    "fromBytes": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "recorded": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  },
+  "permissionScope": {
+    "classification": "Internal",
+    "conversation": "c-p09",
+    "owner": "the signed-in person only",
+    "project": null
+  },
+  "producer": {
+    "agent": null,
+    "at": "2026-09-30T13:03:02.675470644+00:00",
+    "model": null,
+    "run": "036cb2d6-e11a-4f5b-afda-3442bbece990",
+    "tool": "document.patch_section"
+  },
+  "publishedAt": null,
+  "renders": [
+    {
+      "at": "2026-09-30T13:03:04.725649296+00:00",
+      "pageHandles": [
+        "render:rnd-716e20580aa04447928fba29282a6c1a/page:1",
+        "render:rnd-716e20580aa04447928fba29282a6c1a/page:2"
+      ],
+      "renderId": "rnd-716e20580aa04447928fba29282a6c1a",
+      "renderers": [
+        {
+          "name": "LibreOffice",
+          "version": "24.2.7.2"
+        },
+        {
+          "name": "PyMuPDF",
+          "version": "1.28.2"
+        }
+      ],
+      "state": "rendered",
+      "totalPages": 2
+    }
+  ],
+  "sections": [
+    {
+      "calculations": [],
+      "heading": "Subject",
+      "markers": [],
+      "sectionId": "subject"
+    },
+    {
+      "calculations": [],
+      "heading": "Findings",
+      "markers": [
+        "[M:mi-3f279e92-5a6d-4563-b6ee-5302973a73ce@1]",
+        "[M:mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2@1]"
+      ],
+      "sectionId": "findings"
+    },
+    {
+      "calculations": [
+        "[C:calc-b9decb5d7ed75333]"
+      ],
+      "heading": "Calculation",
+      "markers": [
+        "[C:calc-b9decb5d7ed75333]"
+      ],
+      "sectionId": "calculation"
+    },
+    {
+      "calculations": [],
+      "heading": "Recommendation",
+      "markers": [
+        "[M:mi-1b9baad1-6588-470a-9d56-ab938af4a811@1]"
+      ],
+      "sectionId": "recommendation"
+    },
+    {
+      "calculations": [],
+      "heading": "Assumptions",
+      "markers": [],
+      "sectionId": "assumptions"
+    },
+    {
+      "calculations": [
+        "[C:calc-b9decb5d7ed75333]"
+      ],
+      "heading": "Supporting references",
+      "markers": [
+        "[M:mi-3f279e92-5a6d-4563-b6ee-5302973a73ce@1]",
+        "[M:mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2@1]",
+        "[C:calc-b9decb5d7ed75333]",
+        "[M:mi-1b9baad1-6588-470a-9d56-ab938af4a811@1]"
+      ],
+      "sectionId": "references"
+    }
+  ],
+  "sha256": "2f67de4899fe313f66a1651e16fda66a15aa6724a029ccb9d787a90164c46d3e",
+  "stage": "candidate",
+  "staleBecause": [],
+  "template": {
+    "id": "inspection_approval_note",
+    "sha256": "c3cad672d378be69b735a276f85e99822b5b7ccaf95871f6c94c30ca07c26fe3",
+    "version": "1"
+  },
+  "title": "write-an-approval-note-on-v-101-note.docx",
+  "versions": [
+    "art-file-97125694afdde37b@1 candidate",
+    "art-file-97125694afdde37b@2 candidate",
+    "art-file-97125694afdde37b@3 candidate"
+  ]
+}
+--- art-file-97125694afdde37b@3 validated ---
+Validation 4 of art-file-97125694afdde37b@3 (sha-256 2f67de4899fe, Word document (OOXML)):
+Format ladder:
+- file created: passed — 5779 bytes, sha-256 2f67de4899fe
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses
+- content checked: passed — 25 unit(s) of content, 4 citation(s) each bound to evidence, and everything the inspection_approval_note template promises
+Document checks (format and render reported apart; unavailable is never a pass):
+- document.reopen [Blocking]: pass — reopened: 11 parts, 25 body units, 7 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of inspection_approval_note@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+- render.pages [Major]: pass — all 2 pages rendered, none blank
+- render.text_visible [Blocking]: pass — all 25 text units are on a page and inside it
+- render.table_headers [Major]: pass — 0 table(s) run over pages; each repeats its header
+- render.page_breaks [Minor]: pass — 0 page break(s); text after each starts on a later page
+Render rnd-4260acb0d27e42918124456decba0ed4: Rendered. Laid out to 2 page(s); rasterised 2 of them (pages 1-2).
+Renderers: LibreOffice 24.2.7.2 + PyMuPDF 1.28.2.
+Fonts: LiberationSans 2.100 (LiberationSans-Regular.ttf), LiberationSans-Bold 2.100 (LiberationSans-Bold.ttf).
+- render:rnd-4260acb0d27e42918124456decba0ed4/page:1 — 1240×1754 px, 1957 characters, image sha-256 d02ed6a5ff30
+- render:rnd-4260acb0d27e42918124456decba0ed4/page:2 — 1240×1754 px, 346 characters, image sha-256 88d729220901
+Accepted by the backend checks. It is still a candidate: the independent review (task.request_review) and a person decide the rest.
+
+--- graph edges of art-file-97125694afdde37b@3 ---
+mi-art-art-file-97125694afdde37b-v3 -derivedFrom-> mi-3f279e92-5a6d-4563-b6ee-5302973a73ce
+mi-art-art-file-97125694afdde37b-v3 -derivedFrom-> mi-3f3dd4aa-a398-4ef1-b926-ec6e2c58ead2
+mi-art-art-file-97125694afdde37b-v3 -derivedFrom-> mi-1b9baad1-6588-470a-9d56-ab938af4a811
+mi-art-art-file-97125694afdde37b-v3 -cites-> mi-calc-b9decb5d7ed75333-44bcff24
+mi-art-art-file-97125694afdde37b-v3 -derivedFrom-> mi-art-art-file-97125694afdde37b-v2
+ok
+test agent_runtime::document_tests::a_long_table_repeats_its_header_on_every_page_it_runs_onto ... --- long table ---
+Validation 1 of art-file-4d1508e935bfc01a@1 (sha-256 991ed560d816, Word document (OOXML)):
+Format ladder:
+- file created: passed — 5792 bytes, sha-256 991ed560d816
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses
+- content checked: passed — 135 unit(s) of content, 1 citation(s) each bound to evidence, and everything the authored_document template promises
+Document checks (format and render reported apart; unavailable is never a pass):
+- document.reopen [Blocking]: pass — reopened: 11 parts, 75 body units, 3 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of authored_document@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 1 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+- render.pages [Major]: pass — all 4 pages rendered, none blank
+- render.text_visible [Blocking]: pass — all 74 text units are on a page and inside it
+- render.table_headers [Major]: pass — 1 table(s) run over pages; each repeats its header
+- render.page_breaks [Minor]: pass — 1 page break(s); text after each starts on a later page
+Render rnd-ebf4e459334f4ff5b90fbd86dfeebba8: Rendered. Laid out to 4 page(s); rasterised 4 of them (pages 1-4).
+Renderers: LibreOffice 24.2.7.2 + PyMuPDF 1.28.2.
+Fonts: LiberationSans 2.100 (LiberationSans-Regular.ttf), LiberationSans-Bold 2.100 (LiberationSans-Bold.ttf), LiberationSans-Italic 2.100 (LiberationSans-Italic.ttf).
+- render:rnd-ebf4e459334f4ff5b90fbd86dfeebba8/page:1 — 1240×1754 px, 1293 characters, image sha-256 b01da62f7e29
+- render:rnd-ebf4e459334f4ff5b90fbd86dfeebba8/page:2 — 1240×1754 px, 1340 characters, image sha-256 21346a16361c
+- render:rnd-ebf4e459334f4ff5b90fbd86dfeebba8/page:3 — 1240×1754 px, 1283 characters, image sha-256 319fc6d85f15
+- render:rnd-ebf4e459334f4ff5b90fbd86dfeebba8/page:4 — 1240×1754 px, 795 characters, image sha-256 d4ba7191182a
+Accepted by the backend checks. It is still a candidate: the independent review (task.request_review) and a person decide the rest.
+
+ok
+test agent_runtime::document_tests::a_patch_needs_the_exact_version_and_hash_and_changes_one_section_and_nothing_else ... --- document.patch_section ---
+Wrote art-file-a0f8e2dc67a76d55@2 (sha-256 514c0dc1c6255d4291ae55e520d838e18f50e648a64c40af554599124bb9dc8e) from art-file-a0f8e2dc67a76d55@1: section "recommendation" replaced.
+Before: "Recommendation\nRe-survey point C within 14 days and hold V-101 below its reduced operating limit until then [M:mi-20b19fa6-a531-4b49-b603-d3c5b62e109e@1]."
+After: "Recommendation\nRepair point C by weld overlay before restart, then re-survey [M:mi-faef12bd-5fc4-445f-ba7e-0156e92c6431@1]."
+Kept byte for byte: 10 other part(s) ([Content_Types].xml, _rels/.rels, word/_rels/document.xml.rels, word/styles.xml, word/settings.xml, word/numbering.xml, word/header1.xml, word/footer1.xml, docProps/core.xml, docProps/app.xml); 2653 bytes of the body before the section and 3121 after; sections unchanged: subject, findings, calculation, assumptions, references, provenance. Lists: the document's own bullet numbering.
+The generated references were rewritten from the citations now in the document: "Supporting references\n[C:calc-7cc3543c31138ab5] calc-7cc3543c31138ab5: wall_loss = (t_min - t_meas) / t_min = 8.889 % [computed] from t_min = 9.0 mm [M:mi-36ad0edd-2a64-4799-9a8f-6ce58da78\n[M:mi-1a79ce6a-d43c-4f94-8a5a-5d648fe432d2@1] memory item mi-1a79ce6a-d43c-4f94-8a5a-5d648fe432d2@1: UT survey "
+Checks of the written file:
+- document.reopen [Blocking]: pass — reopened: 11 parts, 26 body units, 7 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of inspection_approval_note@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+It is a candidate; validate it (artifact.validate_document) before review.
+
+--- artifact.diff ---
+art-file-a0f8e2dc67a76d55@1 (sha-256 8bb35afcc026) → art-file-a0f8e2dc67a76d55@2 (sha-256 514c0dc1c625): 24 unit(s) unchanged, 1 changed, 1 added, 1 removed.
+~ p:16: "Re-survey point C within 14 days and hold V-101 below its reduced operating limit until then [M:mi-20b19fa6-a531-4b49-b603-d3c5b62e109e@1]." → "Repair point C by weld overlay before restart, then re-survey [M:mi-faef12bd-5fc4-445f-ba7e-0156e92c6431@1]."
+- p:22: "[M:mi-20b19fa6-a531-4b49-b603-d3c5b62e109e@1] memory item mi-20b19fa6-a531-4b49-b603-d3c5b62e109e@1: Re-survey point C within 14 days and hold V-101 below its reduced operating limit until th"
++ p:23: "[M:mi-faef12bd-5fc4-445f-ba7e-0156e92c6431@1] memory item mi-faef12bd-5fc4-445f-ba7e-0156e92c6431@1: Repair point C by weld overlay before restart; re-survey afterwards"
+
+--- document.render_pages ---
+art-file-a0f8e2dc67a76d55@2 (sha-256 514c0dc1c625), every page up to 50:
+Render rnd-a110c5087385435c80e5d78eaa3dd36c: Rendered. Laid out to 2 page(s); rasterised 2 of them (pages 1-2).
+Renderers: LibreOffice 24.2.7.2 + PyMuPDF 1.28.2.
+Fonts: LiberationSans 2.100 (LiberationSans-Regular.ttf), LiberationSans-Bold 2.100 (LiberationSans-Bold.ttf).
+- render:rnd-a110c5087385435c80e5d78eaa3dd36c/page:1 — 1240×1754 px, 1717 characters, image sha-256 951fb4c1b15d
+- render:rnd-a110c5087385435c80e5d78eaa3dd36c/page:2 — 1240×1754 px, 280 characters, image sha-256 cd7b40fe9b62
+Render checks:
+- render.pages [Major]: pass — all 2 pages rendered, none blank
+- render.text_visible [Blocking]: pass — all 26 text units are on a page and inside it
+- render.table_headers [Major]: pass — 0 table(s) run over pages; each repeats its header
+- render.page_breaks [Minor]: pass — 0 page break(s); text after each starts on a later page
+
+ok
+test agent_runtime::document_tests::inspection_evidence_becomes_a_cited_editable_approval_note_that_reopens_and_renders ... --- document.compose ---
+Wrote v101-approval-note.docx (5719 bytes, sha-256 5507feece6be5359ddb06873cb3aad600c2558442cb82c2ddfe603274af20efe) from inspection_approval_note@1 for Plant Manager, Unit 4: 6 section(s), 4 citation(s) bound. It is registered as a candidate version (DRAFT, not approved).
+- section subject "Subject": cites nothing
+- section findings "Findings": rests on [M:mi-b80f1c19-cddb-464d-a75f-1e58939c23d3@1] [M:mi-63fd1981-1805-46b9-8318-f0139ce3ed02@1]
+- section calculation "Calculation": rests on [C:calc-7cca578871cf8b51]
+- section recommendation "Recommendation": rests on [M:mi-69b16ad5-81ea-4321-be7c-a8a37a3ac8e3@1]
+- section assumptions "Assumptions": cites nothing
+- section references "Supporting references": rests on [C:calc-7cca578871cf8b51] [M:mi-63fd1981-1805-46b9-8318-f0139ce3ed02@1] [M:mi-69b16ad5-81ea-4321-be7c-a8a37a3ac8e3@1] [M:mi-b80f1c19-cddb-464d-a75f-1e58939c23d3@1]
+Checks of the written file:
+- document.reopen [Blocking]: pass — reopened: 11 parts, 26 body units, 7 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of inspection_approval_note@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+Next: artifact.validate_document on the version, which renders every page; then task.request_review.
+Registered as art-file-a0f8e2dc67a76d55@1 (sha-256 5507feece6be5359ddb06873cb3aad600c2558442cb82c2ddfe603274af20efe), a candidate.
+
+--- graph edges from mi-art-art-file-a0f8e2dc67a76d55-v1 ---
+mi-art-art-file-a0f8e2dc67a76d55-v1 -derivedFrom-> mi-b80f1c19-cddb-464d-a75f-1e58939c23d3
+mi-art-art-file-a0f8e2dc67a76d55-v1 -derivedFrom-> mi-63fd1981-1805-46b9-8318-f0139ce3ed02
+mi-art-art-file-a0f8e2dc67a76d55-v1 -derivedFrom-> mi-69b16ad5-81ea-4321-be7c-a8a37a3ac8e3
+mi-art-art-file-a0f8e2dc67a76d55-v1 -cites-> mi-calc-7cca578871cf8b51-44bcff24
+--- artifact.validate_document ---
+Validation 1 of art-file-a0f8e2dc67a76d55@1 (sha-256 5507feece6be, Word document (OOXML)):
+Format ladder:
+- file created: passed — 5719 bytes, sha-256 5507feece6be
+- format reopened: passed — the bytes are a Word document (OOXML) and it parses
+- content checked: passed — 26 unit(s) of content, 4 citation(s) each bound to evidence, and everything the inspection_approval_note template promises
+Document checks (format and render reported apart; unavailable is never a pass):
+- document.reopen [Blocking]: pass — reopened: 11 parts, 26 body units, 7 marked sections
+- document.sections [Blocking]: pass — all mandatory sections of inspection_approval_note@1 are present and written
+- document.gaps [Blocking]: pass — no section states missing information
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+- render.pages [Major]: pass — all 2 pages rendered, none blank
+- render.text_visible [Blocking]: pass — all 26 text units are on a page and inside it
+- render.table_headers [Major]: pass — 0 table(s) run over pages; each repeats its header
+- render.page_breaks [Minor]: pass — 0 page break(s); text after each starts on a later page
+Render rnd-8604b526ac1e4f3ba117b4784e1475e3: Rendered. Laid out to 2 page(s); rasterised 2 of them (pages 1-2).
+Renderers: LibreOffice 24.2.7.2 + PyMuPDF 1.28.2.
+Fonts: LiberationSans 2.100 (LiberationSans-Regular.ttf), LiberationSans-Bold 2.100 (LiberationSans-Bold.ttf).
+- render:rnd-8604b526ac1e4f3ba117b4784e1475e3/page:1 — 1240×1754 px, 1759 characters, image sha-256 0bac8f2d6f58
+- render:rnd-8604b526ac1e4f3ba117b4784e1475e3/page:2 — 1240×1754 px, 280 characters, image sha-256 2f1b38cc6699
+Accepted by the backend checks. It is still a candidate: the independent review (task.request_review) and a person decide the rest.
+
+ok
+test agent_runtime::document_tests::missing_fields_and_unsupported_claims_are_refused_or_reported_and_never_filled ... --- missing field and section ---
+Nothing was written: 2 problem(s).
+- field_missing: the mandatory field "recipient" (To) was not supplied; give it, or write "?" to report it as unknown
+- section_missing [recommendation]: the mandatory section "recommendation" (Recommendation) is missing; write it, or include it with a gap saying what is needed
+Fix what can be fixed from the evidence. Where the information does not exist, declare the section a gap ("gap": what is needed) or write "?" for a field: a gap is reported and asked for, never filled in.
+--- unsupported claim and figure ---
+Nothing was written: 2 problem(s).
+- unsupported_claim [findings]: block 1 unit 3 cites nothing: "The rest of the shell is sound.". Cite the passage, memory item or record it rests on, or remove it
+- unsupported_figure [findings]: block 1 unit 4 states 9.4 mm, which none of its citations states — a figure has to come from what its sentence cites
+Fix what can be fixed from the evidence. Where the information does not exist, declare the section a gap ("gap": what is needed) or write "?" for a field: a gap is reported and asked for, never filled in.
+--- with gaps ---
+Wrote v101-approval-note.docx (5722 bytes, sha-256 b6a1c7f77b2c3819c652cf17cee382a5f7709cba2bf0191222b61bf4ec8c1514) from inspection_approval_note@1 for Plant Manager, Unit 4: 6 section(s), 3 citation(s) bound. It is registered as a candidate version (DRAFT, not approved).
+- section subject "Subject": cites nothing
+- section findings "Findings": rests on [M:mi-b0091ccd-33f5-4995-b265-0ee94c58cb2b@1] [M:mi-eb733c4d-fc47-4955-9036-3c9969b03c04@1]
+- section calculation "Calculation": rests on [C:calc-eca910cd22f29d90]
+- section recommendation "Recommendation": GAP — the maintenance lead has not yet decided between repair and de-rating
+- section assumptions "Assumptions": cites nothing
+- section references "Supporting references": rests on [C:calc-eca910cd22f29d90] [M:mi-b0091ccd-33f5-4995-b265-0ee94c58cb2b@1] [M:mi-eb733c4d-fc47-4955-9036-3c9969b03c04@1]
+INFORMATION NEEDED (2): the document is incomplete and will not be accepted until these are answered:
+- To (field:recipient): the to is not known
+- Recommendation (recommendation): the maintenance lead has not yet decided between repair and de-rating
+Checks of the written file:
+- document.reopen [Blocking]: pass — reopened: 11 parts, 24 body units, 7 marked sections
+- document.sections [Blocking]: FAIL — section:recommendation: the section states that information is needed and is not written
+- document.gaps [Blocking]: FAIL — section:recommendation unit:15: INFORMATION NEEDED: the maintenance lead has not yet decided between repair and de-rating. This section is incomplete; nothing has been writ
+- document.citations_present [Blocking]: pass — every claim in a section that must cite does
+- document.citations_resolve [Blocking]: pass — every citation resolves to something current
+- document.figures_supported [Blocking]: pass — every figure with a unit is stated by what its sentence cites
+- document.long_tables [Major]: pass — 0 table(s); every one longer than 10 rows repeats its header
+- document.placeholders [Blocking]: pass — no placeholder text
+- document.approval_status [Blocking]: pass — it says it is a draft, not approved
+Next: artifact.validate_document on the version, which renders every page; then task.request_review.
+Registered as art-file-a0f8e2dc67a76d55@1 (sha-256 b6a1c7f77b2c3819c652cf17cee382a5f7709cba2bf0191222b61bf4ec8c1514), a candidate.
+
+ok
+test agent_runtime::document_tests::the_author_cannot_register_its_own_note_as_final ... --- register_version from the author's plan ---
+the gateway refused artifact.register_version: artifact.register_version is not one of the tools this task was planned to use. The plan allows: document.template_list, document.compose, document.patch_section, document.render_pages, artifact.validate_document, artifact.create_approval_note, artifact.manifest, artifact.read_version, artifact.resolve_evidence, knowledge.hybrid_search, knowledge.search_authorized, memory.neighbours. Do what you can with those, and say plainly what you could not do.
+ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3004 filtered out; finished in 17.14s
+
+EXIT 0

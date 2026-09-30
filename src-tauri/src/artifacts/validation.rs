@@ -435,7 +435,21 @@ fn check_content(bytes: &[u8], model: &ContentModel, context: &Context<'_>) -> S
             "calculation_workbook" => {
                 problems.extend(super::xlsx::check_workbook_bytes(bytes).problems);
             }
-            _ => {}
+            // P09: the Document Author's templates promise sections by id.
+            other => {
+                if let Ok(authoring) = super::authoring::authoring_template(other) {
+                    let sections = package::read_part(bytes, "word/document.xml")
+                        .and_then(|xml| super::authoring::read_sections(&xml))
+                        .unwrap_or_default();
+                    for req in authoring.sections.iter().filter(|s| s.required) {
+                        match sections.iter().find(|s| s.id == req.id) {
+                            None => problems.push(format!("the template promises a {:?} section and the file has none", req.heading)),
+                            Some(found) if found.gap => problems.push(format!("the {:?} section states that information is needed", req.heading)),
+                            Some(_) => {}
+                        }
+                    }
+                }
+            }
         }
     }
 

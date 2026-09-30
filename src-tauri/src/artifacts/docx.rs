@@ -121,11 +121,19 @@ fn document_xml(
         None,
     ));
 
-    for field in template {
+    for (index, field) in template.iter().enumerate() {
         let Some(value) = content.get(field.key) else {
             continue;
         };
 
+        // A body-level marker per field, named by the field key: the stable
+        // section id `document.patch_section` finds a section by (P09).
+        body.push_str(&format!(
+            "<w:bookmarkStart w:id=\"{}\" w:name=\"{}{}\"/>",
+            index + 1,
+            super::authoring::BOOKMARK_PREFIX,
+            field.key
+        ));
         if field.heading.is_empty() {
             body.push_str(&heading(value));
         } else {
@@ -134,6 +142,7 @@ fn document_xml(
                 body.push_str(&paragraph(line, None));
             }
         }
+        body.push_str(&format!("<w:bookmarkEnd w:id=\"{}\"/>", index + 1));
     }
 
     // Provenance, at the foot where it belongs — present on every document so a

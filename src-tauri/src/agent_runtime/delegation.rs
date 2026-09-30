@@ -672,7 +672,9 @@ pub(super) async fn delegate(
             source_sha256s: scope.notebook.map(|pin| pin.source_sha256s).unwrap_or_default(),
         });
     }
-    if inputs.is_empty() && resolved.capability != "knowledge-retriever" {
+    // The document author writes from the task's shared memory (P09), which
+    // is its input whether or not the call also names references.
+    if inputs.is_empty() && resolved.capability != "knowledge-retriever" && resolved.capability != "document-author" {
         return Err(format!(
             "The {role} role is pointed at things rather than asked a question, and neither the \
              call nor step {step_id} names any. Pass documents, files, expressions or artifacts. \
@@ -1398,10 +1400,24 @@ pub(super) async fn request_review(
     // 1. Backend acceptance: the P04 ladder for every artifact, run now.
     for (artifact_id, version) in &artifacts {
         let args = json!({ "artifact": format!("{artifact_id}@{version}") });
-        let check_call = ToolCall::new(ToolName::ArtifactValidate.as_str().to_string(), args);
+        // A Word version is held to the document checks as well, with every
+        // page rendered (P09): the ladder alone does not look at sections,
+        // citations or pages.
+        let is_word = deps
+            .conversation_artifacts
+            .get(&session.user.id, artifact_id, Some(*version))
+            .ok()
+            .flatten()
+            .is_some_and(|record| record.mime == crate::artifacts::package::DetectedFormat::Docx.mime());
+        let check_tool = if is_word { ToolName::ArtifactValidateDocument } else { ToolName::ArtifactValidate };
+        let check_call = ToolCall::new(check_tool.as_str().to_string(), args);
         let (deps_c, call_c, session_c) = (Arc::clone(deps), call.clone(), session.clone());
         let outcome = tokio::task::spawn_blocking(move || {
-            super::artifact_tools::validate_version(&deps_c, &call_c, &session_c, &check_call)
+            if check_tool == ToolName::ArtifactValidateDocument {
+                super::document_tools::validate_document(&deps_c, &call_c, &session_c, &check_call)
+            } else {
+                super::artifact_tools::validate_version(&deps_c, &call_c, &session_c, &check_call)
+            }
         })
         .await
         .unwrap_or_else(|error| Err(format!("the check stopped: {error}")));
@@ -1419,7 +1435,7 @@ pub(super) async fn request_review(
             "backend: {artifact_id}@{version} {}",
             match (&outcome, accepted) {
                 (_, true) => "accepted by artifact validation".to_string(),
-                (Ok(_), false) => "not accepted by artifact validation (see artifact.validate for the rungs)".to_string(),
+                (Ok(_), false) => format!("not accepted by artifact validation (see {} for each check)", check_tool.as_str()),
                 (Err(reason), false) => format!("could not be validated: {reason}"),
             }
         ));

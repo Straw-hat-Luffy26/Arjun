@@ -63,6 +63,7 @@ const LEDGER = new Map([
   ['ollama', 'optional external runtime probe; absence is a supported answer'],
   ['podman', 'optional sandbox runtime; absence is reported, not fatal'],
   ['docker', 'optional sandbox runtime; absence is reported, not fatal'],
+  ['fc-list', 'optional font listing (fontconfig), used only to record which font files a render drew with; absent on Windows, where the versions are reported unrecorded, never passed'],
 ]);
 
 /** Bundle paths that are build outputs, absent until their build step runs. */

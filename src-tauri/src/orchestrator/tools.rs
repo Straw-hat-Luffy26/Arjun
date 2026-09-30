@@ -275,6 +275,18 @@ pub enum ToolName {
     CalculationCompare,
     /// P08: how a result moves with each input, and its propagated uncertainty.
     CalculationSensitivity,
+    // -- P09: the Document Author's tools. ---------------------------------
+    /// The authoring templates, with stable section ids and citation rules.
+    DocumentTemplateList,
+    /// A structured spec, checked against its template and the run's
+    /// evidence, written as a Word package and registered as a candidate.
+    DocumentCompose,
+    /// One section of an exact version replaced, the rest kept byte for byte.
+    DocumentPatchSection,
+    /// Every page of a Word version laid out, with renderer and font versions.
+    DocumentRenderPages,
+    /// The P04 ladder plus the document checks, format and render apart.
+    ArtifactValidateDocument,
 }
 
 impl ToolName {
@@ -339,6 +351,11 @@ impl ToolName {
         ToolName::CalculationSolve,
         ToolName::CalculationCompare,
         ToolName::CalculationSensitivity,
+        ToolName::DocumentTemplateList,
+        ToolName::DocumentCompose,
+        ToolName::DocumentPatchSection,
+        ToolName::DocumentRenderPages,
+        ToolName::ArtifactValidateDocument,
     ];
 
     /// The wire name a model emits, and the only spelling ever written.
@@ -404,6 +421,11 @@ impl ToolName {
             ToolName::CalculationSolve => "calculation.solve",
             ToolName::CalculationCompare => "calculation.compare",
             ToolName::CalculationSensitivity => "calculation.sensitivity",
+            ToolName::DocumentTemplateList => "document.template_list",
+            ToolName::DocumentCompose => "document.compose",
+            ToolName::DocumentPatchSection => "document.patch_section",
+            ToolName::DocumentRenderPages => "document.render_pages",
+            ToolName::ArtifactValidateDocument => "artifact.validate_document",
         }
     }
 
@@ -486,6 +508,12 @@ impl ToolName {
             | ToolName::CalculationSolve
             | ToolName::CalculationCompare
             | ToolName::CalculationSensitivity => None,
+            // Introduced namespaced by P09.
+            ToolName::DocumentTemplateList
+            | ToolName::DocumentCompose
+            | ToolName::DocumentPatchSection
+            | ToolName::DocumentRenderPages
+            | ToolName::ArtifactValidateDocument => None,
         }
     }
 
@@ -553,6 +581,9 @@ impl ToolName {
                 | ToolName::CreateTable
                 // Writes a new version of the file it names.
                 | ToolName::ArtifactEdit
+                // P09: a new document, and a new version of one.
+                | ToolName::DocumentCompose
+                | ToolName::DocumentPatchSection
         )
     }
 
@@ -654,6 +685,10 @@ impl ToolName {
             | ToolName::CalculationSolve
             | ToolName::CalculationCompare
             | ToolName::CalculationSensitivity => true,
+            // P09: listing templates, laying pages out and checking a version.
+            // Render and validation records are observations about immutable
+            // bytes in ARJUN's own store, as for `artifact.render`.
+            ToolName::DocumentTemplateList | ToolName::DocumentRenderPages | ToolName::ArtifactValidateDocument => true,
             // These change what the notebook holds, so they are not
             // read-only and the gateway treats them accordingly.
             ToolName::NotebookCreate
@@ -673,7 +708,10 @@ impl ToolName {
             | ToolName::ExecuteCode
             // Publishing a version and writing a new one.
             | ToolName::ArtifactRegisterVersion
-            | ToolName::ArtifactEdit => false,
+            | ToolName::ArtifactEdit
+            // P09: a new document, and a new version of one.
+            | ToolName::DocumentCompose
+            | ToolName::DocumentPatchSection => false,
             // Each changes the run's plan or its jobs: a new plan version, a
             // worker started or stopped, a review receipt recorded.
             ToolName::TaskPlanUpdate
@@ -748,6 +786,11 @@ impl ToolName {
             ToolName::CalculationSolve => "solve an equation for an unknown",
             ToolName::CalculationCompare => "compare a value with a limit",
             ToolName::CalculationSensitivity => "see how a result depends on its inputs",
+            ToolName::DocumentTemplateList => "list the document templates and their sections",
+            ToolName::DocumentCompose => "write a Word document from a structured specification",
+            ToolName::DocumentPatchSection => "rewrite one section of a Word document, keeping the rest as it is",
+            ToolName::DocumentRenderPages => "lay every page of a Word document out",
+            ToolName::ArtifactValidateDocument => "check a Word document version, its content and its pages",
         }
     }
 
@@ -809,6 +852,17 @@ impl ToolName {
                 "subset of the role's), `memory_items` (mi-…#rN that must exist first), ",
                 "`documents`, `files`, `expressions`, `artifacts`, `deadline_seconds` and ",
                 "`wait_seconds` (at most 100; 0 returns at once with a job id for agent.status).",
+            )),
+            ToolName::DocumentCompose => Some(concat!(
+                "`template` is from document.template_list (inspection_approval_note@1). `sections` is a ",
+                "list of {id, blocks, heading?, gap?}; blocks are {kind: paragraph, text} | bullets{items} | ",
+                "numbered{items} | table{header, rows, caption?} | pageBreak. Cite every claim ([E1], ",
+                "[M:id@rev], [C:calc-…]). What the evidence lacks is a `gap` or a field \"?\", never invented.",
+            )),
+            ToolName::DocumentPatchSection => Some(concat!(
+                "`artifact` is the exact version (art-…@N) and `sha256` its full hash from artifact.manifest; ",
+                "`section` is a section id. `blocks` replace that section's content (or `gap` states what is ",
+                "missing). Nothing else in the file changes; a stale version or hash is refused.",
             )),
             ToolName::ArtifactRegisterVersion => Some(concat!(
                 "`stage` is \"final\" to publish an exact version (art-…@N) whose latest ",
@@ -1139,6 +1193,70 @@ pub fn spec_for(name: ToolName) -> ToolSpec {
             network: NetworkUse::None,
             timeout: ARTIFACT_RENDER_TIMEOUT,
             max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        // P09: the Document Author's tools. Composing and patching are
+        // `GenerateArtifact` and automatic, as `artifact.edit` is: the effect
+        // is a new candidate version and nothing that exists changes. Listing
+        // templates is a read; rendering and validating are the render tools'.
+        ToolName::DocumentTemplateList => ToolSpec {
+            permission: SearchKnowledge,
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(5),
+            max_response_bytes: 8 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentCompose => ToolSpec {
+            permission: GenerateArtifact,
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            arguments: &[
+                ArgumentSpec { name: "template", kind: Text },
+                ArgumentSpec { name: "title", kind: Text },
+                ArgumentSpec { name: "audience", kind: Text },
+                ArgumentSpec { name: "output", kind: Text },
+                ArgumentSpec { name: "sections", kind: List },
+            ],
+            optional_arguments: &[ArgumentSpec { name: "fields", kind: Object }],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentPatchSection => ToolSpec {
+            permission: GenerateArtifact,
+            needs_approval: false,
+            approval_class: ApprovalClass::Automatic,
+            arguments: &[
+                ArgumentSpec { name: "artifact", kind: Text },
+                ArgumentSpec { name: "sha256", kind: Text },
+                ArgumentSpec { name: "section", kind: Text },
+            ],
+            optional_arguments: &[
+                ArgumentSpec { name: "blocks", kind: List },
+                ArgumentSpec { name: "heading", kind: Text },
+                ArgumentSpec { name: "gap", kind: Text },
+            ],
+            network: NetworkUse::None,
+            timeout: Duration::from_secs(60),
+            max_response_bytes: 16 * 1024,
+            ..defaults(name)
+        },
+        ToolName::DocumentRenderPages => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            network: NetworkUse::None,
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            max_response_bytes: 24 * 1024,
+            ..defaults(name)
+        },
+        ToolName::ArtifactValidateDocument => ToolSpec {
+            permission: GenerateArtifact,
+            arguments: &[ArgumentSpec { name: "artifact", kind: Text }],
+            optional_arguments: &[ArgumentSpec { name: "render", kind: Text }],
+            network: NetworkUse::None,
+            timeout: ARTIFACT_RENDER_TIMEOUT,
+            max_response_bytes: 24 * 1024,
             ..defaults(name)
         },
         ToolName::SearchDocuments => ToolSpec {

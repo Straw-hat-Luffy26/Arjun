@@ -30,7 +30,10 @@ Prints one JSON object on stdout.
     render       {"renderer": "pymupdf", "version": "...", "pages": 12,
                   "rendered": [{"page": 1, "image": "page-1.png",
                                 "width": 1240, "height": 1754,
-                                "blank": false, "text": "..."}]}
+                                "blank": false, "text": "...",
+                                "fonts": [{"name": "Arial", "type": "TrueType",
+                                           "embedded": true}],
+                                "clipped": ["text drawn outside the page"]}]}
     on failure   {"error": "..."}
 
 Exit status: 0 success, 3 PyMuPDF is not installed (the adapter is
@@ -328,6 +331,42 @@ def probe_image(fitz, target, args):
     out({"image": os.path.basename(target), "width": pixmap.width, "height": pixmap.height})
 
 
+def fonts_on(page):
+    """The fonts the page draws with: base name and whether it is embedded.
+
+    `get_fonts()` rows are (xref, ext, type, basefont, name, encoding); an
+    embedded font has a file extension other than "n/a".
+    """
+    fonts = []
+    try:
+        for row in page.get_fonts(full=False):
+            base = str(row[3]).split("+", 1)[-1]
+            entry = {"name": base, "type": str(row[2]), "embedded": str(row[1]) not in ("n/a", "")}
+            if entry not in fonts:
+                fonts.append(entry)
+    except Exception:  # noqa: BLE001 - a page without a font list reports none
+        return []
+    return fonts[:40]
+
+
+def clipped_on(page, rect, tolerance=0.5):
+    """Text drawn wholly or partly outside the page: laid out, never seen."""
+    clipped = []
+    try:
+        for block in page.get_text("dict").get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "").strip()
+                    if not text:
+                        continue
+                    x0, y0, x1, y1 = span.get("bbox", (0, 0, 0, 0))
+                    if x0 < rect.x0 - tolerance or y0 < rect.y0 - tolerance or x1 > rect.x1 + tolerance or y1 > rect.y1 + tolerance:
+                        clipped.append(text[:80])
+    except Exception:  # noqa: BLE001
+        return []
+    return clipped[:40]
+
+
 def main():
     args = sys.argv[1:]
     fitz = load()
@@ -387,6 +426,8 @@ def main():
                 "height": pixmap.height,
                 "blank": blank,
                 "text": page.get_text("text"),
+                "fonts": fonts_on(page),
+                "clipped": clipped_on(page, rect),
             })
     finally:
         document.close()

@@ -364,9 +364,6 @@ function runCodingGroup() {
  */
 function blockedOnUnbuiltAgents() {
   const pending = [
-    ['art-docx-02-required-sections', 'P09', 'Document Author and Word authoring tools'],
-    ['art-docx-03-names-the-revision', 'P09', 'Document Author and Word authoring tools'],
-    ['art-docx-04-no-invented-internal-inspection', 'P09', 'Document Author and Word authoring tools'],
     ['code-01-thickness-helpers', 'P11', 'Coding & Testing Agent and real sandbox tools'],
     ['art-pptx-02-every-slide-has-a-title', 'P12', 'Presentation Creator'],
     ['art-pptx-03-no-invented-remaining-life', 'P12', 'Presentation Creator'],
@@ -374,12 +371,38 @@ function blockedOnUnbuiltAgents() {
     ['art-xlsx-03-recalculates', 'P13', 'Spreadsheet Analyst, and a recalculation engine'],
     ['art-evidence-01-citations-resolve', 'P02', 'shared memory provenance and authority'],
     ['art-evidence-02-receipt-is-real', 'P02', 'real receipt provenance (plan §3 finding 2)'],
-    // P04 built what this grades against -- every registered version carries
-    // its sha-256, `artifact.manifest` returns it, and a read re-hashes the
-    // stored bytes (src-tauri/src/agent_runtime/artifact_tools_tests.rs). What
-    // is still missing is the agent whose *result* carries a produced file.
-    ['art-evidence-03-artifact-hash-recorded', 'P09', 'a writer agent whose result carries the artifact version (the P04 tools that record and verify the hash exist)'],
   ];
+
+  // P09 built the Document Author: compose checked before writing, a complete
+  // Word package with stable section ids, exact-version section patches, the
+  // document checks with every page rendered, and the document-author worker,
+  // whose result carries the version and its hash. What these four cases grade
+  // is a model-driven run: the note an *agent* writes for the pack's request
+  // (its required sections, the revision it names, that it invents no internal
+  // inspection) and the hash on that agent's result. The deterministic half is
+  // src-tauri/src/agent_runtime/document_tests.rs; the model run is P10's
+  // first complete journey.
+  for (const id of [
+    'art-docx-02-required-sections',
+    'art-docx-03-names-the-revision',
+    'art-docx-04-no-invented-internal-inspection',
+    'art-evidence-03-artifact-hash-recorded',
+  ]) {
+    record({
+      id,
+      group: 'agent-cases',
+      kind: 'fixture-case',
+      status: BLOCKED,
+      detail:
+        'the Document Author exists (P09): the deterministic path, checks and the version-carrying ' +
+        'result are covered by src-tauri/src/agent_runtime/document_tests.rs; grading an agent\'s ' +
+        'note needs a model run through the production task driver, which this harness does not perform.',
+      blockedOnPhase: 'P10',
+      unblockCommand:
+        'Implement P10 (first complete journey with a real model), then re-run this harness. ' +
+        'The deterministic half: cargo test --manifest-path src-tauri/Cargo.toml --lib agent_runtime::document_tests',
+    });
+  }
 
   // P06 built the analyst (the document-extractor's structured pass over
   // attached scans: layout, local OCR, checks, fields, publication). What these
